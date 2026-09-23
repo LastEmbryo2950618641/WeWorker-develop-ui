@@ -7,7 +7,7 @@
  *   GET  /v1/healthz         健康检查
  */
 
-import { insertBatch, queryStats } from "./db.js";
+import { insertBatch, queryStats, insertVisit, queryVisits } from "./db.js";
 
 const MAX_BODY_BYTES = 1 << 20; // 1MB
 const MAX_BATCH = 500;
@@ -93,6 +93,44 @@ export async function handle(req, res, ctx) {
       return send(res, 200, data);
     } catch (e) {
       return send(res, 500, { error: "query failed" });
+    }
+  }
+
+  // ── 站点访问统计（PV/UV）──
+
+  if (route === "POST /v1/visits") {
+    if (!checkAuth(req, ctx.token)) return send(res, 401, { error: "unauthorized" });
+    let body;
+    try {
+      body = await readJson(req);
+    } catch (e) {
+      return send(res, e.code || 400, { error: e.message });
+    }
+    const clientIp =
+      (req.headers["x-forwarded-for"] || "").split(",")[0]?.trim()
+      || req.socket?.remoteAddress
+      || "";
+    try {
+      insertVisit(ctx.db, {
+        day: typeof body.day === "string" ? body.day : undefined,
+        ip: typeof body.ip === "string" && body.ip ? body.ip : clientIp,
+        path: typeof body.path === "string" ? body.path : undefined,
+        ua: typeof body.ua === "string" ? body.ua : undefined,
+      });
+      return send(res, 200, { ok: true });
+    } catch (e) {
+      return send(res, 500, { error: "visit ingest failed" });
+    }
+  }
+
+  if (route === "GET /v1/visits") {
+    if (!checkAuth(req, ctx.token)) return send(res, 401, { error: "unauthorized" });
+    const since = url.searchParams.get("since") || "30d";
+    try {
+      const data = queryVisits(ctx.db, { since });
+      return send(res, 200, data);
+    } catch (e) {
+      return send(res, 500, { error: "visits query failed" });
     }
   }
 

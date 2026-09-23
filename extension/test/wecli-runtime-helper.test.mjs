@@ -144,6 +144,7 @@ function loadServiceWorker(options = {}) {
   const createCalls = []
   const removeCalls = []
   const updateCalls = []
+  const browserFetchResult = options.browserFetchResult
   const tabs = [{
     active: true,
     status: 'complete',
@@ -217,6 +218,7 @@ function loadServiceWorker(options = {}) {
               redirected: false,
               headers: { 'content-type': 'application/json' },
               body: '{"retCode":0,"data":{"data":[]}}',
+              ...(browserFetchResult || {}),
             },
           }]
         }
@@ -477,6 +479,21 @@ test('direct browser fetch closes its inactive background tab when the target si
     { id: 8, update: { url: 'https://itsm.example.com/', active: false } },
   ])
   assert.deepEqual(removeCalls, [8, 8])
+})
+
+test('direct browser_fetch rejects a redirected response from an unapproved host', async () => {
+  const { directRequest } = loadServiceWorker({
+    browserFetchResult: { redirected: true, url: 'https://evil.example/leak' },
+  })
+
+  const response = await directRequest('browser_fetch', { url: 'https://itsm.example.com/api' })
+
+  assert.equal(response.ok, false)
+  assert.equal(response.error.code, 'HOST_NOT_ALLOWED')
+  assert.deepEqual(plain(response.error.details), {
+    tabHost: 'itsm.example.com',
+    targetHost: 'evil.example',
+  })
 })
 
 test('direct storage_get refreshes localStorage through a temporary inactive tab', async () => {

@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { createManagedAdapterSkillValidator } from '../../../../webcli/adapter-desktop.js'
 import type { RuntimeContext } from './context-types.js'
 
 export interface RuntimeContextInput {
@@ -37,9 +38,11 @@ export function createRuntimeContext(input: RuntimeContextInput): RuntimeContext
   }
 }
 
-function readSkillIndexEntry(skillFile: string, fallbackName: string): string {
+function readSkillIndexEntry(skillFile: string, fallbackName: string, validate: ReturnType<typeof createManagedAdapterSkillValidator>): string {
   try {
-    const content = fs.readFileSync(skillFile, 'utf8').slice(0, 16_384)
+    const source = fs.readFileSync(skillFile, 'utf8')
+    if (!validate(source, fallbackName)) return ''
+    const content = source.slice(0, 16_384)
     const frontmatter = content.match(/^---\s*\r?\n([\s\S]*?)\r?\n---/u)?.[1] ?? ''
     const name = frontmatter.match(/^name:\s*["']?([^\r\n"']+)/imu)?.[1]?.trim() || fallbackName
     const description = frontmatter.match(/^description:\s*["']?([^\r\n"']+)/imu)?.[1]?.trim() || ''
@@ -50,12 +53,13 @@ function readSkillIndexEntry(skillFile: string, fallbackName: string): string {
 }
 
 export function buildEnabledSkillIndex(skillsDir: string): string {
+  const validate = createManagedAdapterSkillValidator()
   try {
     return fs.readdirSync(skillsDir, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => {
         const skillFile = path.join(skillsDir, entry.name, 'SKILL.md')
-        return fs.existsSync(skillFile) ? readSkillIndexEntry(skillFile, entry.name) : ''
+        return fs.existsSync(skillFile) ? readSkillIndexEntry(skillFile, entry.name, validate) : ''
       })
       .filter(Boolean)
       .sort((a, b) => a.localeCompare(b))

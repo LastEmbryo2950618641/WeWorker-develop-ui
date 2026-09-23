@@ -95,7 +95,7 @@ test('macOS packages use a complete ad-hoc signature for internal distribution',
     electronPlatformName: 'darwin',
     appOutDir: '/tmp/mac-arm64',
     packager: { appInfo: { productFilename: 'WeWorker' } },
-  }, (...args) => calls.push(args))
+  }, (...args) => calls.push(args), () => {})
   const appPath = path.join('/tmp/mac-arm64', 'WeWorker.app')
   assert.deepEqual(calls.map(([executable, args]) => ({ executable, args })), [
     {

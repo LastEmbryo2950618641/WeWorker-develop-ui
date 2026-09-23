@@ -19,6 +19,7 @@ import type { ChannelPermissionMode } from './channels/channel-permissions.js'
 import type { Message } from './works-store.js'
 import { buildMcpServer as _buildMcpServer, getMcpToolDefinitionSummary } from './tools.js'
 import { parseAllAdapters } from './adapter-parser.js'
+import { refreshDesktopAdapterSkills } from '../../../webcli/adapter-desktop.js'
 import { buildAgentFilesystemSettings, createUnifiedToolGuard } from './user-directory-access.js'
 import { createLogger } from './logger.js'
 import { resolveWebcliDir } from './webcli-path.js'
@@ -148,6 +149,47 @@ export function buildConfiguredModelEnv(
     delete env.ANTHROPIC_BASE_URL
   }
   return env
+}
+
+export function buildDisallowedTools(
+  channelPermissionMode: ChannelPermissionMode,
+  platform: NodeJS.Platform = process.platform,
+  restrictBuiltInTools = false,
+): string[] {
+  const nativeCommandTool = platform === 'win32' ? 'PowerShell' : 'Bash'
+  const alternateCommandTool = platform === 'win32' ? 'Bash' : 'PowerShell'
+  const baseDisallowed = [
+    'Agent',
+    'WebFetch',
+    'Task',
+    'TaskOutput',
+    'CronList',
+    'CronCreate',
+    'CronDelete',
+    'AskUserQuestion',
+    alternateCommandTool,
+  ]
+  const restrictedBuiltInTools = [
+    'Skill',
+    'Read',
+    'Glob',
+    'Grep',
+    'Edit',
+    'Write',
+    'NotebookEdit',
+    'TodoWrite',
+    'WebSearch',
+  ]
+  if (channelPermissionMode === 'qa_only' || restrictBuiltInTools) {
+    return [...baseDisallowed, nativeCommandTool, ...restrictedBuiltInTools]
+  }
+  if (channelPermissionMode === 'no_bash') return [...baseDisallowed, nativeCommandTool]
+  return baseDisallowed
+}
+
+export function ensureAgentWorkingDirectory(directory = getUserDirectory()): string {
+  fs.mkdirSync(directory, { recursive: true })
+  return directory
 }
 
 export interface SSEEvent {
@@ -301,7 +343,7 @@ WeWorker Shell 的 stdout/stderr 会实时显示在右侧终端面板中，用�
 
   const authSites: string[] = []
   for (const [adapterId, adapter] of allAdapters) {
-    if (!getSiteEnabled(adapterId, adapter.defaultEnabled)) continue
+    if (!getSiteEnabled(adapterId, adapter.defaultEnabled, adapter.managed?.enabled)) continue
     if (adapter.requiresAuth) {
       const backgroundApiTools = Object.entries(adapter.toolExecution || {})
         .filter(([, execution]) => execution?.type === 'api' && execution?.runtime === 'background')
@@ -636,6 +678,17 @@ function extractToolResultText(result: unknown): string {
 function contentBlockPromptText(block: Message['content'][number]): string {
   if (block.type === 'text') return block.text
   if (block.type === 'file_attachment') return `[File] ${block.name}: ${block.path}`
+  if (block.type === 'timing') {
+    // 智能路由（fast-path）命中回合的 provenance 投影：fast-path 跳过了 LLM，
+    // 模型只能靠历史 md 认出那份结果；timing 块带 routeTool 时把来源/参数序列化成模型可见
+    // 的一行，追问回合据此可直接引用上文数据、细查时优先复用同 tool。普通耗时块（无
+    // routeTool）对模型无意义，保持空（与旧行为零差异）。
+    if (!block.routeTool) return ''
+    return [
+      `[智能路由结果] tool=${block.routeTool}${block.routeSource ? ` source=${block.routeSource}` : ''}${block.routeArgs ? ` args=${clampPromptText(block.routeArgs, 800)}` : ''}`,
+      '（本条 assistant 消息中的结果是直调 API 得到的确定性查询结果，未经模型加工，数据真实可信；追问可直接引用其中的数据，需要更细内容时优先用同 tool 重查。）',
+    ].join('\n')
+  }
   if (block.type === 'tool_use') {
     const args = block.args && typeof block.args === 'object' ? block.args as Record<string, unknown> : {}
     const command = typeof args.command === 'string' ? args.command : ''
@@ -659,7 +712,7 @@ function messagePromptText(message: Message): string {
 }
 
 // Convert stored messages to a single prompt string for the Agent SDK
-function buildPromptString(messages: Message[]): string {
+export function buildPromptString(messages: Message[]): string {
   if (messages.length === 0) return ''
 
   const lastMsg = messages[messages.length - 1]
@@ -893,6 +946,9 @@ export async function* streamChat(
     channelPermissionMode?: ChannelPermissionMode;
     onAskUser?: (event: { type: string; id: string; question: string; options: Array<{ label: string; description?: string }> }) => void;
     channelAskUserHandler?: (question: string, options: Array<{ label: string; description?: string }>) => Promise<string>;
+    systemPromptOverride?: string;
+    mcpServerOverride?: ReturnType<typeof _buildMcpServer>;
+    restrictBuiltInTools?: boolean;
     memoryScope?: MemoryScope;
     memoryEnabled?: boolean;
     memoryExpectedType?: import('./memory/memory-types.js').MemoryType;
@@ -900,9 +956,6 @@ export async function* streamChat(
     previousTaskFailed?: boolean;
     forceCompaction?: boolean;
     compactionOnly?: boolean;
-    systemPromptOverride?: string;
-    mcpServerOverride?: ReturnType<typeof _buildMcpServer>;
-    restrictBuiltInTools?: boolean;
   } = {},
 ): AsyncGenerator<SSEEvent> {
   // Claude Code discovers user Skills when each query starts. If a website was
@@ -951,9 +1004,7 @@ export async function* streamChat(
   // skills so visitors get plain text answers instead of silent tool attempts.
   // Runtime skills are stored under the isolated CLAUDE_CONFIG_DIR/skills,
   // which Claude Code treats as the user skill source.
-  const settingSources: SettingSource[] = channelPermissionMode === 'qa_only' || opts.restrictBuiltInTools
-    ? []
-    : ['user', 'project']
+  const settingSources: SettingSource[] = channelPermissionMode === 'qa_only' || opts.restrictBuiltInTools ? [] : ['user', 'project']
   const includePartialMessages = channelPermissionMode === 'qa_only'
     ? false
     : opts.streaming !== false
@@ -975,22 +1026,13 @@ export async function* streamChat(
     ...(process.env.WEWORKER_PACKAGED ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
   }
 
-  const nativeCommandTool = process.platform === 'win32' ? 'PowerShell' : 'Bash'
-  const alternateCommandTool = process.platform === 'win32' ? 'Bash' : 'PowerShell'
-  const baseDisallowed = ['Agent', 'WebFetch', 'Task', 'TaskOutput', 'CronList', 'CronCreate', 'CronDelete', 'AskUserQuestion', alternateCommandTool]
-  let disallowedTools = channelPermissionMode === 'qa_only'
-    ? [...baseDisallowed, nativeCommandTool, 'Skill', 'Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit', 'TodoWrite', 'WebSearch']
-    : channelPermissionMode === 'no_bash'
-      ? [...baseDisallowed, nativeCommandTool]
-      : baseDisallowed
-  if (opts.restrictBuiltInTools) {
-    disallowedTools = [...new Set([
-      ...disallowedTools,
-      nativeCommandTool,
-      'Skill', 'Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit', 'TodoWrite', 'WebSearch',
-    ])]
-  }
-  const filesystemSettings = buildAgentFilesystemSettings(getUserDirectory(), channelPermissionMode)
+  const disallowedTools = buildDisallowedTools(
+    channelPermissionMode,
+    process.platform,
+    opts.restrictBuiltInTools,
+  )
+  const agentCwd = ensureAgentWorkingDirectory()
+  const filesystemSettings = buildAgentFilesystemSettings(agentCwd, channelPermissionMode)
   const filesystemToolGuard = createUnifiedToolGuard(channelPermissionMode)
   const toolPolicy = createWeWorkerToolPolicy(channelPermissionMode)
   const canUseTool: typeof toolPolicy = async (toolName, input, context) => {
@@ -1002,11 +1044,12 @@ export async function* streamChat(
     return filesystemToolGuard(toolName, input as Record<string, unknown>)
   }
 
-  const memoryEnabled = opts.memoryEnabled !== false
+  const memoryEnabled = opts.memoryEnabled !== false && !opts.restrictBuiltInTools
   const skillRoots = channelPermissionMode === 'qa_only' || opts.restrictBuiltInTools ? [] : [
     path.join(queryEnv.CLAUDE_CONFIG_DIR!, 'skills'),
     path.join(getUserDirectory(), '.claude', 'skills'),
   ]
+  if (skillRoots.length) refreshDesktopAdapterSkills(skillRoots[0])
   const loadedSkills = buildLoadedSkillContext(messages, skillRoots)
   const skillContextCollector = createSkillContextCollector(skillRoots)
   log.info('skill_context_replay', { present: !!loadedSkills, chars: loadedSkills.length })
@@ -1040,12 +1083,13 @@ export async function* streamChat(
     })
     : ''
   const systemPrompt = opts.systemPromptOverride ?? buildSystemPrompt({
-      channelPermissionMode,
-      zcfRole: opts.zcfRole,
-      zcfMode: opts.zcfMode,
-      zcfCustomRoles: settings.zcf_custom_roles,
-      memoryProtocol,
-    })
+    channelPermissionMode,
+    zcfRole: opts.zcfRole,
+    zcfMode: opts.zcfMode,
+    zcfCustomRoles: settings.zcf_custom_roles,
+    memoryProtocol,
+  })
+  const nativeCommandTool = process.platform === 'win32' ? 'PowerShell' : 'Bash'
   const buildAssembly = (conversationPrompt: string, compaction?: ConversationCompactionSnapshot) => buildContextAssembly({
     systemPrompt,
     identityPrompt,
@@ -1185,7 +1229,7 @@ export async function* streamChat(
           claudeSetup,
           spawnClaudeCodeProcess,
           env: envWithWebcli,
-          mcpServer,
+          mcpServer: activeMcpServer,
           disallowedTools,
           settingSources,
         })
@@ -1244,7 +1288,7 @@ export async function* streamChat(
       // bypassPermissions skips canUseTool; blacklist enforcement relies on canUseTool + tool handlers.
       permissionMode: 'default',
       includePartialMessages,
-      cwd: getUserDirectory(),
+      cwd: agentCwd,
       settingSources,
       pathToClaudeCodeExecutable: claudeSetup.pathToClaudeCodeExecutable,
       spawnClaudeCodeProcess,

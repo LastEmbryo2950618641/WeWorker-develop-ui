@@ -20,6 +20,7 @@ import { useTerminalStore } from './store/terminal.js'
 import { useToolPackagePageStore } from './store/tool-package-page.js'
 import { useExplorationPageStore } from './store/exploration-page.js'
 import { useWebsiteExplorationStore } from './store/website-exploration.js'
+import { useSitesStore } from './store/sites.js'
 import { WebsiteExplorationGuard } from './components/website-exploration/WebsiteExplorationPage.jsx'
 import { useAntdThemeConfig } from './theme/antd-theme.js'
 import { streamBackendEvents } from './api/http.js'
@@ -99,7 +100,7 @@ export default function App() {
   // 放在主题 class effect 之后声明：切换时先应用 class，再解析 CSS 变量为 antd token。
   const antdThemeConfig = useAntdThemeConfig(theme)
 
-  // SSE listener for task_notification and terminal events
+  // SSE listener for task, terminal and Adapter state events
   useEffect(() => {
     const controller = new AbortController()
     let retryTimer = 0
@@ -109,6 +110,14 @@ export default function App() {
         if (parsed.type === 'terminal_event') {
           useTerminalStore.getState().handleTerminalEvent(parsed)
           useWorksStore.getState().handleTerminalEvent(parsed)
+          return
+        }
+        if (parsed.type === 'memory_status' && parsed.workId) {
+          useWorksStore.getState().setMemoryStatus(parsed.workId, parsed)
+          return
+        }
+        if (parsed.type === 'adapter_state_changed') {
+          useSitesStore.getState().refreshSites()
           return
         }
         if (parsed.type !== 'task_notification') return

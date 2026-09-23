@@ -97,6 +97,7 @@ export function loadToolkitAdapters(options = {}) {
 
   const adapters = [];
   for (const entry of readdirSync(adaptersDir, { withFileTypes: true })) {
+    if (options.excludedNames?.has(entry.name)) continue;
     if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
     const adapterRoot = join(adaptersDir, entry.name);
     const manifestPath = join(adapterRoot, "manifest.json");
@@ -108,11 +109,16 @@ export function loadToolkitAdapters(options = {}) {
     let manifest;
     try {
       manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-    } catch {
+    } catch (error) {
+      if (options.ignoreInvalid) continue;
       fail(entry.name, "manifest.json is not valid JSON.");
     }
     if (manifest?.adapter_type !== "toolkit") continue;
-    adapters.push(validateToolkitManifest(manifest, adapterRoot, entry.name));
+    try {
+      adapters.push(validateToolkitManifest(manifest, adapterRoot, entry.name));
+    } catch (error) {
+      if (!options.ignoreInvalid) throw error;
+    }
   }
   return adapters.sort((left, right) => left.id.localeCompare(right.id));
 }

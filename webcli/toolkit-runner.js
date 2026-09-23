@@ -19,6 +19,11 @@ export function toolkitRuntimeCandidates(baseDir = moduleDir, platform = process
 }
 
 export function resolveToolkitRuntime(options = {}) {
+  const injected = (options.env || process.env).WEWORKER_TOOLKIT_RUNTIME;
+  if (injected) {
+    if (!existsSync(injected)) throw new Error("宿主指定的 Toolkit Runtime 不可用。");
+    return injected;
+  }
   const candidates = options.candidates || toolkitRuntimeCandidates(options.baseDir, options.platform);
   const runtime = candidates.find((candidate) => existsSync(candidate));
   if (runtime) return runtime;
@@ -54,9 +59,12 @@ export async function runToolkitTool(match, parameters, options = {}) {
   const traceID = options.traceID || randomUUID().replace(/-/g, "").slice(0, 12);
   const startedAt = Date.now();
   const runtimeArgs = options.runtimeArgs || [];
+  const internalArgs = (options.env || process.env).WEWORKER_TOOLKIT_RUNTIME_MODE === "python"
+    ? []
+    : ["--internal-script"];
   const child = (options.spawn || spawn)(
     runtime,
-    [...runtimeArgs, "--internal-script", match.adapter.entryPath, match.tool.id],
+    [...runtimeArgs, ...internalArgs, match.adapter.entryPath, match.tool.id],
     {
       cwd: match.adapter.root,
       env: toolkitEnvironment(options.env || process.env),

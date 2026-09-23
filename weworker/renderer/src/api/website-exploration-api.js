@@ -238,8 +238,8 @@ export function installToolkitToWeWorker(toolkitId) {
   return post(`/api/toolkits/${encode(toolkitId)}/install-to-weworker`);
 }
 
-export function runDebugTool(toolkitId, toolId, channel, parameters) {
-  return post(`/api/toolkits/${encode(toolkitId)}/tools/${encode(toolId)}/debug-runs`, { channel, parameters });
+export function runDebugTool(toolkitId, toolId, channel, parameters, expectedDistributionHash) {
+  return post(`/api/toolkits/${encode(toolkitId)}/tools/${encode(toolId)}/debug-runs`, { channel, parameters, ...(channel === "formal" ? { expected_distribution_hash: expectedDistributionHash } : {}) });
 }
 
 export function cancelDebugRun(debugRunId) {

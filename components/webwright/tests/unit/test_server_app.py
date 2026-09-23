@@ -38,7 +38,8 @@ def _paths(tmp_path: Path) -> WebwrightPaths:
     return WebwrightPaths.resolve(home=tmp_path)
 
 
-def test_health_endpoint(tmp_path: Path) -> None:
+def test_health_endpoint(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("WEWORKER_EXPLORATION_INSTANCE_ID", "managed-instance")
     app = create_app(
         paths=_paths(tmp_path),
         runtime_identity={
@@ -56,6 +57,7 @@ def test_health_endpoint(tmp_path: Path) -> None:
     assert response.get_json()["runtime"] == "local_browser.local_cdp"
     assert "commit" not in response.get_json()
     assert response.get_json()["mode"] == "embedded"
+    assert response.get_json()["instance_id"] == "managed-instance"
     assert response.get_json()["capabilities"]["install_to_weworker"] is False
 
 
@@ -432,7 +434,7 @@ def test_development_run_detail_and_log_endpoints(tmp_path: Path) -> None:
     assert detail.get_json()["instruction"] == "Build it"
     assert detail.get_json()["has_runtime_errors"] is True
     assert log.status_code == 200
-    assert log.get_data(as_text=True) == "developer output\n"
+    assert log.get_data(as_text=True).replace("\r\n", "\n") == "developer output\n"
 
 
 def test_restart_development_from_exploration_api_uses_explicit_mode(

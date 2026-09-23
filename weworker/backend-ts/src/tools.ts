@@ -27,35 +27,20 @@ import { invokesWebcli } from './agent-tool-policy.js'
 
 const log = createLogger('tools')
 
-// ── ask_user pending requests ─────────────────────────────────────────────────
-
-export interface AskUserRequest {
-  toolCallId: string
-  question: string
-  options: Array<{ label: string; description?: string }>
-  resolve: (answer: string) => void
-}
-
-const _pendingAskUser = new Map<string, AskUserRequest>()
-
-export function setPendingAskUser(workId: string, req: AskUserRequest): void {
-  _pendingAskUser.set(workId, req)
-}
-
-export function resolvePendingAskUser(workId: string, answer: string): boolean {
-  const req = _pendingAskUser.get(workId)
-  if (!req) return false
-  _pendingAskUser.delete(workId)
-  req.resolve(answer)
-  return true
-}
-
-export function hasPendingAskUser(workId: string): boolean {
-  return _pendingAskUser.has(workId)
-}
-
-export function getPendingAskUser(workId: string): AskUserRequest | undefined {
-  return _pendingAskUser.get(workId)
+// ── ask_user pending requests（实现见 ask-user-pending.ts，此处 re-export 保留既有导入路径）──
+import {
+  setPendingAskUser,
+  resolvePendingAskUser,
+  hasPendingAskUser,
+  getPendingAskUser,
+  type AskUserRequest,
+} from './ask-user-pending.js'
+export {
+  setPendingAskUser,
+  resolvePendingAskUser,
+  hasPendingAskUser,
+  getPendingAskUser,
+  type AskUserRequest,
 }
 
 type AskUserSSECallback = (event: { type: string; id: string; question: string; options: Array<{ label: string; description?: string }> }) => void
@@ -227,6 +212,7 @@ function buildExplorationChatTools(coordinator: ExplorationCoordinatorToolTarget
 }
 
 interface McpServerContext {
+  platform?: NodeJS.Platform
   channelPermissionMode?: ChannelPermissionMode
   workId?: string | null
   abortSignal?: AbortSignal | null
@@ -283,7 +269,8 @@ export function buildMcpServer(opts?: McpServerContext) {
   const askUserSSECallback = opts?.askUserSSECallback ?? null
   const channelAskUserHandler = opts?.channelAskUserHandler ?? null
   const channelPermissionMode = opts?.channelPermissionMode ?? 'full'
-  const nativeCommandTool = process.platform === 'win32' ? 'PowerShell' : 'Bash'
+  const platform = opts?.platform ?? process.platform
+  const nativeCommandTool = platform === 'win32' ? 'PowerShell' : 'Bash'
 
   if (opts?.channelPermissionMode === 'qa_only') {
     return createSdkMcpServer({

@@ -10,6 +10,13 @@ export interface AdapterScaffoldGeneratedEvent {
   adapterDir?: string
 }
 
+export interface AdapterStateChangedEvent {
+  profile: string
+  previousRevision: number
+  revision: number
+  adapters: string[]
+}
+
 /**
  * Bridge event monitor. Connects to the WebSocket bridge, tracks connection
  * state, and exposes local runtime events such as scaffold generation.
@@ -23,6 +30,7 @@ export class BridgeStatus {
   private _reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private _stopped = false
   private _adapterScaffoldListeners = new Set<(event: AdapterScaffoldGeneratedEvent) => void>()
+  private _adapterStateListeners = new Set<(event: AdapterStateChangedEvent) => void>()
 
   start(): void {
     this._connect()
@@ -72,7 +80,7 @@ export class BridgeStatus {
     } else if (type === 'extension_disconnected') {
       this._extensionConnected = false
       this._extensionVersion = null
-    } else if (type === 'adapter_scaffold_generated') {
+    } else if (type === 'adapter_scaffold_generated' || type === 'adapter_installed') {
       const siteKey = typeof msg.siteKey === 'string' ? msg.siteKey.trim() : ''
       if (!siteKey) return
       const event: AdapterScaffoldGeneratedEvent = {
@@ -86,12 +94,36 @@ export class BridgeStatus {
           log.warn('adapter scaffold listener failed', e)
         }
       }
+    } else if (type === 'adapter_state_changed') {
+      const previousRevision = Number(msg.previousRevision)
+      const revision = Number(msg.revision)
+      if (!Number.isSafeInteger(previousRevision) || !Number.isSafeInteger(revision)) return
+      const event: AdapterStateChangedEvent = {
+        profile: typeof msg.profile === 'string' ? msg.profile : '',
+        previousRevision,
+        revision,
+        adapters: Array.isArray(msg.adapters)
+          ? msg.adapters.filter((name): name is string => typeof name === 'string')
+          : [],
+      }
+      for (const listener of this._adapterStateListeners) {
+        try {
+          listener(event)
+        } catch (e) {
+          log.warn('adapter state listener failed', e)
+        }
+      }
     }
   }
 
   onAdapterScaffoldGenerated(listener: (event: AdapterScaffoldGeneratedEvent) => void): () => void {
     this._adapterScaffoldListeners.add(listener)
     return () => this._adapterScaffoldListeners.delete(listener)
+  }
+
+  onAdapterStateChanged(listener: (event: AdapterStateChangedEvent) => void): () => void {
+    this._adapterStateListeners.add(listener)
+    return () => this._adapterStateListeners.delete(listener)
   }
 
   isConnected(): boolean { return this._connected }

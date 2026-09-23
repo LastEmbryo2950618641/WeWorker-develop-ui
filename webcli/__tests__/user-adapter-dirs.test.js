@@ -43,9 +43,9 @@ describe('resolveUserAdaptersDir', () => {
     expect(norm(resolveUserAdaptersDir())).toBe('C:/Users/mock/.weworker/adapters')
   })
 
-  it('falls back to ~/.webcli/adapters when only that exists', () => {
+  it('keeps the stable write root when only the legacy directory exists', () => {
     vi.mocked(existsSync).mockImplementation((p) => norm(p).includes('.webcli/adapters'))
-    expect(norm(resolveUserAdaptersDir())).toBe('C:/Users/mock/.webcli/adapters')
+    expect(norm(resolveUserAdaptersDir())).toBe('C:/Users/mock/.weworker/adapters')
   })
 
   it('uses weworker path as default even when neither exists', () => {

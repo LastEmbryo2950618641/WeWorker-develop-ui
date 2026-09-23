@@ -41,6 +41,10 @@ export function createClient({ base, token }) {
     getWork: (workId) => json(`/works/${workId}`),
     deleteWork: (workId) => json(`/works/${workId}`, { method: 'DELETE' }),
 
+    /** 应答交互确认门（plan tier 的 user_choice）。镜像 ChatView 的 POST /works/:id/user-choice。 */
+    answerChoice: (workId, answer) =>
+      json(`/works/${workId}/user-choice`, { method: 'POST', body: JSON.stringify({ answer }) }),
+
     /**
      * 发送对话并消费 SSE。onEvent 收到每个解析后的事件。
      * 镜像 renderer/src/api/backend.js:10-53 的行解析逻辑。

@@ -24,8 +24,77 @@ export function openDb(file = "metrics.db") {
       ON metrics(client_id, ts, trace_id, tool);
     CREATE INDEX IF NOT EXISTS idx_ts     ON metrics(ts);
     CREATE INDEX IF NOT EXISTS idx_domain ON metrics(domain);
+
+    CREATE TABLE IF NOT EXISTS visits (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      day TEXT NOT NULL,            -- YYYY-MM-DD（UTC）
+      ip TEXT,                      -- 访客标识（IP），用于 UV 去重
+      path TEXT,                    -- 访问路径（首页/下载/文档等）
+      ua TEXT,                      -- UA（可选，粗略区分）
+      ts INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_visits_day ON visits(day);
+    CREATE INDEX IF NOT EXISTS idx_visits_ts  ON visits(ts);
   `);
   return db;
+}
+
+/** 生成当前 UTC 日期的 YYYY-MM-DD */
+export function dayString(ts = Date.now()) {
+  const d = new Date(ts);
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * 记录一次站点访问。幂等性不强求（PV 就是逐次累加）；UV 靠查询时 COUNT(DISTINCT ip)。
+ * @param {DatabaseSync} db
+ * @param {{day?:string, ip?:string, path?:string, ua?:string, ts?:number}} visit
+ * @returns {{ok:boolean}}
+ */
+export function insertVisit(db, { day, ip, path, ua, ts } = {}) {
+  const now = typeof ts === "number" && Number.isFinite(ts) ? ts : Date.now();
+  const stmt = db.prepare(
+    `INSERT INTO visits (day, ip, path, ua, ts) VALUES (?, ?, ?, ?, ?)`
+  );
+  stmt.run(
+    day || dayString(now),
+    typeof ip === "string" && ip ? ip.slice(0, 64) : null,
+    typeof path === "string" && path ? path.slice(0, 256) : null,
+    typeof ua === "string" && ua ? ua.slice(0, 256) : null,
+    now
+  );
+  return { ok: true };
+}
+
+/**
+ * 按天聚合 PV/UV。
+ * - PV = 每天访问次数（COUNT(*)）
+ * - UV = 每天独立访客数（COUNT(DISTINCT ip)）
+ * @param {DatabaseSync} db
+ * @param {{since?:string}} opts  since: 1d/7d/30d
+ * @returns {{rows:Array<{day:string, pv:number, uv:number}>, totalPv:number, totalUv:number}}
+ */
+export function queryVisits(db, { since = "30d" } = {}) {
+  const cutoff = Date.now() - parseDuration(since);
+  const rows = db
+    .prepare(
+      `SELECT day,
+              COUNT(*) AS pv,
+              COUNT(DISTINCT ip) AS uv
+       FROM visits
+       WHERE ts >= ?
+       GROUP BY day
+       ORDER BY day ASC`
+    )
+    .all(cutoff);
+  const totalPv = rows.reduce((s, r) => s + r.pv, 0);
+  const totalUv = db
+    .prepare(`SELECT COUNT(DISTINCT ip) AS uv FROM visits WHERE ts >= ? AND ip IS NOT NULL`)
+    .get(cutoff).uv;
+  return { rows, totalPv, totalUv: totalUv || 0 };
 }
 
 /** 只取白名单字段 */

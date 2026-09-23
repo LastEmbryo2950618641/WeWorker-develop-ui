@@ -1105,88 +1105,7 @@ async function ensureMemoryBeforeGenerate() {
 }
 
 async function triggerQuickGenerate() {
-  const btn = document.getElementById('btnExploreQuickGenerate');
-  const resultEl = document.getElementById('exploreGenerateResult');
-  if (!(await ensureBridgeConnected('Bridge 未连接，无法生成工具'))) {
-    resultEl.innerHTML = '<div style="color:#f38ba8">Bridge 未连接，无法写入生成工具。请先启动或重启 webcli bridge，再重试。</div>';
-    resultEl.hidden = false;
-    return;
-  }
-  btn.disabled = true; btn.textContent = '网站工具生成中…';
-  try {
-    const saveResult = await ensureMemoryBeforeGenerate();
-    if (!saveResult.ok) {
-      const el = document.getElementById('exploreGenerateResult');
-      el.innerHTML = `<div style="color:#f38ba8">生成前保存探索结果失败：${escHtml(saveResult.error || '未知错误')}</div>`;
-      el.hidden = false;
-      return;
-    }
-    const r = await chrome.runtime.sendMessage({ type: 'popup_explore_generate_scaffold', siteKey: currentSiteKey });
-    const el = document.getElementById('exploreGenerateResult');
-    if (r.error) { el.innerHTML = `<div style="color:#f38ba8">${escHtml(r.error)}</div>`; }
-    else {
-      const toolCount = r.toolNames?.length || 0;
-      const toolItems = (r.toolNames || []).map((toolName) => `<div>• ${escHtml(toolName)}</div>`).join('');
-      const fileLines = collectUniqueGeneratedFileLines(r.files);
-      const semanticSummary = r.semanticEnhancement
-        ? `semantic: ${r.semanticEnhancement.analysisSource || 'heuristic'}${r.semanticEnhancement.model ? ` / ${r.semanticEnhancement.model}` : ''} / overrides=${r.semanticEnhancement.toolOverrideCount || 0} / uiHints=${r.semanticEnhancement.uiHintCount || 0}`
-        : '';
-      const cleanupSummary = Array.isArray(r.removedGeneratedFiles)
-        ? `cleanup: removed=${r.removedGeneratedFiles.length}`
-        : '';
-      const refreshSummary = Number.isFinite(Number(r.refreshedTabs))
-        ? `runtime-refresh: tabs=${Number(r.refreshedTabs)} / tools=${Number(r.refreshedToolCount || 0)}`
-        : '';
-      const refreshedToolCount = Number(r.refreshedToolCount || 0);
-      const refreshedTabs = Number(r.refreshedTabs || 0);
-      const hasRuntimeTools = refreshedToolCount > 0;
-      const runtimeNotice = hasRuntimeTools
-        ? `已生成网站工具（${toolCount} 个工具）并写入文件，当前页面工具已自动刷新`
-        : `已生成网站工具（${toolCount} 个工具）并写入文件，但当前页面尚未注册到可用工具`;
-      const runtimeHint = hasRuntimeTools
-        ? ''
-        : `<div style="color:#fab387;margin-bottom:8px">如果“使用”中仍无工具，请刷新当前网页或重载扩展；若显示“适配器加载失败”，优先按错误信息检查生成文件。</div>`;
-      const skillSummary = r.skillPreserved
-        ? 'skill: 已保留现有 SKILL.md，新草稿写入 SKILL.generated.md'
-        : 'skill: 已写入 SKILL.md';
-      const summaryLines = [
-        `mode: ${r.mode || 'unknown'}`,
-        `strategy: ${r.generationStrategy || 'unknown'}`,
-        skillSummary,
-        semanticSummary,
-        cleanupSummary,
-        refreshSummary,
-        `adapterDir: ${r.adapterDir || ''}`,
-        ...fileLines.map((filePath) => `file: ${filePath}`),
-      ].filter(Boolean);
-      el.innerHTML = `
-        <div style="color:${hasRuntimeTools ? '#a6e3a1' : '#fab387'};margin-bottom:6px">${escHtml(runtimeNotice)}</div>
-        ${runtimeHint}
-        ${toolItems ? `<div style="margin-bottom:8px">${toolItems}</div>` : ''}
-        <div class="explore-actions" style="margin-bottom:8px">
-          <button class="btn-sm primary" type="button" data-generate-action="open-knowledge">查看知识包</button>
-          <button class="btn-sm secondary" type="button" data-generate-action="open-skill">查看Skill</button>
-          ${r.skillPreserved ? '<button class="btn-sm secondary" type="button" data-generate-action="open-generated-skill">查看生成Skill</button>' : ''}
-          <button class="btn-sm secondary" type="button" data-generate-action="open-code">查看代码</button>
-        </div>
-        <pre>${escHtml(summaryLines.join('\n'))}</pre>
-      `;
-      if (!hasRuntimeTools && refreshedTabs === 0) {
-        showToast('工具已生成。当前没有可刷新的匹配页面，请打开或刷新目标网站。', 3000);
-      }
-      setDevAdvancedCodeVisible(false);
-      setDevViewMode('auto');
-      setDevWorkflowStep('generate');
-      await refreshCurrentTabState();
-      // refreshCurrentTabState restores exploration/capture content and may
-      // change the visible workflow panel. A successful generation must end
-      // on step 3 so the generated result remains visible.
-      setDevWorkflowStep('generate');
-      applyDevView(Boolean(currentSiteKey));
-      el.hidden = false;
-    }
-    el.hidden = false;
-  } finally { btn.disabled = false; btn.textContent = '快速生成'; }
+  return triggerGenerate({ quick: true });
 }
 
 const GENERATION_STATUS_LABELS = {
@@ -1197,9 +1116,9 @@ const GENERATION_STATUS_LABELS = {
   static_validating: '正在执行静态验证',
   revising: '正在修正草稿',
   runtime_validating: '正在执行真实调用验证',
-  awaiting_approval: '草稿验证通过，等待发布',
-  publishing: '正在发布 Adapter',
-  completed: 'Adapter 已发布',
+  awaiting_approval: '草稿验证通过，等待安装',
+  publishing: '正在安装 Adapter',
+  completed: 'Adapter 已安装',
   failed: '智能生成失败',
   cancelled: '智能生成已取消',
   needs_user_input: '需要补充操作信息',
@@ -1255,7 +1174,7 @@ async function restoreGenerationRunForSite(siteKey = currentSiteKey) {
       await removeGenerationRunId(siteKey, runId);
       return false;
     }
-    if (!ACTIVE_GENERATION_STATUSES.has(response.run.status) && response.run.status !== 'awaiting_approval') {
+    if (!ACTIVE_GENERATION_STATUSES.has(response.run.status) && !['awaiting_approval', 'needs_user_input'].includes(response.run.status)) {
       await removeGenerationRunId(siteKey, runId);
       return false;
     }
@@ -1270,9 +1189,11 @@ async function restoreGenerationRunForSite(siteKey = currentSiteKey) {
   }
 }
 
+let activeInstallationReview = null;
 function renderGenerationRun(run, extra = {}) {
   if (!run) return;
   activeGenerationRunId = run.id || activeGenerationRunId;
+  activeInstallationReview = run.artifacts?.installationReview || null;
   const resultEl = document.getElementById('exploreGenerateResult');
   const status = String(run.status || 'created');
   const statusLabel = GENERATION_STATUS_LABELS[status] || status;
@@ -1341,10 +1262,14 @@ function renderGenerationRun(run, extra = {}) {
     ${toolItems ? `<div style="margin-bottom:8px"><div style="color:#6c7086">草稿工具</div>${toolItems}</div>` : ''}
     ${validation ? `<div style="margin-bottom:8px"><div style="color:#6c7086">静态验证：${validation.passed ? '通过' : '未通过'}，检查文件 ${Number(validation.checkedFiles || 0)} 个</div>${errorItems}${warningItems}</div>` : ''}
     ${runtimeValidation ? `<div style="margin-bottom:8px"><div style="color:#6c7086">运行验证：${runtimeValidation.passed ? '通过' : '未通过'} · 调用 ${Number(runtimeValidation.executionSummary?.attempted || 0)} · 跳过 ${Number(runtimeValidation.executionSummary?.skipped || 0)}</div>${runtimeItems}${runtimeErrorItems}</div>` : ''}
+    ${activeInstallationReview ? `<div style="margin-bottom:8px"><div>本机安装评审</div><div>版本：${escHtml(activeInstallationReview.currentVersion || '未安装')} → ${escHtml(activeInstallationReview.version)}</div><div>来源：${escHtml(activeInstallationReview.currentSource || '无')} → 本机生成</div><div>申请权限：${escHtml(activeInstallationReview.permissions.join('、') || '无')}</div><div>新增权限：${escHtml(activeInstallationReview.addedPermissions.join('、') || '无')}</div>${activeInstallationReview.sourceChange ? '<div>将切换更新来源。</div>' : ''}${activeInstallationReview.downgrade ? '<div>将降级当前版本。</div>' : ''}</div>` : ''}
     ${lastError}
+    ${run.artifacts?.pendingQuestion?.question ? `<div>${escHtml(run.artifacts.pendingQuestion.question)}</div>` : ''}
+    ${status === 'needs_user_input' ? '<input id="generationResumeAnswer" aria-label="补充信息" placeholder="请填写补充信息或确认已登录" />' : ''}
     ${refreshSummary}
     <div class="explore-actions" style="margin-top:10px">
-      ${canPublish ? '<button class="btn-sm primary" type="button" data-generate-action="publish-run">确认发布</button>' : ''}
+      ${canPublish ? '<button class="btn-sm primary" type="button" data-generate-action="publish-run">安装并启用</button>' : ''}
+      ${status === 'needs_user_input' ? '<button class="btn-sm primary" type="button" data-generate-action="resume-run">继续验证</button>' : ''}
       ${isRunning ? '<button class="btn-sm secondary" type="button" data-generate-action="cancel-run">取消任务</button>' : ''}
       ${isFailure ? '<button class="btn-sm secondary" type="button" data-generate-action="retry-smart">重新智能生成</button>' : ''}
       ${canPublish || isFailure ? '<button class="btn-sm secondary" type="button" data-generate-action="quick-generate">改用快速生成</button>' : ''}
@@ -1368,7 +1293,7 @@ async function pollGenerationRun(runId) {
     renderGenerationRun(response.run);
     if (ACTIVE_GENERATION_STATUSES.has(response.run.status)) {
       generationPollTimer = setTimeout(() => pollGenerationRun(runId), 1000);
-    } else if (response.run.status !== 'awaiting_approval') {
+    } else if (response.run.status !== 'awaiting_approval' && response.run.status !== 'needs_user_input') {
       await removeGenerationRunId(currentSiteKey, runId);
     }
   } catch (error) {
@@ -1382,8 +1307,8 @@ async function pollGenerationRun(runId) {
   }
 }
 
-async function triggerGenerate() {
-  const btn = document.getElementById('btnExploreGenerate');
+async function triggerGenerate({ quick = false } = {}) {
+  const btn = document.getElementById(quick ? 'btnExploreQuickGenerate' : 'btnExploreGenerate');
   const resultEl = document.getElementById('exploreGenerateResult');
   if (!(await ensureBridgeConnected('Bridge 未连接，无法启动智能生成'))) {
     resultEl.innerHTML = '<div style="color:#f38ba8">Bridge 未连接，无法启动智能生成。请先启动或重启 webcli bridge。</div>';
@@ -1398,6 +1323,7 @@ async function triggerGenerate() {
     if (!saveResult.ok) throw new Error(`生成前保存探索结果失败：${saveResult.error || '未知错误'}`);
     const response = await chrome.runtime.sendMessage({
       type: 'popup_explore_start_generation',
+      mode: quick ? 'quick' : 'agent',
       siteKey: currentSiteKey,
       tabId: currentTabId,
     });
@@ -1412,8 +1338,17 @@ async function triggerGenerate() {
     resultEl.hidden = false;
   } finally {
     if (!started) btn.disabled = false;
-    btn.textContent = '智能生成';
+    btn.textContent = quick ? '快速生成' : '智能生成';
   }
+}
+
+async function resumeGenerationRun() {
+  const answer = document.getElementById('generationResumeAnswer')?.value?.trim();
+  if (!activeGenerationRunId || !answer) throw new Error('请填写补充信息后继续。');
+  const response = await chrome.runtime.sendMessage({ type: 'popup_explore_resume_generation', runId: activeGenerationRunId, answer });
+  if (!response?.ok || !response.run) throw new Error(response?.error || '继续验证失败');
+  renderGenerationRun(response.run);
+  await pollGenerationRun(response.run.id);
 }
 
 async function cancelGenerationRun() {
@@ -1430,13 +1365,16 @@ async function cancelGenerationRun() {
 
 async function publishGenerationRun() {
   if (!activeGenerationRunId) return;
+  const review = activeInstallationReview;
+  if (!confirm('确认上述版本、来源和权限变化，并安装到本机用户目录？')) return;
   clearGenerationPolling();
   const response = await chrome.runtime.sendMessage({
     type: 'popup_explore_publish_generation',
     runId: activeGenerationRunId,
+    approval: { reviewId: review?.reviewId, acceptChanges: true },
     siteKey: currentSiteKey,
   });
-  if (!response?.ok || !response.run) throw new Error(response?.error || '发布失败');
+  if (!response?.ok || !response.run) throw new Error(response?.error || '安装失败');
   renderGenerationRun(response.run, response);
   if (response.run.status === 'completed') {
     await removeGenerationRunId(currentSiteKey, activeGenerationRunId);
@@ -2391,6 +2329,8 @@ async function init() {
       openDevEditorAtFile('code').catch((err) => showToast(err.message));
     } else if (action === 'publish-run') {
       publishGenerationRun().catch((err) => showToast(err.message));
+    } else if (action === 'resume-run') {
+      resumeGenerationRun().catch((err) => showToast(err.message));
     } else if (action === 'cancel-run') {
       cancelGenerationRun().catch((err) => showToast(err.message));
     } else if (action === 'retry-smart') {

@@ -33,7 +33,9 @@ function loadManager(spawn, isPackaged = false) {
   return vm.runInNewContext(`${body}; NodeManager`, {
     path, __dirname: path.resolve('electron'), process: { env: {}, execPath: 'electron', resourcesPath: path.resolve('fixture-resources') },
     app: { isPackaged }, utilityProcess: { fork: (file, args, options) => spawn(file, args, options) }, randomUUID: () => 'fixture-instance',
-    resolveWebwrightHome: () => 'fixture-home', buildWebwrightEnvironment: () => ({}),
+    resolveWebwrightHome: () => 'fixture-home', buildWebwrightEnvironment: env => env,
+    resolveClaudeCodePath: () => '/weworker-fixtures/claude',
+    adapterEnvironment: () => ({ WEWORKER_BUILD_PROFILE: 'fixture' }),
     resolveBackendAvailability: async () => 'free', isPortOccupied: async () => false,
     waitForHttpInstance: async () => {}, spawn, clearTimeout,
   })
@@ -62,6 +64,8 @@ test('development backend starts without undefined environment variables', async
     assert.equal(options.env.ELECTRON_RUN_AS_NODE, '1')
     assert.equal(options.env.WEWORK_PORT, '8765')
     assert.equal(options.env.WEWORKER_EXPLORATION_INSTANCE_ID, 'exploration-fixture')
+    assert.equal(options.env.WEWORKER_CLAUDE_CODE_PATH, '/weworker-fixtures/claude')
+    assert.equal(options.env.WEWORKER_BUILD_PROFILE, 'fixture')
     assert.ok(args.includes('src/server.ts'))
     return child
   })

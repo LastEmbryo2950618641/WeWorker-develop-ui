@@ -4,9 +4,11 @@ import { spawn } from 'child_process'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import { WEBWRIGHT_URL } from './webwright-manager.js'
 import { randomUUID } from 'crypto'
 import { pipeline } from 'stream/promises'
+import { saveAdapterStream } from './website-adapter-export.js'
+
+const websiteDownloads = new Map()
 
 // Chrome executable paths by platform
 function getChromeExecutable() {
@@ -409,8 +411,39 @@ export function registerIpcHandlers(bridgeManager, pythonManager, webwrightManag
     shell.openExternal(url)
   })
 
-  ipcMain.handle('open-webwright', () => {
-    return shell.openExternal(WEBWRIGHT_URL)
+  ipcMain.handle('open-webwright', (event) => {
+    event.sender.send('website-exploration:open')
+    return true
+  })
+
+  ipcMain.handle('download-website-adapter', async (event, toolkitId) => {
+    if (event.senderFrame !== event.sender.mainFrame || typeof toolkitId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(toolkitId)) throw new Error('无效的 Adapter')
+    const result = await dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender), {
+      title: '导出 Adapter', defaultPath: toolkitId + '.zip', filters: [{ name: 'Adapter ZIP', extensions: ['zip'] }],
+    })
+    if (result.canceled || !result.filePath) return { cancelled: true }
+    if (websiteDownloads.has(event.sender)) throw new Error('已有导出正在运行')
+    const controller = new AbortController()
+    websiteDownloads.set(event.sender, controller)
+    const close = () => controller.abort()
+    event.sender.once('destroyed', close)
+    try {
+      const response = await fetch('http://127.0.0.1:8765/api/website-exploration/toolkits/' + toolkitId + '/export', {
+        headers: { 'X-WeWorker-Auth': httpAuthToken }, redirect: 'error', signal: controller.signal,
+      })
+      if (!response.ok || !response.body) throw new Error('导出失败，请刷新正式验证状态后重试')
+      await saveAdapterStream(response.body, result.filePath, controller.signal)
+      return { saved: true }
+    } catch (error) {
+      if (controller.signal.aborted) return { cancelled: true }
+      throw new Error('导出未完成，已有文件保持不变，请重试')
+    } finally {
+      websiteDownloads.delete(event.sender)
+      event.sender.off('destroyed', close)
+    }
+  })
+  ipcMain.handle('cancel-website-adapter-download', (event) => {
+    if (event.senderFrame === event.sender.mainFrame) websiteDownloads.get(event.sender)?.abort()
   })
 
   ipcMain.handle('select-files', async (_event, options = {}) => {

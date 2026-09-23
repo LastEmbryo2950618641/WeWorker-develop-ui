@@ -1,0 +1,139 @@
+{
+  "schema_version": 2,
+  "name": "nnfp.jss.com.cn",
+  "version": "1.0.8",
+  "description": "诺诺网发票平台：获取发票信息、下载 PDF/OFD/XML、自动下载并返回 QQ 邮箱",
+  "match": [
+    "nnfp.jss.com.cn"
+  ],
+  "requires_auth": true,
+  "commands": [
+    {
+      "id": "get-invoice-info",
+      "runtime": "extension",
+      "module": "extension/commands/get-invoice-info.js",
+      "description": "获取诺诺网发票页面的信息",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "aliases": [
+        "get_invoice_info"
+      ]
+    },
+    {
+      "id": "download-invoice",
+      "runtime": "extension",
+      "module": "extension/commands/download-invoice.js",
+      "description": "点击下载按钮下载发票（PDF/OFD/XML）。支持指定下载路径。",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string",
+            "description": "下载格式：pdf、ofd、xml 或 auto（自动选择）",
+            "enum": [
+              "pdf",
+              "ofd",
+              "xml",
+              "auto"
+            ],
+            "default": "auto"
+          },
+          "downloadPath": {
+            "type": "string",
+            "description": "下载路径（可选），相对于浏览器默认下载目录的子路径，例如：'invoices/2026-03' 或 '发票/三月'。如果不提供，则使用浏览器默认下载位置"
+          }
+        },
+        "required": []
+      },
+      "aliases": [
+        "download_invoice"
+      ]
+    },
+    {
+      "id": "auto-download-and-return",
+      "runtime": "extension",
+      "module": "extension/commands/auto-download-and-return.js",
+      "description": "自动下载发票并返回QQ邮箱（完整流程）。支持指定下载路径。",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "format": {
+            "type": "string",
+            "description": "下载格式：pdf、ofd、xml 或 auto",
+            "enum": [
+              "pdf",
+              "ofd",
+              "xml",
+              "auto"
+            ],
+            "default": "pdf"
+          },
+          "downloadPath": {
+            "type": "string",
+            "description": "下载路径（可选），相对于浏览器默认下载目录的子路径，例如：'invoices/2026-03' 或 '发票/三月'。如果不提供，则使用浏览器默认下载位置"
+          }
+        },
+        "required": []
+      },
+      "aliases": [
+        "auto_download_and_return"
+      ]
+    },
+    {
+      "id": "return-to-qqmail",
+      "runtime": "extension",
+      "module": "extension/commands/return-to-qqmail.js",
+      "description": "关闭当前页面并返回QQ邮箱",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "aliases": [
+        "return_to_qqmail"
+      ]
+    }
+  ],
+  "homepage_url": "https://github.com/WeWorker/WeWorker/tree/main/extension/adapters/nnfp.jss.com.cn",
+  "icon": "invoice",
+  "scenarios": [
+    {
+      "id": "download-pdf",
+      "title": "下载发票 PDF",
+      "summary": "在诺诺网发票页下载当前发票",
+      "prompts": [
+        {
+          "text": "在诺诺网发票页帮我下载当前发票为 PDF"
+        }
+      ]
+    },
+    {
+      "id": "from-mail",
+      "title": "邮件链接取票",
+      "summary": "从邮件中的诺诺链接打开并下载发票",
+      "prompts": [
+        {
+          "text": "从邮件里的诺诺链接打开后，帮我下载发票"
+        }
+      ]
+    }
+  ],
+  "test_prompts": [
+    "打开诺诺网发票页面，获取发票信息，然后下载 PDF"
+  ],
+  "i18n": {
+    "zh": {
+      "name": "诺诺网发票",
+      "description": "诺诺网发票平台：获取发票信息、下载 PDF/OFD/XML、自动下载并返回 QQ 邮箱"
+    }
+  },
+  "verified_on": "2026-04-08",
+  "hidden": true
+}

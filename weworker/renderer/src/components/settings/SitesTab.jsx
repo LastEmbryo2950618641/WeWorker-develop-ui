@@ -1,5 +1,6 @@
 ﻿import React, { useEffect, useState } from 'react'
 import { useSitesStore } from '../../store/sites.js'
+import { adapterPackageStatus } from '../../utils/adapter-status.js'
 import { displayToolName } from '../../utils/tool-name.js'
 import { useCapabilitiesPanelStore } from '../../store/capabilities-panel.js'
 import SiteIcon from '../icons/SiteIcon.jsx'
@@ -30,7 +31,7 @@ const rowIconBoxStyle = {
 }
 
 export default function SitesTab({ onClose }) {
-  const { sites, systemTools, loading, load, toggle, toggleVisibility } = useSitesStore()
+  const { sites, systemTools, loading, load, toggle, toggleVisibility, togglingIds, toggleError } = useSitesStore()
   const openPanel = useCapabilitiesPanelStore((s) => s.openPanel)
   const [expandedId, setExpandedId] = useState(null)
   const [devMode, setDevMode] = useState(false)
@@ -176,6 +177,8 @@ export default function SitesTab({ onClose }) {
                 >
                   {site.description}
                 </div>
+                {site.managed && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>{adapterPackageStatus(site)}</div>}
+                {toggleError?.id === site.id && <div role="alert" style={{ fontSize: 11, marginTop: 3 }}>{toggleError.message}</div>}
               </div>
               <div style={rowActionsStyle}>
                 <button
@@ -207,6 +210,7 @@ export default function SitesTab({ onClose }) {
                 <button
                   type="button"
                   onClick={() => toggle(site.id)}
+                  disabled={togglingIds.includes(site.id) || (site.managed && !site.enabled && !site.managed.canEnable)}
                   role="switch"
                   aria-checked={site.enabled}
                   aria-label={`${site.enabled ? '禁用' : '启用'} ${site.name} 工具`}

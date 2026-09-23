@@ -14,6 +14,20 @@
     "stats.js",
     "adapter-cli.js",
     "adapter-registry.js",
+    "adapter-package-v2.js",
+    "adapter-package-validation.js",
+    "adapter-package-files.js",
+    "adapter-catalog.js",
+    "adapter-host.js",
+    "adapter-extension-loader.js",
+    "adapter-views.js",
+    "adapter-desktop.js",
+    "adapter-desktop.d.ts",
+    "managed-adapter-cli.js",
+    "adapter-skill-sync.js",
+    "adapter-install-store.js",
+    "adapter-state.js",
+    "adapter-state-watch.js",
     "toolkit-runner.js",
     "direct-execution-metadata.js",
     "adapter-scaffold.js",
@@ -35,7 +49,19 @@
     "tool-timeouts.js",
     "install.js",
     "skills/",
-    "extension/"
+    "extension/",
+    "adapters/",
+    "progressive-help.js",
+    "output-format.js",
+    "column-mappings.js",
+    "adapterhub-client.js",
+    "adapterhub-cli.js",
+    "adapterhub-credentials.js",
+    "adapterhub-package.js",
+    "adapterhub-package-v2.js",
+    "adapterhub-compat.js",
+    "adapterhub.js",
+    "adapterhub-profile.json"
   ],
   "scripts": {
     "start": "node index.js",
@@ -62,7 +88,8 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.96.0",
     "ws": "^8.0.0",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "fflate": "^0.8.2"
   },
   "devDependencies": {
     "fast-check": "^4.7.0",

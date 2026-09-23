@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { fetchStats, groupByDomain, groupByUser } from '../lib/stats'
+import { fetchVisits } from '../lib/visits'
 
 const SINCE_OPTIONS = ['1d', '7d', '30d']
 const KIND_OPTIONS = ['adapter', 'builtin']
@@ -17,6 +18,27 @@ export default function Stats() {
   const [since, setSince] = useState('7d')
   const [kind, setKind] = useState('adapter')
   const [view, setView] = useState('adapter')
+
+  // 网站访问量（PV/UV）
+  const [visits, setVisits] = useState(null)
+  const [visitsLoading, setVisitsLoading] = useState(true)
+  const [visitsError, setVisitsError] = useState(null)
+
+  const loadVisits = useCallback(async () => {
+    setVisitsLoading(true)
+    setVisitsError(null)
+    try {
+      setVisits(await fetchVisits({ since }))
+    } catch (e) {
+      setVisitsError(e.message)
+    } finally {
+      setVisitsLoading(false)
+    }
+  }, [since])
+
+  useEffect(() => {
+    loadVisits()
+  }, [loadVisits])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -80,7 +102,7 @@ export default function Stats() {
           <p className="text-muted">全团队 adapter 调用频次、成功率与耗时分布。</p>
         </div>
         <button
-          onClick={load}
+          onClick={() => { load(); loadVisits(); }}
           disabled={loading}
           className="px-4 py-2.5 rounded-lg border border-accent/40 bg-accent/5 text-accent hover:bg-accent/10 text-sm font-medium transition-colors flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
         >
@@ -158,6 +180,63 @@ export default function Stats() {
         {!loading && !error && groups.length > 0 && (
           <div className="text-muted ml-auto">
             {isUser ? `${groups.length} 个用户` : `${groups.length} 个 adapter`} · {fmt(totalCalls)} 次调用
+          </div>
+        )}
+      </div>
+
+      {/* 网站访问量（PV/UV） */}
+      <div className="mb-8">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-semibold text-[rgb(var(--color-text))]">网站访问量</h2>
+          {!visitsLoading && !visitsError && visits && (
+            <div className="text-muted text-sm">
+              总 PV {fmt(visits.totalPv)} · 总 UV {fmt(visits.totalUv)}
+            </div>
+          )}
+        </div>
+
+        {visitsLoading && (
+          <div className="bg-surface border border-border rounded-xl p-4 animate-pulse">
+            <div className="h-4 bg-subtle/40 rounded w-1/2" />
+          </div>
+        )}
+
+        {visitsError && (
+          <div className="bg-surface border border-border rounded-xl p-4 text-sm text-red-500">
+            网站访问量加载失败：{visitsError}
+          </div>
+        )}
+
+        {!visitsLoading && !visitsError && visits && visits.rows.length === 0 && (
+          <div className="bg-surface border border-border rounded-xl p-4 text-muted text-sm">暂无访问数据。</div>
+        )}
+
+        {!visitsLoading && !visitsError && visits && visits.rows.length > 0 && (
+          <div className="bg-surface border border-border rounded-xl overflow-hidden">
+            {/* Header */}
+            <div className="grid grid-cols-[1fr_100px_100px] gap-3 px-4 py-3 text-xs text-muted border-b border-border bg-bg/40">
+              <div>日期</div>
+              <div className="text-right">PV</div>
+              <div className="text-right">UV</div>
+            </div>
+            {visits.rows.map((r) => {
+              const maxPv = Math.max(...visits.rows.map((x) => x.pv), 1)
+              return (
+                <div key={r.day} className="grid grid-cols-[1fr_100px_100px] gap-3 px-4 py-2.5 text-sm border-b border-border/60 last:border-b-0 items-center">
+                  <div className="flex items-center gap-3">
+                    <span className="text-[rgb(var(--color-text))] font-medium shrink-0">{r.day}</span>
+                    <div className="h-1.5 bg-subtle/40 rounded-full flex-1 overflow-hidden">
+                      <div
+                        className="h-full bg-accent/70 rounded-full"
+                        style={{ width: `${(r.pv / maxPv) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                  <div className="text-right text-[rgb(var(--color-text))] tabular-nums">{fmt(r.pv)}</div>
+                  <div className="text-right text-[rgb(var(--color-text-soft))] tabular-nums">{fmt(r.uv)}</div>
+                </div>
+              )
+            })}
           </div>
         )}
       </div>

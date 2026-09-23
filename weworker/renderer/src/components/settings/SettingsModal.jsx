@@ -1,3 +1,4 @@
+import deployment from '../../config/deployment.json'
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { useSettingsStore, PROVIDERS } from '../../store/settings.js'
 import ChannelsTab from './ChannelsTab.jsx'
@@ -16,8 +17,8 @@ import './settings-theme.css'
 import { backendFetch } from '../../api/http.js'
 
 const API = 'http://127.0.0.1:8765'
-const OFFICIAL_URL = 'http://weworker.example.com'
-const DOWNLOAD_URL = 'http://weworker.example.com/downloads/'
+const OFFICIAL_URL = deployment.officialUrl
+const DOWNLOAD_URL = deployment.downloadUrl
 const GITHUB_UPDATE_URL = 'https://github.com/WeWorker/WeWorker/releases/download/latest/'
 
 const EXACT_PATH_PLACEHOLDER = '例如 folder-b/foo/.env 或 .env'
@@ -83,6 +84,9 @@ const LOGOS = {
       <rect width="24" height="24" rx="5" fill="currentColor" fillOpacity="0.2"/>
       <text x="12" y="16" textAnchor="middle" fontSize="9" fontWeight="bold" fill="currentColor">GLM</text>
     </svg>
+  ),
+  builtin: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="currentColor" fillOpacity="0.18"/><path d="M7 12.5 10.2 15 17 8.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
   ),
   deepseek: (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
@@ -1469,6 +1473,28 @@ function ModelTab({ onClose }) {
                   : '内置模型列表'
               : '展开后自动获取厂商模型列表'
           const providerColor = p.id === 'custom' ? 'var(--provider-custom)' : p.color
+
+          if (p.id === 'builtin') {
+            const builtinActive = activeProvider === p.id
+            return (
+              <div key={p.id} className={`settings-card settings-card-builtin${builtinActive ? ' is-active' : ''}`}>
+                <div className="settings-card-header">
+                  <span style={{ color: p.color, flexShrink: 0 }}>{LOGOS[p.id]}</span>
+                  <div style={{ flex: 1 }}>
+                    <div className="settings-card-title" style={{ color: builtinActive ? p.color : 'var(--text-primary)' }}>
+                      {p.name}{builtinActive && <span className="settings-badge-active">使用中</span>}
+                    </div>
+                    <div className="settings-card-subtitle">火山方舟 Coding Plan · {builtinActive ? '当前使用 ark-code-latest' : '无需配置，下载即可使用'}</div>
+                  </div>
+                  <div className="settings-btn-group">
+                    {!builtinActive && <button type="button" onClick={() => handleActivate(p.id)} disabled={!!activating} className="settings-btn settings-btn-provider" style={{ background: providerColor }}>{activating === p.id ? '切换中...' : '使用'}</button>}
+                    <button type="button" onClick={() => handleTest(p.id)} disabled={!!testing} className="settings-btn settings-btn-secondary">{testing === p.id ? '检测中…' : '测试连通性'}</button>
+                  </div>
+                </div>
+                {probeResults[p.id] && <div className="settings-builtin-probe">{probeResults[p.id].map((result) => <div key={`${result.target}-${result.protocol}`} className={result.ok ? 'is-success' : 'is-error'}>{result.ok ? '✓' : '✗'} {result.label}：{result.message}</div>)}</div>}
+              </div>
+            )
+          }
 
           return (
             <div key={p.id} className={`settings-card${isActive ? ' is-active' : ''}`}>

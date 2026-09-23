@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import * as api from '../../api/website-exploration-api.js'
 import { changeWebsiteContext, useWebsiteExplorationStore as useStore } from '../../store/website-exploration.js'
-import { ActionMenu, Icon, ErrorMessage, JsonView, Modal, ResourceImage, ScrollArea, Status, useAction, useDraft, useSnapshot } from './shared.jsx'
+import { ActionMenu, Icon, ErrorMessage, JsonView, Modal, RequiredMark, ResourceImage, ScrollArea, Status, useAction, useDraft, useSnapshot } from './shared.jsx'
 
 export default function ExploreWorkspace({ toolkitId, tool, disabled, globalBusy }) {
   const key = toolkitId + '/' + tool.tool_id
@@ -51,6 +51,7 @@ function NewExploration({ toolkitId, tool, disabled, onClose, onCreated }) {
 
 function ExplorationDetail({ id, scope, disabled, globalBusy, tool }) {
   const snapshot = useSnapshot(() => api.getExploration(id), [id], '/api/explorations/' + id + '/events')
+  const slots = useSnapshot(() => api.getSlots(scope.split('/')[0], tool.tool_id), [scope])
   const action = useAction(snapshot.refresh)
   const [prompt, setPrompt] = useDraft(id + '/prompt')
   const [replayId, setReplayId] = useState('')
@@ -63,7 +64,7 @@ function ExplorationDetail({ id, scope, disabled, globalBusy, tool }) {
       {['paused', 'waiting_for_user'].includes(data.status) && <button disabled={disabled || action.busy} onClick={() => action.run(async () => { await api.resumeExploration(id, prompt); setPrompt('') })}>继续</button>}
       {(active || data.status === 'paused') && <button disabled={disabled || action.busy} onClick={() => action.run(() => api.cancelExploration(id))}>取消运行</button>}
       {!active && <ActionMenu compact label="探索记录操作"><button disabled={disabled || globalBusy || action.busy || !data.timeline?.some(item => item.type === 'agent_step')} onClick={() => action.run(async () => { const replay = await api.replayExploration(id); setReplayId(replay.replay_id) })}>回放</button></ActionMenu>}
-      {data.status === 'succeeded' && <button className="wx-quiet" disabled={disabled} onClick={() => { useStore.getState().setDraft(scope + '/source', id); void changeWebsiteContext({ workspace: 'develop' }) }}>进入开发</button>}
+      {slots.data && !slots.data.development && !slots.data.formal && data.status === 'succeeded' && data.completed_goal && !data.used_by_development && <button className="wx-primary" disabled={disabled || globalBusy} onClick={() => { useStore.getState().setDraft(scope + '/source', id); useStore.getState().setDraft(scope + '/rebuilding', false); void changeWebsiteContext({ workspace: 'develop' }) }}>选为开发输入</button>}
     </div></header>
     <ErrorMessage>{snapshot.error || action.error}</ErrorMessage>
     {data.active_issue?.message && <p className={data.active_issue.type === 'failed' ? 'wx-error' : 'wx-muted'}>{data.active_issue.message}</p>}
@@ -84,7 +85,7 @@ function ExplorationDetail({ id, scope, disabled, globalBusy, tool }) {
       else await api.sendExplorationFollowup(id, prompt)
       setPrompt('')
     }) }}>
-      <label>追加指令<textarea value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="补充目标、约束或页面操作说明" /></label>
+      <label><span>追加指令<RequiredMark /></span><textarea aria-label="追加指令" required value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="补充目标、约束或页面操作说明" /></label>
       <button className="wx-primary" disabled={!prompt.trim() || disabled || action.busy}>发送指令</button>
     </form>
   </section>

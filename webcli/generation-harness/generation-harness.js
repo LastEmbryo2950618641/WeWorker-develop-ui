@@ -90,7 +90,7 @@ export class GenerationHarness extends EventEmitter {
     return this.get(runId);
   }
 
-  publish(runId) {
+  publish(runId, approval) {
     if (typeof this.publisher !== 'function') throw new Error('generation harness publisher is not configured');
     if (this.activeRuns.has(runId)) throw new Error(`generation run is still active: ${runId}`);
     const snapshot = this.store.load(runId);
@@ -100,7 +100,7 @@ export class GenerationHarness extends EventEmitter {
     }
     const run = this.#restoreRun(snapshot);
     const abortController = new AbortController();
-    const promise = this.#publish(run, abortController.signal);
+    const promise = this.#publish(run, abortController.signal, approval);
     this.activeRuns.set(run.id, { run, abortController, promise });
     void promise.then(
       () => this.activeRuns.delete(run.id),
@@ -186,16 +186,19 @@ export class GenerationHarness extends EventEmitter {
     }
   }
 
-  async #publish(run, signal) {
+  async #publish(run, signal, approval) {
     try {
       run.assertNotCancelled(signal);
-      run.transition(GENERATION_STATUSES.PUBLISHING, { currentAction: 'publish_adapter' });
-      const result = await this.publisher({ run, signal, store: this.store });
+      run.snapshot.lastError = null;
+      run.transition(GENERATION_STATUSES.PUBLISHING, { currentAction: 'install_adapter' });
+      const result = await this.publisher({ run, signal, store: this.store, approval });
       run.complete(result);
     } catch (error) {
       if (run.isTerminal()) return;
       if (isAbortLikeError(error) || signal.aborted) run.cancel(signal.reason || error?.message || 'cancelled');
-      else run.fail(error);
+      else if (['ADAPTER_REVIEW_CHANGED', 'ADAPTER_INSTALL_REVIEW_REQUIRED'].includes(error?.code)) {
+        run.fail(error, GENERATION_STATUSES.AWAITING_APPROVAL);
+      } else run.fail(error);
     }
   }
 }

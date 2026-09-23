@@ -194,7 +194,7 @@ export async function runGenerationWorker() {
         if (command === 'start') {
           run = harness.start(payload);
         } else if (command === 'publish') {
-          run = harness.publish(String(payload.runId || ''));
+          run = harness.publish(String(payload.runId || ''), payload.approval);
         } else if (command === 'resume') {
           run = await harness.resume(String(payload.runId || ''), String(payload.answer || ''));
         } else {

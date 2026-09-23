@@ -130,7 +130,7 @@ export async function executeTask(task: ScheduledTask): Promise<ExecutionResult>
     // 6. Build enabled adapter IDs (same pattern as server.ts chat endpoint)
     const allAdapters = parseAllAdapters()
     const enabledAdapterIds = new Set(
-      [...allAdapters.entries()].filter(([id, a]) => getSiteEnabled(id, a.defaultEnabled)).map(([id]) => id),
+      [...allAdapters.entries()].filter(([id, a]) => getSiteEnabled(id, a.defaultEnabled, a.managed?.enabled)).map(([id]) => id),
     )
     memoryAdapters = [...allAdapters.values()].map((adapter) => ({
       id: adapter.id,
@@ -149,7 +149,8 @@ export async function executeTask(task: ScheduledTask): Promise<ExecutionResult>
     // Per-turn timing (mirrors server.ts /chat handler so scheduled results also show durations)
     const chatStartTime = Date.now()
     let lastStepEndTime = chatStartTime
-    let lastToolStartTime = 0
+    // Per-tool start timestamps (parallel tool_use blocks overlap; see server.ts /chat)
+    const toolStartTimes = new Map<string, number>()
     let llmMsTotal = 0
     let execMsTotal = 0
     let stepIndex = 0
@@ -184,9 +185,10 @@ export async function executeTask(task: ScheduledTask): Promise<ExecutionResult>
         if (isNew) {
           seenToolIds.add(event.id)
           stepIndex++
-          lastToolStartTime = Date.now()
-          thinkMs = lastToolStartTime - lastStepEndTime
+          const startTs = Date.now()
+          thinkMs = toolStartTimes.size === 0 ? startTs - lastStepEndTime : 0
           llmMsTotal += thinkMs
+          toolStartTimes.set(event.id, startTs)
         }
         assistantContent.push({
           type: 'tool_use',
@@ -197,7 +199,9 @@ export async function executeTask(task: ScheduledTask): Promise<ExecutionResult>
           ...(thinkMs !== undefined ? { thinkMs } : {}),
         })
       } else if (event.type === 'tool_call_result' && event.id) {
-        const toolDuration = lastToolStartTime ? Date.now() - lastToolStartTime : 0
+        const startTs = toolStartTimes.get(event.id)
+        const toolDuration = startTs !== undefined ? Date.now() - startTs : 0
+        toolStartTimes.delete(event.id)
         execMsTotal += toolDuration
         lastStepEndTime = Date.now()
         const idx = assistantContent.findIndex(

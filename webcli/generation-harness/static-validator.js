@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { resolveAdapterDraftFile } from './draft-revision.js';
+import { isPackageDraft, generationEvidenceDir } from './package-inspection.js';
+import { validatePackageDraft } from './package-static-validator.js';
 
 function registeredToolNames(adapterDir, manifest) {
   // Registration only: no handlers, timers, network or Node globals exposed.
@@ -38,6 +40,12 @@ function walkFiles(rootDir) {
 }
 
 export function validateAdapterDraft({ adapterDir, expectedSiteKey = '', expectedToolNames = [] }) {
+  try {
+    if (isPackageDraft(adapterDir)) return validatePackageDraft({ adapterDir, expectedSiteKey, expectedToolNames });
+  } catch { /* Legacy validator reports malformed or missing manifests below. */ }
+  if (fs.existsSync(path.join(generationEvidenceDir(adapterDir), 'source.json'))) {
+    return { passed: false, validator: 'adapter_static_validator_v2', errors: [result('PACKAGE_FORMAT_CHANGED', 'A generated v2 draft cannot switch to the historical package format.')], warnings: [], checkedFiles: 0 };
+  }
   const errors = [];
   const warnings = [];
   const absoluteAdapterDir = path.resolve(adapterDir);

@@ -1,6 +1,8 @@
 import type { SiteMemoryRecord } from '../weworker/backend-ts/src/site-memory.js'
 
 export interface AdapterScaffoldResult {
+  packageFormat?: 2
+  managedBaseline?: { profile: string; name: string; digest: string | null; source: string | null }
   siteKey: string
   adapterDir: string
   generatedDir?: string
@@ -20,6 +22,11 @@ export interface AdapterScaffoldResult {
 }
 
 export function writeScaffoldFromSiteMemory(
+  memory: SiteMemoryRecord,
+  options?: Record<string, unknown>
+): AdapterScaffoldResult
+
+export function writeAdapterPackageFromSiteMemory(
   memory: SiteMemoryRecord,
   options?: Record<string, unknown>
 ): AdapterScaffoldResult

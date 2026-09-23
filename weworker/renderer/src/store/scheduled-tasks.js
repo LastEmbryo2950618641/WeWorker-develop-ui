@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { useWorksStore } from './works'
 import { backendFetch } from '../api/http.js'
+import { leaveWebsiteExploration } from './website-exploration.js'
 
 export const useScheduledTasksStore = create((set, get) => ({
   tasks: [],
@@ -15,6 +16,7 @@ export const useScheduledTasksStore = create((set, get) => ({
   },
 
   createTask: async (config) => {
+    if (!await leaveWebsiteExploration()) return null
     const res = await backendFetch('/scheduled-tasks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -32,6 +34,7 @@ export const useScheduledTasksStore = create((set, get) => ({
   },
 
   selectTask: async (id) => {
+    if (!await leaveWebsiteExploration()) return
     set({ activeTaskId: id })
     useWorksStore.setState({ activeWorkId: null })
     // Load executions for the selected task

@@ -16,8 +16,9 @@ import os from "os";
 import path from "path";
 import { createHash, randomUUID } from "crypto";
 import XLSX from "xlsx";
-import { writeScaffoldFromSiteMemory } from "./adapter-scaffold.js";
-import { resolveAdaptersDir, resolveUserAdaptersDir } from "./paths.js";
+import { resolveAdaptersDir, resolveAdapterPaths, resolveUserAdaptersDir } from "./paths.js";
+import { watchAdapterState } from './adapter-state-watch.js';
+import { describeAdapterCatalog, readAdapterBundle, resolveAdapterCall } from './adapter-host.js';
 import { reportMetric, buildUploadConfig } from "./metrics.js";
 import {
   assertAllowedOpenBrowserUrl,
@@ -29,9 +30,6 @@ import {
   analyzeActionCaptureResult,
   resolveActionCaptureModelConfig,
   analyzeExplorationResult,
-  analyzeScaffoldSemantics,
-  generateAdapterWithAI,
-  generateSkillMd,
   getAiConfigPath,
   readAiConfig,
   saveAiConfig,
@@ -39,7 +37,7 @@ import {
 } from "./ai-analyzer.js";
 import { resolveToolCallTimeout } from "./tool-timeouts.js";
 import { GenerationWorkerController } from './generation-worker-controller.js';
-import { buildApiSourceEvidence, normalizeRequestBodyEvidence } from './generation-harness/source-evidence.js';
+import { buildApiSourceEvidence, normalizeRequestBodyEvidence, normalizeResponseBodyEvidence } from './generation-harness/source-evidence.js';
 import { buildPreviousFailureContext } from './generation-harness/failure-attribution.js';
 import { modelOutputErrorDetails } from './generation-harness/model-output-policy.js';
 
@@ -79,18 +77,6 @@ const API_REPLAY_BLOCKED_HEADERS = new Set([
 
 function ts() {
   return new Date().toISOString().slice(11, 23); // HH:mm:ss.SSS
-}
-
-function clearGenerationHarnessProvenance(manifestPath) {
-  try {
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-    if (!Object.prototype.hasOwnProperty.call(manifest, 'generation_harness')) return false;
-    delete manifest.generation_harness;
-    fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 const TRACE_PREVIEW_LIMIT = 3000;
@@ -495,6 +481,16 @@ export class WebSocketBridge extends EventEmitter {
         run: snapshot,
       });
     });
+    this._adapterStateWatcher = null;
+    try {
+      this._adapterStateWatcher = watchAdapterState(resolveAdapterPaths(), (event) => {
+        this._handleAdapterStateEvent(event);
+      }, {
+        onError: (error) => process.stderr.write(`[${ts()}] [Bridge] Adapter state watch failed: ${error.message}\n`),
+      });
+    } catch (error) {
+      process.stderr.write(`[${ts()}] [Bridge] Adapter state watcher unavailable: ${error.message}\n`);
+    }
     this._startServer();
 
     // 埋点上报配置：由 init() 异步构造（含 whoami / clientId），未完成前 reportMetric 静默跳过
@@ -506,6 +502,28 @@ export class WebSocketBridge extends EventEmitter {
    * 必须在 new WebSocketBridge() 之后 await 一次；未调用则不上报（不影响主流程）。
    * @param {{ webcliVersion?: string }} [opts]
    */
+  _adapterStateSnapshot() {
+    const snapshot = this._adapterStateWatcher?.snapshot?.();
+    return snapshot ? { ...snapshot, type: 'adapter_state_changed' } : null;
+  }
+
+  _sendAdapterStateSnapshot(ws) {
+    const snapshot = this._adapterStateSnapshot();
+    if (!snapshot) return false;
+    try { ws.send(JSON.stringify(snapshot)); return true; }
+    catch (error) {
+      process.stderr.write(`[${ts()}] [Bridge] Failed to send Adapter state snapshot: ${error.message}\n`);
+      return false;
+    }
+  }
+
+  _handleAdapterStateEvent(event) {
+    this._broadcast({ ...event, type: 'adapter_state_changed' });
+  }
+  stopAdapterStateWatcher() {
+    this._adapterStateWatcher?.stop();
+    this._adapterStateWatcher = null;
+  }
   async init(opts = {}) {
     try {
       this._metricsCfg = await buildUploadConfig({
@@ -539,6 +557,12 @@ export class WebSocketBridge extends EventEmitter {
         // 添加到客户端集合
         this._clients.add(ws);
 
+        // New long-lived consumers may have missed revisions while disconnected.
+        // Send one idempotent sync snapshot after the client completes its hello.
+        const stateSyncTimer = setTimeout(() => this._sendAdapterStateSnapshot(ws), 500);
+        stateSyncTimer.unref?.();
+        ws.on('close', () => clearTimeout(stateSyncTimer));
+
         ws.on("message", (data) => {
           try {
             let msg;
@@ -557,10 +581,11 @@ export class WebSocketBridge extends EventEmitter {
                 : [];
               process.stderr.write(`[${ts()}] [Bridge] Identified Chrome extension connection #${connectionId}${msg.version ? ` (v${msg.version})` : ''}\n`);
               try {
-                ws.send(JSON.stringify({ type: 'extension_hello_ack', ts: Date.now() }));
+                ws.send(JSON.stringify({ type: 'extension_hello_ack', ts: Date.now(), capabilities: ['adapter_catalog_v1'] }));
               } catch (e) {
                 process.stderr.write(`[${ts()}] [Bridge] Failed to ack extension hello: ${e.message}\n`);
               }
+              this._sendAdapterStateSnapshot(ws);
               // 如果这是扩展首次被识别（之前未连接），通知所有其他客户端
               if (!wasConnected) {
                 this._broadcast({
@@ -580,8 +605,12 @@ export class WebSocketBridge extends EventEmitter {
               this._handleWriteAdapterFile(msg, ws);
             } else if (msg.type === 'wecli_backend_fetch' || msg.type === 'wecli_backend_file_read' || msg.type === 'wecli_backend_xlsx_read' || msg.type === 'wecli_backend_file_write') {
               this._handleWecliBackendRuntimeRequest(msg, ws);
+            } else if (msg.type === 'adapter_catalog' || msg.type === 'adapter_bundle') {
+              this._handleAdapterSnapshot(msg, ws);
             } else if (msg.type === 'list_user_adapters') {
               this._handleListUserAdapters(msg, ws);
+            } else if (msg.type === 'list_user_adapter_files') {
+              this._handleListUserAdapterFiles(msg, ws);
             } else if (msg.type === 'read_user_adapter') {
               this._handleReadUserAdapter(msg, ws);
             } else if (msg.type === 'generate_adapter_scaffold') {
@@ -745,7 +774,7 @@ export class WebSocketBridge extends EventEmitter {
       process.stderr.write(`[${ts()}] ${tracePrefix}[Bridge] 收到调用: ${toolName}\n`);
 
       try {
-        const result = await this.callTool(toolName, args, traceID);
+        const result = await this.callTool(toolName, args, traceID, msg.adapterSnapshot);
         this._broadcast({ type: 'call_tool_result', id, result, traceID });
         process.stderr.write(`[${ts()}] ${tracePrefix}[Bridge] 调用成功: ${toolName}\n`);
       } catch (err) {
@@ -892,6 +921,16 @@ export class WebSocketBridge extends EventEmitter {
    * 列出用户安装的 adapter（~/.weworker/adapters 或 ~/.webcli/adapters）。
    * 扩展侧据此合并内置 adapter 与用户 adapter，实现双层共存。
    */
+  _handleAdapterSnapshot(msg, ws) {
+    try {
+      const result = msg.type === 'adapter_catalog' ? describeAdapterCatalog() : readAdapterBundle(msg.payload);
+      ws.send(JSON.stringify({ type: `${msg.type}_result`, id: msg.id, ok: true, result }));
+    } catch (error) {
+      ws.send(JSON.stringify({ type: `${msg.type}_result`, id: msg.id, ok: false,
+        code: error.code || 'ADAPTER_SNAPSHOT_ERROR', error: 'Adapter snapshot unavailable; refresh the catalog.' }));
+    }
+  }
+
   _handleListUserAdapters(msg, ws) {
     const { id, traceID = null } = msg;
     try {
@@ -910,6 +949,39 @@ export class WebSocketBridge extends EventEmitter {
       ws.send(JSON.stringify({ type: 'list_user_adapters_result', id, ok: true, adapters: items, dir, traceID }));
     } catch (err) {
       ws.send(JSON.stringify({ type: 'list_user_adapters_result', id, ok: false, error: err.message, traceID }));
+    }
+  }
+
+  /**
+   * 列出用户 adapter 目录内的全部文件相对路径（v2 loader 注入序用，递归）。
+   * payload: { adapterId }
+   */
+  _handleListUserAdapterFiles(msg, ws) {
+    const { id, payload = {}, traceID = null } = msg;
+    try {
+      const adapterId = String(payload.adapterId || '').trim();
+      if (!SAFE_ADAPTER_ID_RE.test(adapterId)) {
+        throw new Error(`非法 adapter id: ${adapterId}`);
+      }
+      const root = resolveUserAdaptersDir();
+      const adapterDir = path.join(root, adapterId);
+      if (!fs.existsSync(adapterDir) || !fs.statSync(adapterDir).isDirectory()) {
+        throw new Error(`用户 adapter "${adapterId}" 不存在`);
+      }
+      const files = [];
+      const walk = (dir, rel) => {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          if (entry.name === '__pycache__' || entry.name.startsWith('.')) continue;
+          const childRel = rel ? `${rel}/${entry.name}` : entry.name;
+          if (entry.isDirectory()) walk(path.join(dir, entry.name), childRel);
+          else if (entry.isFile()) files.push(childRel);
+        }
+      };
+      walk(adapterDir, '');
+      if (files.length > 512) throw new Error(`文件数超限: ${files.length}`);
+      ws.send(JSON.stringify({ type: 'list_user_adapter_files_result', id, ok: true, files, traceID }));
+    } catch (err) {
+      ws.send(JSON.stringify({ type: 'list_user_adapter_files_result', id, ok: false, error: err.message, traceID }));
     }
   }
 
@@ -960,78 +1032,7 @@ export class WebSocketBridge extends EventEmitter {
   // ─── Scaffold 生成 ────────────────────────────────────────────────────────
 
   async _handleGenerateAdapterScaffold(msg, ws) {
-    const { id, siteKey, memory } = msg;
-    try {
-      const normalizedMemory = normalizeSiteMemoryForScaffold(memory, siteKey);
-      let semanticEnhancement = null;
-
-      try {
-        semanticEnhancement = await promiseWithTimeout(
-          analyzeScaffoldSemantics({ memory: normalizedMemory }),
-          45000,
-          "scaffold semantic enhancement timed out",
-        );
-      } catch (err) {
-        process.stderr.write(`[${ts()}] [Bridge] scaffold semantic enhancement skipped: ${err.message}\n`);
-        semanticEnhancement = {
-          analysisSource: "heuristic",
-          toolOverrides: [],
-          quickPrompts: [],
-          manifestDescription: "",
-          aiError: err.message,
-        };
-      }
-
-      const memoryForScaffold = semanticEnhancement?.analysisSource === "ai"
-        ? { ...normalizedMemory, scaffoldSemanticHints: semanticEnhancement }
-        : normalizedMemory;
-      const readOnlyQuickMemory = {
-        ...memoryForScaffold,
-        actionApiCandidates: (Array.isArray(memoryForScaffold.actionApiCandidates) ? memoryForScaffold.actionApiCandidates : [])
-          .filter((candidate) => String(candidate?.method || 'GET').toUpperCase() === 'GET'),
-        actionCaptureHistory: [],
-      };
-      const result = writeScaffoldFromSiteMemory(readOnlyQuickMemory);
-      clearGenerationHarnessProvenance(result.files?.manifest);
-
-      process.stderr.write(`[${ts()}] [Bridge] Scaffold generated for ${normalizedMemory.siteKey}: ${result.adapterDir}\n`);
-      // Notify long-lived clients (notably WeWorker) so they can invalidate
-      // adapter caches and install the new site Skill without an app restart.
-      this._broadcast({
-        type: 'adapter_scaffold_generated',
-        siteKey: normalizedMemory.siteKey,
-        adapterDir: result.adapterDir,
-      });
-      ws.send(JSON.stringify({
-        type: 'generate_adapter_scaffold_result',
-        id,
-        ok: true,
-        result: {
-          ...result,
-          semanticEnhancement: semanticEnhancement
-            ? {
-                analysisSource: semanticEnhancement.analysisSource || "heuristic",
-                provider: semanticEnhancement.provider || "",
-                model: semanticEnhancement.model || "",
-                toolOverrideCount: Array.isArray(semanticEnhancement.toolOverrides) ? semanticEnhancement.toolOverrides.length : 0,
-                uiHintCount: Array.isArray(semanticEnhancement.toolOverrides)
-                  ? semanticEnhancement.toolOverrides.reduce((sum, item) => sum + Object.keys(item?.parameterUiHints || {}).length, 0)
-                  : 0,
-                quickPromptCount: Array.isArray(semanticEnhancement.quickPrompts) ? semanticEnhancement.quickPrompts.length : 0,
-                aiError: semanticEnhancement.aiError || "",
-              }
-            : null,
-        },
-      }));
-    } catch (err) {
-      process.stderr.write(`[${ts()}] [Bridge] generate_adapter_scaffold error: ${err.message}\n`);
-      ws.send(JSON.stringify({
-        type: 'generate_adapter_scaffold_result',
-        id,
-        ok: false,
-        error: err.message,
-      }));
-    }
+    return this._handleStartGenerationRun({ ...msg, mode: 'quick' }, ws);
   }
 
   _handleGetAiConfig(msg, ws) {
@@ -1174,6 +1175,8 @@ export class WebSocketBridge extends EventEmitter {
 
   async _handleStartGenerationRun(msg, ws) {
     const { id, siteKey, memory, goal, budget, tabId, modelConfig, previousRunId, mode } = msg;
+    const responseType = msg.type === 'generate_adapter_scaffold' ? 'generate_adapter_scaffold_result'
+      : msg.type === 'generate_adapter_with_ai' ? 'generate_adapter_with_ai_result' : 'start_generation_run_result';
     try {
       const normalizedMemory = normalizeSiteMemoryForScaffold(memory, siteKey);
       let previousFailure = null;
@@ -1197,14 +1200,14 @@ export class WebSocketBridge extends EventEmitter {
             memory: normalizedMemory,
             tabId: Number.isInteger(tabId) ? tabId : null,
             ...(previousFailure ? { previousFailure } : {}),
-            ...(mode === 'agent' || mode === 'classic' ? { mode } : {}),
+            ...(['agent', 'classic', 'quick'].includes(mode) ? { mode } : {}),
           },
           budget: budget || {},
         },
         modelConfig ? { modelConfig } : undefined,
       );
       ws.send(JSON.stringify({
-        type: 'start_generation_run_result',
+        type: responseType,
         id,
         ok: true,
         run,
@@ -1212,7 +1215,7 @@ export class WebSocketBridge extends EventEmitter {
     } catch (err) {
       process.stderr.write(`[${ts()}] [Bridge] start_generation_run error: ${err.message}\n`);
       ws.send(JSON.stringify({
-        type: 'start_generation_run_result',
+        type: responseType,
         id,
         ok: false,
         error: err.message,
@@ -1294,7 +1297,8 @@ export class WebSocketBridge extends EventEmitter {
   async _handlePublishGenerationRun(msg, ws) {
     const { id, runId } = msg;
     try {
-      const run = await this._generationWorkers.publish(String(runId || ''));
+      const run = await this._generationWorkers.publish(String(runId || ''), msg.approval);
+      if (run.status === 'completed') this._broadcast({ type: 'adapter_installed', siteKey: run.siteKey, digest: run.result?.digest });
       ws.send(JSON.stringify({
         type: 'publish_generation_run_result',
         id,
@@ -1312,78 +1316,11 @@ export class WebSocketBridge extends EventEmitter {
   }
 
   async _handleGenerateAdapterWithAI(msg, ws) {
-    const { id, siteKey, apiEntries } = msg;
-    try {
-      if (!siteKey || !apiEntries?.length) {
-        throw new Error('siteKey and apiEntries are required');
-      }
-
-      const adaptersDir = resolveAdaptersDir();
-      const adapterDir = path.join(adaptersDir, siteKey);
-      const indexJsPath = path.join(adapterDir, 'index.js');
-
-      // Read existing adapter code for merge
-      let existingCode = null;
-      if (fs.existsSync(indexJsPath)) {
-        existingCode = fs.readFileSync(indexJsPath, 'utf-8');
-        process.stderr.write(`[${ts()}] [Bridge] Found existing adapter for ${siteKey}, will merge\n`);
-      }
-
-      process.stderr.write(`[${ts()}] [Bridge] Generating adapter with AI for ${siteKey} (${apiEntries.length} APIs)...\n`);
-      const { adapterCode, toolNames } = await generateAdapterWithAI({ siteKey, apiEntries, existingCode });
-
-      // Write adapter files
-      fs.mkdirSync(adapterDir, { recursive: true });
-      fs.writeFileSync(indexJsPath, adapterCode, 'utf-8');
-
-      // Write or preserve manifest.json
-      const manifestPath = path.join(adapterDir, 'manifest.json');
-      if (!fs.existsSync(manifestPath)) {
-        const manifest = {
-          id: siteKey,
-          name: siteKey,
-          description: `AI-generated adapter for ${siteKey} (${toolNames.length} tools)`,
-          match: [siteKey],
-          requires_auth: true,
-          version: new Date().toISOString().split('T')[0],
-          author: "webcli-ai",
-        };
-        fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf-8');
-      }
-      clearGenerationHarnessProvenance(manifestPath);
-
-      // Update index.json
-      const indexPath = path.join(adaptersDir, 'index.json');
-      let indexList = [];
-      try { indexList = JSON.parse(fs.readFileSync(indexPath, 'utf-8')); } catch {}
-      if (!indexList.includes(siteKey)) {
-        indexList.push(siteKey);
-        indexList.sort();
-        fs.writeFileSync(indexPath, JSON.stringify(indexList, null, 2) + '\n', 'utf-8');
-      }
-
-      // Generate SKILL.md (second AI call). Do not overwrite adapter-local
-      // SKILL.md because generated modular adapters may already carry refined
-      // usage guidance and WEBCLI_KNOWLEDGE alignment.
-      try {
-        const skillPath = path.join(adapterDir, 'SKILL.md');
-        if (fs.existsSync(skillPath)) {
-          process.stderr.write(`[${ts()}] [Bridge] SKILL.md already exists for ${siteKey}, preserving adapter-local file\n`);
-        } else {
-          const skillMd = await generateSkillMd({ siteKey, adapterCode, toolNames });
-          fs.writeFileSync(skillPath, skillMd, 'utf-8');
-          process.stderr.write(`[${ts()}] [Bridge] SKILL.md written for ${siteKey}\n`);
-        }
-      } catch (skillErr) {
-        process.stderr.write(`[${ts()}] [Bridge] SKILL.md generation failed (non-fatal): ${skillErr.message}\n`);
-      }
-
-      process.stderr.write(`[${ts()}] [Bridge] AI adapter written: ${indexJsPath} (${toolNames.length} tools)\n`);
-      ws.send(JSON.stringify({ type: 'generate_adapter_with_ai_result', id, ok: true, filePath: indexJsPath, toolNames, adapterCode }));
-    } catch (err) {
-      process.stderr.write(`[${ts()}] [Bridge] generate_adapter_with_ai error: ${err.message}\n`);
-      ws.send(JSON.stringify({ type: 'generate_adapter_with_ai_result', id, ok: false, error: err.message }));
-    }
+    // The old RPC now creates the same reviewed package task as desktop generation.
+    return this._handleStartGenerationRun({
+      ...msg, mode: 'agent',
+      memory: msg.memory || { siteKey: msg.siteKey, apiCandidates: msg.apiEntries || [] },
+    }, ws);
   }
 
   // ─── 发送消息给扩展 ─────────────────────────────────────────────────────────  // ─── 发送消息给扩展 ─────────────────────────────────────────────────────────
@@ -1428,7 +1365,7 @@ export class WebSocketBridge extends EventEmitter {
     return this._request({ type: "get_active_tab" });
   }
 
-  async callTool(toolName, args, traceID = null) {
+  async callTool(toolName, args, traceID = null, adapterSnapshot = null) {
     if (isLegacyWecliHandlerName(toolName)) {
       throw new Error(`"${toolName}" is an internal handler name. Use the public WebCLI command name without "wecli_".`);
     }
@@ -1436,16 +1373,55 @@ export class WebSocketBridge extends EventEmitter {
     // 埋点只记元数据，绝不阻塞调用（reportMetric 内部 fire-and-forget 且静默失败）。
     const t0 = Date.now();
     try {
-      const result = await this._callToolInner(toolName, args, traceID);
+      const result = await this._callToolInner(toolName, args, traceID, adapterSnapshot);
+      const transformed = this._extractQrcodeToFile(result);
       reportMetric(this._metricsCfg, toolName, true, Date.now() - t0, traceID, null);
-      return result;
+      return transformed;
     } catch (err) {
       reportMetric(this._metricsCfg, toolName, false, Date.now() - t0, traceID, err);
       throw err;
     }
   }
 
-  async _callToolInner(toolName, args, traceID = null) {
+  /**
+   * 登录二维码落盘：adapter 返回 qrcode_base64 时，把 PNG/JPEG 写到
+   * ~/.webcli/login-qrcode.<ext>，并把结果里的 base64 替换成 qrcode_file 绝对路径。
+   * 避免大段 base64 进入 agent 上下文；文件路径可直接在 WeWorker 聊天中以图片渲染，
+   * 也可让用户手动打开扫码。落盘失败时保留 base64 原样返回（尽力而为）。
+   */
+  _extractQrcodeToFile(result, targetDir = null) {
+    try {
+      if (!result || typeof result !== "object" || result.ok !== true) return result;
+
+      // 优先：页面二维码元素 base64（adapter 兜底路径）
+      let base64 = result.qrcode_base64;
+      let mime = result.qrcode_mime || "image/png";
+      let fileField = "qrcode_file";
+      // 编排路径：登录页截图（jpeg）
+      if (typeof base64 !== "string" || base64.length < 100) {
+        if (typeof result.screenshot_base64 === "string" && result.screenshot_base64.length >= 100) {
+          base64 = result.screenshot_base64;
+          mime = result.screenshot_mime || "image/jpeg";
+          fileField = "screenshot_file";
+        } else {
+          return result;
+        }
+      }
+
+      const ext = mime === "image/jpeg" ? "jpg" : "png";
+      const dir = targetDir || path.join(os.homedir(), ".webcli");
+      fs.mkdirSync(dir, { recursive: true });
+      const filePath = path.join(dir, `login-qrcode.${ext}`);
+      fs.writeFileSync(filePath, Buffer.from(base64, "base64"));
+
+      const { qrcode_base64, screenshot_base64, ...rest } = result;
+      return { ...rest, [fileField]: filePath };
+    } catch {
+      return result; // 落盘失败，保留 base64 原样
+    }
+  }
+
+  async _callToolInner(toolName, args, traceID = null, adapterSnapshot = null) {
     if (isLegacyWecliHandlerName(toolName)) {
       throw new Error(`"${toolName}" is an internal handler name. Use the public WebCLI command name without "wecli_".`);
     }
@@ -1475,8 +1451,29 @@ export class WebSocketBridge extends EventEmitter {
     // }
 
     // 下载类任务耗时较长，按工具动态放宽超时，避免误判为失败
+    const selected = resolveAdapterCall(toolName);
+    if (adapterSnapshot && (!selected || adapterSnapshot.name !== selected.snapshot.name
+      || adapterSnapshot.digest !== selected.snapshot.digest || adapterSnapshot.profile !== selected.snapshot.profile)) {
+      throw new Error('Adapter changed since this call started; refresh the catalog.');
+    }
+    if (selected?.command.safety === 'write' && args?.__confirmed !== true) throw new Error('Explicit confirmation is required for this write command.');
+    if (selected?.command.runtime === 'wewright') {
+      const { runToolkitTool } = await import('./toolkit-runner.js');
+      const completed = await runToolkitTool({
+        adapter: { root: selected.adapter.root, entryPath: path.join(selected.adapter.root, selected.command.module) },
+        tool: { id: selected.command.id, name: toolName },
+      }, args || {});
+      if (completed.exitCode !== 0) throw new Error('Toolkit Adapter execution failed.');
+      return completed.result;
+    }
+    if (selected && !this._extensionCapabilities?.includes('adapter_catalog_v1')) {
+      throw new Error('Reload the browser extension before calling managed Adapter packages.');
+    }
+    if (selected?.command.execution?.runtime === 'background' && !this._extensionCapabilities?.includes('adapter_background_v1')) {
+      throw new Error('Reload the browser extension before calling background Adapter commands.');
+    }
     const timeout = resolveToolCallTimeout(toolName);
-    return this._request({ type: "call_tool", toolName, args }, timeout, traceID);
+    return this._request({ type: "call_tool", toolName, args, ...(selected ? { adapterSnapshot: selected.snapshot } : {}) }, timeout, traceID);
   }
 
   async getPageState(tabId = null) {
@@ -1748,12 +1745,7 @@ function normalizeListApiCandidates(candidates, fallbackCandidates = []) {
         ? Number(candidate?.status ?? fallback?.status)
         : undefined,
       requestEvidence,
-      responsePreview: firstNonEmptyString(
-        candidate?.responsePreview,
-        candidate?.responseBodyPreview,
-        fallback?.responsePreview,
-        fallback?.responseBodyPreview,
-      ),
+      responseEvidence: normalizeResponseBodyEvidence({ ...fallback, ...candidate, responsePreview: firstNonEmptyString(candidate?.responsePreview, candidate?.responseBodyPreview, fallback?.responsePreview, fallback?.responseBodyPreview) }),
       responseContentType: firstNonEmptyString(
         candidate?.responseContentType,
         candidate?.contentType,
@@ -1771,7 +1763,7 @@ function normalizeListApiCandidates(candidates, fallbackCandidates = []) {
       if (existing.requestEvidence?.bodyOmitted && !normalized.requestEvidence?.bodyOmitted) {
         existing.requestEvidence = normalized.requestEvidence;
       }
-      existing.responsePreview = pickRicherText(existing.responsePreview, normalized.responsePreview);
+      if (existing.responseEvidence?.bodyKind !== 'json' && normalized.responseEvidence?.bodyKind === 'json') existing.responseEvidence = normalized.responseEvidence;
       existing.responseContentType ||= normalized.responseContentType;
       existing.responseHints ||= normalized.responseHints;
       existing.apiEvidence ||= normalized.apiEvidence;
@@ -1806,7 +1798,7 @@ function normalizeActionApiCandidates(candidates, siteKey, fallbackCapturedAt) {
         url: structuralApiUrl(rawUrl),
         method: toNonEmptyString(candidate?.method) || 'GET',
         requestEvidence,
-        responsePreview: toNonEmptyString(candidate?.responsePreview),
+        responseEvidence: normalizeResponseBodyEvidence(candidate),
         responseContentType: firstNonEmptyString(candidate?.responseContentType, candidate?.contentType),
         responseHints: normalizeResponseHints(candidate?.responseHints),
         intercepted: Boolean(candidate?.intercepted),

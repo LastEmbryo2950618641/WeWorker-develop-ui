@@ -4,7 +4,8 @@
  * `window.__webmcpRegister({...})` call parameters.
  */
 import fs from 'node:fs'
-import os from 'node:os'
+import { describeDesktopAdapters, resolveDesktopUserAdaptersDir } from '../../../webcli/adapter-desktop.js'
+import type { DesktopAdapter } from '../../../webcli/adapter-desktop.js'
 import path from 'node:path'
 import { createLogger } from './logger.js'
 import type { RegistryScenarioDef } from './site-scenarios.js'
@@ -14,6 +15,7 @@ import { mergePromptVarDisplay } from './prompt-var-display.js'
 const log = createLogger('adapter-parser')
 
 export interface StaticToolDef {
+  aliases?: string[]
   name: string
   description: string
   parameters: Record<string, unknown>  // JSON Schema
@@ -27,7 +29,25 @@ export interface ToolExecution {
   runtime?: 'background' | 'page' | 'node' | string
 }
 
+/**
+ * manifest 顶层 route_templates[] 条目（智能路由 Tier -2「模板直达」）。
+ * pattern 语法：`${A|B|C}`（含 `|`）= 枚举槽（enumArgs 须覆盖全部分支词）；
+ * `${名称}`（不含 `|`）= 自由文本槽（slots 须提供 {arg, validate}）。
+ * 字段宽松可选——严格校验由 api-query-router/manifest-templates.ts 加载期完成，
+ * 校验失败的模板整条跳过（warn+skip），不影响 adapter 其余功能。
+ */
+export interface ManifestRouteTemplateDef {
+  id?: string
+  pattern?: string
+  tool?: string
+  description?: string
+  args?: Record<string, unknown>
+  enumArgs?: Record<string, Record<string, unknown>>
+  slots?: Record<string, { arg?: string; validate?: string; description?: string }>
+}
+
 export interface ParsedAdapter {
+  managed?: DesktopAdapter['managed']
   id: string
   name: string
   description: string
@@ -44,6 +64,7 @@ export interface ParsedAdapter {
   registryScenarios: RegistryScenarioDef[]
   icon: string
   promptVarDisplay: PromptVarDisplayMap
+  routeTemplates?: ManifestRouteTemplateDef[]
 }
 
 // Cache parsed results
@@ -67,10 +88,12 @@ type RegistryAdapterEntry = {
   test_prompts?: string[]
   icon?: string
   prompt_var_display?: PromptVarDisplayMap
+  route_templates?: ManifestRouteTemplateDef[]
   tool_execution?: Record<string, ToolExecution>
 }
 
 type AdapterManifest = RegistryAdapterEntry & {
+  schema_version?: number
   author?: string
   version?: string
   verified_on?: string
@@ -120,26 +143,11 @@ function findAdaptersDir(): string | null {
 }
 
 /**
- * Find the user-owned adapters directory (~/.weworker/adapters or ~/.webcli/adapters).
- * User-installed adapters live here so they are not overwritten by packaged updates.
- * Returns null when the directory does not exist or has no manifest-bearing adapters.
+ * Use the host's stable profile-aware user root; legacy roots are migration inventory only.
  */
 function findUserAdaptersDir(): string | null {
-  const candidates = [
-    path.join(os.homedir(), '.weworker', 'adapters'),
-    path.join(os.homedir(), '.webcli', 'adapters'),
-  ]
-  for (const dir of candidates) {
-    try {
-      if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
-        const entries = fs.readdirSync(dir)
-        if (entries.some(e => fs.existsSync(path.join(dir, e, 'manifest.json')))) {
-          return dir
-        }
-      }
-    } catch { /* skip */ }
-  }
-  return null
+  const directory = resolveDesktopUserAdaptersDir()
+  return fs.existsSync(directory) ? directory : null
 }
 
 function findBuildProfilePath(adaptersDir: string): string | null {
@@ -346,6 +354,7 @@ function parseAdaptersFromDir(
     try {
       const manifestPath = path.join(adaptersDir, dir, 'manifest.json')
       const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as AdapterManifest
+      if (manifest.schema_version === 2) continue
 
       const indexPath = path.join(adaptersDir, dir, 'index.js')
       let tools: StaticToolDef[] = []
@@ -384,6 +393,7 @@ function parseAdaptersFromDir(
         hidden: manifest.hidden ?? registryEntry?.hidden ?? false,
         defaultEnabled: (manifest.enabled ?? registryEntry?.enabled) !== false,
         registryScenarios: manifest.scenarios ?? registryEntry?.scenarios ?? [],
+        routeTemplates: manifest.route_templates ?? registryEntry?.route_templates ?? [],
         icon: manifest.icon?.trim() || registryEntry?.icon?.trim() || registry.defaults?.icon?.trim() || 'globe',
         promptVarDisplay: mergePromptVarDisplay(
           defaultVarDisplay,
@@ -395,26 +405,20 @@ function parseAdaptersFromDir(
 }
 
 /**
- * Parse all adapters from their individual manifest.json files (source of truth).
- * registry.json is generated for compatibility; metadata is read from manifest first.
- * 双层扫描：内置目录（打包只读）+ 用户目录（~/.weworker/adapters，可写）。
- * 用户 adapter 以 `.user` 后缀 id 存在；同名时用户覆盖内置。
+ * Cache only old-format compatibility metadata. Managed inventory is applied
+ * separately on every read, including disabled and quarantined package names.
  */
-export function parseAllAdapters(): Map<string, ParsedAdapter> {
+function parseLegacyAdapters(): Map<string, ParsedAdapter> {
   if (_cache) return _cache
 
   const adaptersDir = findAdaptersDir()
-  if (!adaptersDir) {
-    log.warn('No adapters directory found')
-    return new Map()
-  }
 
   const result = new Map<string, ParsedAdapter>()
-  const registry = loadAdapterRegistry(adaptersDir)
+  const registry: ReturnType<typeof loadAdapterRegistry> = adaptersDir ? loadAdapterRegistry(adaptersDir) : { byId: new Map(), byMatch: new Map(), defaults: {}, order: [] as string[] }
   const defaultVarDisplay = registry.defaults?.prompt_var_display ?? {}
 
   // 先扫内置目录，再扫用户目录（用户优先）
-  parseAdaptersFromDir(adaptersDir, registry, defaultVarDisplay, result)
+  if (adaptersDir) parseAdaptersFromDir(adaptersDir, registry, defaultVarDisplay, result)
   const userAdaptersDir = findUserAdaptersDir()
   if (userAdaptersDir) {
     const emptyRegistry = { byId: new Map(), byMatch: new Map(), defaults: {}, order: [] as string[] }
@@ -434,6 +438,30 @@ export function parseAllAdapters(): Map<string, ParsedAdapter> {
   const totalTools = [...ordered.values()].reduce((n, a) => n + a.tools.length, 0)
   log.info(`Parsed ${ordered.size} adapters, ${totalTools} tools total`)
   return ordered
+}
+
+/** Managed metadata is refreshed on every read; the compatibility cache cannot override it. */
+export function parseAllAdapters(): Map<string, ParsedAdapter> {
+  const inventory = describeDesktopAdapters()
+  const result = new Map(parseLegacyAdapters())
+  for (const manifest of inventory.adapters) {
+    result.set(manifest.id, {
+      id: manifest.id, name: manifest.i18n?.zh?.name || manifest.display || manifest.name,
+      description: manifest.i18n?.zh?.description || manifest.description || '',
+      detailDescription: manifest.description || '', match: manifest.match || [],
+      homepageUrl: manifest.homepage_url || (manifest.match?.[0] ? 'https://' + manifest.match[0].replace(/^\*\./, '') + '/' : ''),
+      tools: manifest.commands.map(command => ({ name: command.name, aliases: (command.aliases || []).map(alias => manifest.name + '.' + alias),
+        ...(command.execution ? { execution: command.execution, directCapable: true, executionMode: 'direct' as const } : {}),
+        description: command.description, parameters: command.schema })),
+      testPrompts: manifest.test_prompts || [], requiresAuth: manifest.requires_auth === true,
+      authCheckTool: manifest.auth_check_tool || null, hidden: manifest.hidden === true,
+      defaultEnabled: manifest.managed.enabled, managed: manifest.managed,
+      registryScenarios: (manifest.scenarios || []) as RegistryScenarioDef[],
+      routeTemplates: (manifest.route_templates || []) as ManifestRouteTemplateDef[],
+      icon: manifest.icon || 'globe', promptVarDisplay: mergePromptVarDisplay({}, manifest.prompt_var_display),
+    })
+  }
+  return result
 }
 
 /** Clear the cache (useful for testing or hot-reload) */

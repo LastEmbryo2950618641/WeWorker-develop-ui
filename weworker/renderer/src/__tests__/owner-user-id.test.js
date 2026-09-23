@@ -1,20 +1,21 @@
-import { describe, expect, it } from 'vitest'
+import { describe, it } from 'node:test'
+import assert from 'node:assert/strict'
 import { normalizeOwnerUserId, validateOwnerUserId } from '../utils/owner-user-id.js'
 
 describe('owner-user-id', () => {
   it('accepts empty owner id', () => {
-    expect(validateOwnerUserId('wecom', '')).toBeNull()
-    expect(validateOwnerUserId('wecom', '   ')).toBeNull()
+    assert.equal(validateOwnerUserId('wecom', ''), null)
+    assert.equal(validateOwnerUserId('wecom', '   '), null)
   })
 
   it('rejects short or malformed owner ids', () => {
-    expect(validateOwnerUserId('wecom', 'err')).toMatch(/过短/)
-    expect(validateOwnerUserId('qq', 'abc!@#')).toMatch(/格式不正确/)
+    assert.match(validateOwnerUserId('wecom', 'err'), /过短/)
+    assert.match(validateOwnerUserId('qq', 'abc!@#'), /格式不正确/)
   })
 
   it('accepts typical channel owner ids', () => {
-    expect(validateOwnerUserId('wecom', 'wohR_KCgAAbIrAnDRuaTZORF5QxppMXA')).toBeNull()
-    expect(validateOwnerUserId('weixin', 'ilink-user-001')).toBeNull()
-    expect(normalizeOwnerUserId(' owner-qq ')).toBe('owner-qq')
+    assert.equal(validateOwnerUserId('wecom', 'fixture_owner_user_001'), null)
+    assert.equal(validateOwnerUserId('weixin', 'ilink-user-001'), null)
+    assert.equal(normalizeOwnerUserId(' owner-qq '), 'owner-qq')
   })
 })

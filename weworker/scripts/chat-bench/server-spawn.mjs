@@ -27,8 +27,11 @@ export async function waitForReady(getStatus, { timeout = 60000, interval = 500 
  * 执行 `src/server.ts`（cwd=backendDir，--experimental-sqlite 启用 node:sqlite）。
  * 直接 spawn node + .mjs 入口，规避 Windows 上 spawn `npx.cmd` 的 EINVAL。
  * 不注入 WEWORKER_HTTP_TOKEN（后端放行）/ WEWORKER_PACKAGED（走 dev 路径）。
+ * @param {{backendDir: string, onLog?: (line: string, stream: 'out'|'err') => void}} opts
+ *   onLog：额外日志接收器（route-bench 用于 tee 到 route-out/<ts>/backend.log）；
+ *   缺省时行为不变（仅转发控制台）。
  */
-export function startBackend({ backendDir }) {
+export function startBackend({ backendDir, onLog }) {
   const tsxEntry = path.join(backendDir, 'node_modules', 'tsx', 'dist', 'cli.mjs')
   const child = spawn(process.execPath, [tsxEntry, '--experimental-sqlite', 'src/server.ts'], {
     cwd: backendDir,
@@ -36,11 +39,15 @@ export function startBackend({ backendDir }) {
     env: { ...process.env },
   })
   const prefix = '[backend]'
-  const pipe = (stream, log) => stream?.on('data', (d) => {
-    String(d).split('\n').forEach((l) => { if (l.trimEnd()) log(`${prefix} ${l}`) })
+  const pipe = (stream, log, streamName) => stream?.on('data', (d) => {
+    String(d).split('\n').forEach((l) => {
+      if (!l.trimEnd()) return
+      log(`${prefix} ${l}`)
+      if (onLog) { try { onLog(l, streamName) } catch { /* tee 失败不影响后端 */ } }
+    })
   })
-  pipe(child.stdout, console.log)
-  pipe(child.stderr, console.error)
+  pipe(child.stdout, console.log, 'out')
+  pipe(child.stderr, console.error, 'err')
   child.on('exit', (code) => console.log(`${prefix} exited code=${code}`))
   return child
 }

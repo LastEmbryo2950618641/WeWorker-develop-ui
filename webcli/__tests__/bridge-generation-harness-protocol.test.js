@@ -10,7 +10,7 @@ describe('bridge generation harness protocol', () => {
     expect(source).toContain("msg.type === 'cancel_generation_run'");
     expect(source).toContain("msg.type === 'publish_generation_run'");
     expect(source).toContain("type: 'generation_run_event'");
-    expect(source).toContain("type: 'start_generation_run_result'");
+    expect(source).toContain("'start_generation_run_result'");
     expect(source).toContain("msg.type === 'validate_generation_preview_result'");
     expect(source).toContain('GenerationWorkerController');
     expect(source).not.toContain('new GenerationHarness');
@@ -49,7 +49,10 @@ describe('bridge generation harness protocol', () => {
     expect(source).toContain('normalizeGenerationPreviewBundle');
     expect(source).toContain('findExtensionIsolatedWorldContext');
     expect(source).toContain('injectGenerationPreviewSourcesWithCdp');
-    expect(source).toContain('allowUnsafeEvalBlockedByCSP: true');
+    expect(source).toContain('return injectAdapterSources({');
+    const loaderSource = fs.readFileSync(new URL('../../extension/background/adapter-script-loader.js', import.meta.url), 'utf8');
+    expect(loaderSource).toContain('allowUnsafeEvalBlockedByCSP: false');
+    expect(loaderSource).not.toContain('allowUnsafeEvalBlockedByCSP: true');
     expect(source).toContain("method === 'Runtime.executionContextCreated'");
     const validatorSource = fs.readFileSync(
       path.resolve(import.meta.dirname, '..', '..', 'extension', 'background', 'generation-output-validator.js'),

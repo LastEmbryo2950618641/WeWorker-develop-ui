@@ -29,17 +29,13 @@ export function buildCliArgFlags(args: Record<string, unknown>): string[] {
   return flags
 }
 
-export async function runWebcliCall(
-  toolName: string,
-  argsJson?: string,
-  workId?: string | null,
-): Promise<string> {
-  const isPackaged = !!process.env.WEWORKER_PACKAGED
-  const nodeBin = isPackaged
-    ? (process.env.WEWORKER_EXEC_PATH || process.execPath)
-    : 'node'
-  const webcliEntry = resolveWebcliEntry()
-  const cliArgs = ['call', toolName]
+/**
+ * 组装 webcli call 子进程参数。
+ * WeWorker 内部一律强制 --output-format=json（大结果缓存/快捷查询/专属 renderer 都 JSON.parse），
+ * Markdown 只发生在最终展示层。
+ */
+export function buildCliCallArgs(toolName: string, argsJson?: string): string[] {
+  const cliArgs = ['call', toolName, '--output-format=json']
 
   if (argsJson !== undefined && argsJson !== '') {
     // 将 args 对象展开为 --key=value（简单类型）或 --key=<JSON字面量>（复杂类型）
@@ -57,6 +53,21 @@ export async function runWebcliCall(
       cliArgs.push('--args', argsJson)
     }
   }
+
+  return cliArgs
+}
+
+export async function runWebcliCall(
+  toolName: string,
+  argsJson?: string,
+  workId?: string | null,
+): Promise<string> {
+  const isPackaged = !!process.env.WEWORKER_PACKAGED
+  const nodeBin = isPackaged
+    ? (process.env.WEWORKER_EXEC_PATH || process.execPath)
+    : 'node'
+  const webcliEntry = resolveWebcliEntry()
+  const cliArgs = buildCliCallArgs(toolName, argsJson)
 
   const env = {
     ...process.env,

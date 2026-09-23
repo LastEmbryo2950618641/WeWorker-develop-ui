@@ -368,7 +368,7 @@ export function buildRuntimeTestCases({ registeredTools = [], plan = null, memor
   const planTools = Array.isArray(plan?.tools) ? plan.tools : [];
   let fallbackListIndex = 0;
   return registeredTools.map((tool) => {
-    const isLoginUtility = /(?:^|\.)check_login_status$/i.test(String(tool.name || ''));
+    const isLoginUtility = /(?:^|\.)check[-_]login[-_]status$/i.test(String(tool.name || ''));
     const candidate = isLoginUtility ? null : findCapturedCandidate(tool, memory, fallbackListIndex);
     const sourceKind = candidate && (memory.listApiCandidates || []).includes(candidate)
       ? 'passive_list'

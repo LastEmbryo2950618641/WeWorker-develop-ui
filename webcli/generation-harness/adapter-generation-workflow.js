@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { bindGenerationPlan, plannedToolNames } from './plan-binding.js';
-import { writeScaffoldFromSiteMemory } from '../adapter-scaffold.js';
+import { writeAdapterPackageFromSiteMemory } from '../adapter-scaffold.js';
 import { resolveAdaptersDir } from '../paths.js';
 import { seedAdapterDraft } from './adapter-workspace.js';
 import { GENERATION_STATUSES } from './constants.js';
@@ -12,6 +12,7 @@ import { normalizePreviousFailureInput } from './failure-attribution.js';
 import { runGenerationOrchestrator, resumeGenerationOrchestrator } from './generation-orchestrator.js';
 import { writeGenerationHarnessProvenance } from './provenance.js';
 import { normalizeRequestBodyEvidence, normalizeResponseBodyEvidence } from './source-evidence.js';
+import { runQuickGeneration } from './quick-generation.js';
 
 function summarizeCandidate(candidate, index) {
   let pathname = '';
@@ -229,7 +230,7 @@ export function buildPlanSemanticEnhancement(memory, plan) {
 export function createAdapterGenerationWorkflow({
   model = createJsonActionModel(),
   semanticAnalyzer = null,
-  scaffoldWriter = writeScaffoldFromSiteMemory,
+  scaffoldWriter = writeAdapterPackageFromSiteMemory,
   staticValidator = validateAdapterDraft,
   adaptersDir = resolveAdaptersDir(),
   runtimeValidator = null,
@@ -237,6 +238,7 @@ export function createAdapterGenerationWorkflow({
   return async ({ run, signal, store }) => {
     const memory = readOnlyV2Memory(run.snapshot.input?.memory);
     if (!memory?.siteKey) throw new Error('generation run input.memory is required');
+    if (run.snapshot.input?.mode === 'quick') return runQuickGeneration({ run, signal, store, memory, scaffoldWriter, staticValidator, runtimeValidator });
     const previousFailure = normalizePreviousFailureInput(run.snapshot.input?.previousFailure);
     if (previousFailure) run.trace('previous_failure_loaded', previousFailure);
     const sections = buildContextSections(memory, previousFailure);
@@ -383,10 +385,12 @@ export function createAdapterGenerationWorkflow({
       toolCount: draft.toolNames?.length || 0,
     });
     let currentDraft = {
+      packageFormat: draft.packageFormat,
+      managedBaseline: draft.managedBaseline,
       revision,
       rootDir: draftRoot,
       adapterDir: draft.adapterDir,
-      toolNames: plannedToolNames(memory.siteKey, plan),
+      toolNames: plannedToolNames(memory.siteKey, plan, draft.packageFormat),
       files: draft.files,
       semanticEnhancement: semanticEnhancement ? {
         analysisSource: semanticEnhancement.analysisSource,
@@ -536,7 +540,7 @@ export function createAdapterGenerationWorkflow({
 
 export function createAdapterGenerationResumeWorkflow({
   model = createJsonActionModel(),
-  scaffoldWriter = writeScaffoldFromSiteMemory,
+  scaffoldWriter = writeAdapterPackageFromSiteMemory,
   staticValidator = validateAdapterDraft,
   adaptersDir = resolveAdaptersDir(),
   runtimeValidator = null,
@@ -544,6 +548,7 @@ export function createAdapterGenerationResumeWorkflow({
   return async ({ run, signal, store, answer }) => {
     const memory = readOnlyV2Memory(run.snapshot.input?.memory);
     if (!memory?.siteKey) throw new Error('generation run input.memory is required');
+    if (run.snapshot.input?.mode === 'quick') return runQuickGeneration({ run, signal, store, memory, scaffoldWriter, staticValidator, runtimeValidator, resume: true });
     return resumeGenerationOrchestrator({
       run,
       signal,

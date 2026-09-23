@@ -60,7 +60,7 @@ const TASK_STEP_ITEMS = [
   { title: '分析证据' },
   { title: '补充录制' },
   { title: '生成 Adapter' },
-  { title: '发布安装' },
+  { title: '本机安装' },
 ]
 
 function normalizeError(error) {
@@ -82,9 +82,9 @@ function generationStatusLabel(status) {
     static_validating: '静态验证',
     revising: '修正草稿',
     runtime_validating: '页面运行验证',
-    publishing: '发布 Adapter',
-    awaiting_approval: '等待确认发布',
-    completed: '已发布',
+    publishing: '安装 Adapter',
+    awaiting_approval: '等待确认安装',
+    completed: '已安装',
     failed: '生成失败',
     cancelled: '已取消',
     budget_exceeded: '达到生成预算上限',
@@ -318,7 +318,7 @@ export default function ExplorationPage({ onClose }) {
     setGenerationMessage('')
     try {
       setRun(await saveExplorationMemory(run.taskId))
-      setGenerationMessage('探索结果已保存，可以开始生成 v1 Adapter。')
+      setGenerationMessage('探索结果已保存，可以开始生成 Adapter。')
     } catch (nextError) {
       setGenerationMessage(normalizeError(nextError))
     } finally {
@@ -406,13 +406,11 @@ export default function ExplorationPage({ onClose }) {
   const handleQuickGenerate = async () => {
     if (!run?.taskId || busyAction) return
     setBusyAction('quickGenerate')
-    setGenerationMessage('正在生成 v1 Adapter 草稿…')
+    setGenerationMessage('正在生成 Adapter 草稿…')
     try {
       const response = await generateExplorationScaffold(run.taskId)
       setRun(response.run)
-      setGenerationMessage(response.result?.browserRefreshError
-        ? `v1 Adapter 已生成，但目标页面刷新失败：${response.result.browserRefreshError}`
-        : 'v1 Adapter 已生成并刷新目标页面。')
+      setGenerationMessage('快速生成已启动，验证通过后可确认安装并启用。')
     } catch (nextError) {
       setGenerationMessage(normalizeError(nextError))
     } finally {
@@ -465,13 +463,19 @@ export default function ExplorationPage({ onClose }) {
   const handlePublishGeneration = async () => {
     if (!run?.taskId || busyAction) return
     setBusyAction('publishGeneration')
-    setGenerationMessage('正在发布并刷新目标页面…')
+    setGenerationMessage('正在安装并刷新目标页面…')
     try {
-      const nextRun = await publishExplorationGeneration(run.taskId)
+      const nextRun = await publishExplorationGeneration(run.taskId, {
+        reviewId: generation?.artifacts?.installationReview?.reviewId, acceptChanges: true,
+      })
       setRun(nextRun)
+      if (nextRun.generationRun?.status !== 'completed') {
+        setGenerationMessage(nextRun.generationRun?.lastError?.message || '请重新检查安装信息并确认。')
+        return
+      }
       setGenerationMessage(nextRun.generationRefreshError
-        ? `Adapter 已发布，但目标页面刷新失败：${nextRun.generationRefreshError}`
-        : 'Adapter 已发布，目标页面已刷新。')
+        ? `Adapter 已安装，但目标页面刷新失败：${nextRun.generationRefreshError}`
+        : 'Adapter 已安装，目标页面已刷新。')
     } catch (nextError) {
       setGenerationMessage(normalizeError(nextError))
     } finally {
@@ -823,9 +827,9 @@ export default function ExplorationPage({ onClose }) {
                 )}
 
                 <div style={cardStyle}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>下一步：生成 v1 Adapter</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>下一步：生成 Adapter</div>
                   <div style={{ marginTop: 5, fontSize: 11, color: 'var(--text-muted)' }}>
-                    先保存本次探索结果，再选择快速生成或智能生成。智能生成会在确认后才发布。
+                    先保存本次探索结果，再选择快速生成或智能生成。生成结果通过验证后需要确认安装。
                   </div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
                     {!run.siteMemory && <Button loading={busyAction === 'saveMemory'} disabled={anyBusy || actionCaptureRunning} onClick={handleSaveMemory}>保存探索结果</Button>}
@@ -851,10 +855,10 @@ export default function ExplorationPage({ onClose }) {
           <div style={cardStyle}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <Tag color="success" style={{ marginInlineEnd: 0 }}>已生成</Tag>
-              <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>v1 Adapter</span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>Adapter</span>
             </div>
             <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
-              已写入现有 Adapter 目录，生成文件 {Object.keys(run.scaffoldResult.files || {}).length} 个。
+              历史生成记录，文件 {Object.keys(run.scaffoldResult.files || {}).length} 个。
               {run.scaffoldResult.browserRefreshError ? ' 当前目标页面未能自动刷新，请重新打开或刷新页面。' : ' 当前目标页面已刷新。'}
             </div>
           </div>
@@ -913,24 +917,36 @@ export default function ExplorationPage({ onClose }) {
             {(generation.status === 'awaiting_approval' || generationRunning) && (
               <div style={{ marginTop: 12, padding: '10px 12px', borderRadius: 8, background: 'color-mix(in srgb, var(--accent) 8%, transparent)', fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.55 }}>
                 {generation.status === 'awaiting_approval'
-                  ? '请先核对上方工具清单和验证结果，确认无误后再发布。发布会把这些工具安装到本机 Skill 目录，并刷新目标页面。'
-                  : '智能生成进行中：草稿、静态验证和页面运行验证完成后，会在这里等待你确认发布。'}
+                  ? '请核对工具清单、验证结果和安装评审。确认后安装到本机用户 Adapter 目录，刷新工具与 Skill。'
+                  : '智能生成进行中：草稿、静态验证和页面运行验证完成后，会在这里等待你安装并启用。'}
               </div>
             )}
 
+            {generation.artifacts?.installationReview && (
+              <Alert type="info" style={{ marginTop: 12 }} message="本机安装评审" description={
+                <div>
+                  <div>{generation.artifacts.installationReview.name} · {generation.artifacts.installationReview.currentVersion || '未安装'} → {generation.artifacts.installationReview.version}</div>
+                  <div>来源：{generation.artifacts.installationReview.currentSource || '无'} → 本机生成</div>
+                  <div>申请权限：{generation.artifacts.installationReview.permissions.join('、') || '无'}</div>
+                  {generation.artifacts.installationReview.addedPermissions.length > 0 && <div>新增权限：{generation.artifacts.installationReview.addedPermissions.join('、')}</div>}
+                  {generation.artifacts.installationReview.sourceChange && <div>安装将切换此 Adapter 的更新来源。</div>}
+                  {generation.artifacts.installationReview.downgrade && <div>安装将降级当前版本。</div>}
+                </div>
+              } />
+            )}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 14 }}>
               {(generationRunning || generation.status === 'awaiting_approval') && (
                 <Button loading={busyAction === 'cancelGeneration'} disabled={anyBusy} onClick={handleCancelGeneration}>取消生成</Button>
               )}
               {generation.status === 'awaiting_approval' && (
                 <Popconfirm
-                  title="确认发布 Adapter？"
-                  description="将把已验证的工具安装到本机 Skill 目录，并刷新目标页面。"
-                  okText="确认发布"
+                  title="安装并启用 Adapter？"
+                  description="确认上述版本、来源和权限变化，安装到本机用户目录并启用，随后刷新工具与 Skill。"
+                  okText="安装并启用"
                   cancelText="再想想"
                   onConfirm={handlePublishGeneration}
                 >
-                  <Button type="primary" loading={busyAction === 'publishGeneration'} disabled={anyBusy}>确认发布</Button>
+                  <Button type="primary" loading={busyAction === 'publishGeneration'} disabled={anyBusy}>安装并启用</Button>
                 </Popconfirm>
               )}
               {generationFailure(generation.status) && (

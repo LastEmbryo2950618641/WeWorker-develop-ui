@@ -6,6 +6,7 @@ import { Socket } from 'net'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { app, utilityProcess } from 'electron'
+import { buildAdapterEnvironment } from './adapter-environment.js'
 import {
   formatProcessExitCode,
   isPortOccupied,
@@ -23,6 +24,7 @@ import {
   resolveWebwrightHome,
   resolveWeWorkerUserFilesDir,
 } from './webwright-manager.js'
+import { resolveClaudeCodePath } from './claude-runtime.js'
 
 export {
   WebwrightManager,
@@ -31,6 +33,10 @@ export {
 } from './webwright-manager.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+
+function adapterEnvironment() {
+  return buildAdapterEnvironment({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, repoRoot: path.resolve(__dirname, '../..') })
+}
 
 function normalizeOpenBrowserAllowedOrigin(value) {
   const raw = String(value || '').trim()
@@ -110,7 +116,7 @@ export class BridgeManager {
 
     let cmd, args
     const bridgeEnv = {
-      ...process.env,
+      ...adapterEnvironment(),
       NODE_OPTIONS: [process.env.NODE_OPTIONS, '--max-old-space-size=4096'].filter(Boolean).join(' '),
       WEBCLI_AI_REPORT_DIR: this._reportDir,
       WEBCLI_GENERATION_REPORT_DIR: this._reportDir,
@@ -329,6 +335,7 @@ export class NodeManager {
 
     const backendDir = path.resolve(__dirname, '../backend-ts')
     const backendInstanceId = randomUUID()
+    const claudeCodePath = resolveClaudeCodePath({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, appRoot: path.resolve(__dirname, '..') })
     if (app.isPackaged) {
       // Packaged: use utilityProcess (Electron's embedded Node.js) — NOT process.execPath
       // which would re-launch Electron itself causing an infinite loop.
@@ -337,13 +344,14 @@ export class NodeManager {
         stdio: 'pipe',
         execArgv: ['--experimental-sqlite'],
         env: {
-          ...buildWebwrightEnvironment(process.env, this._webwrightHome),
+          ...buildWebwrightEnvironment(adapterEnvironment(), this._webwrightHome),
           WEWORK_PORT: '8765',
           WEWORK_LOG_FILE: this._logFile,
           WEWORKER_HTTP_TOKEN: this._httpAuthToken,
           WEWORKER_BACKEND_INSTANCE_ID: backendInstanceId,
-          WEWORKER_MODEL_CONFIG_TOKEN: this._modelConfigToken,
           WEWORKER_EXPLORATION_INSTANCE_ID: this._explorationInstanceId,
+          WEWORKER_CLAUDE_CODE_PATH: claudeCodePath,
+          WEWORKER_MODEL_CONFIG_TOKEN: this._modelConfigToken,
           WEWORKER_PACKAGED: '1',
           WEWORKER_RESOURCES_PATH: process.resourcesPath,
           WEWORKER_EXEC_PATH: process.execPath,
@@ -372,14 +380,15 @@ export class NodeManager {
       this._process = spawn(cmd, args, {
         cwd: backendDir,
         env: {
-          ...buildWebwrightEnvironment(process.env, this._webwrightHome),
+          ...buildWebwrightEnvironment(adapterEnvironment(), this._webwrightHome),
           ELECTRON_RUN_AS_NODE: '1',
           WEWORK_PORT: '8765',
           WEWORK_LOG_FILE: this._logFile,
           WEWORKER_HTTP_TOKEN: this._httpAuthToken,
           WEWORKER_BACKEND_INSTANCE_ID: backendInstanceId,
-          WEWORKER_MODEL_CONFIG_TOKEN: this._modelConfigToken,
           WEWORKER_EXPLORATION_INSTANCE_ID: this._explorationInstanceId,
+          WEWORKER_CLAUDE_CODE_PATH: claudeCodePath,
+          WEWORKER_MODEL_CONFIG_TOKEN: this._modelConfigToken,
           WEWORKER_RENDERER_ORIGIN: process.env.WEWORKER_DEV_SERVER_URL || '',
         },
         stdio: ['ignore', 'pipe', 'pipe'],

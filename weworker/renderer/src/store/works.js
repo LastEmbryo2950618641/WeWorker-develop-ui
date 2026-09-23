@@ -3,6 +3,7 @@ import { mapMessageContentAfterStop } from '../utils/chat-generation-stop.js'
 import { applyTerminalEventToMessages } from '../utils/terminal-chat-output.js'
 import { calibrateCompactedContextSnapshot, calibrateContextSnapshot, createContextTokenAnchor, projectIncrementalContextSnapshot } from '../utils/context-snapshot.js'
 import { backendFetch } from '../api/http.js'
+import { leaveWebsiteExploration } from './website-exploration.js'
 
 const API = 'http://127.0.0.1:8765'
 
@@ -41,6 +42,7 @@ export const useWorksStore = create((set, get) => ({
   },
 
   createWork: async (opts = {}) => {
+    if (!await leaveWebsiteExploration()) return null
     const reuseEmptyWork = async (work) => {
       set({ activeWorkId: work.id })
       getScheduledTasksStore().then(s => s?.setState({ activeTaskId: null })).catch(() => {})
@@ -101,6 +103,7 @@ export const useWorksStore = create((set, get) => ({
   },
 
   selectWork: async (id) => {
+    if (!await leaveWebsiteExploration()) return
     set({ activeWorkId: id })
     try { getScheduledTasksStore().then(s => s?.setState({ activeTaskId: null })) } catch {}
     // If this work is currently streaming, don't overwrite in-memory messages with backend data

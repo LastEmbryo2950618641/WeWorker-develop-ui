@@ -13,6 +13,7 @@ import {
   resolveAdapterDraftFile,
 } from './draft-revision.js';
 import { readOnlyV2Plan, buildPlanSemanticEnhancement } from './adapter-generation-workflow.js';
+import { createDraftEvidenceTools } from './draft-evidence-tools.js';
 
 const MAX_ORCHESTRATION_STEPS = 24;
 const MAX_DRAFT_FILE_CHARS = 50_000;
@@ -26,8 +27,9 @@ const ORCHESTRATOR_SYSTEM_PROMPT = `你是 Adapter 生成编排者，负责从�
 
 必须遵循：
 1. 先 inspect_generation_context：overview 必看；如果存在 previous_failure（上次失败复盘）必须读取并吸收教训。
-2. save_generation_plan 保存计划：查询类工具 risk=read（最多 2 个）；action_apis 中的提交/修改类候选可计划为 write。写工具必须由你根据安全的 requestEvidence 语义化创作，明确业务参数、显式 payload 构造、access=write、确认门和业务响应判断；不得把捕获值写成默认值。requestEvidence 为 opaque/omitted/truncated 时必须 request_user_input，禁止猜测或修复前缀。未在 action_apis 出现的接口不得计划为 write。工具名一律用英文 snake_case（如 submit_request），不得使用中文或候选原始 toolName。
-3. scaffold_adapter_draft 只生成安全骨架。write 骨架含 AGENT_AUTHORED_WRITE_REQUIRED，必须读取对应文件并改写为业务语义实现；禁止让占位骨架进入验证通过状态。工具定义必须包含 access: 'write' 与 writeVerification，后者至少包含 representativeArgs、expectedRequest{method,url,body}、successResponse、successExpectation、failureResponse、failureExpectation，可用 forbiddenValues 声明禁止出现的捕获值。验证器会真实执行 handler，但 fetch 为本地 mock，不会访问站点。
+   用户目标决定工具范围。不得用更容易验证的分类、通知或其他无关接口替代目标接口；目标接口证据不足、响应截断或回放失败时，应 request_user_input 说明缺少的证据和补采动作，不能宣称目标已完成。
+2. save_generation_plan 保存计划：查询类工具 risk=read（最多 2 个）；action_apis 中的提交/修改类候选可计划为 write。写工具必须由你根据安全的 requestEvidence 语义化创作，明确业务参数、显式 payload 构造、access=write、确认门和业务响应判断；不得把捕获值写成默认值。requestEvidence 为 opaque/omitted/truncated 时必须 request_user_input，禁止猜测或修复前缀。未在 action_apis 出现的接口不得计划为 write。计划工具名用英文 snake_case（如 submit_request），不得使用中文或候选原始 toolName；v2 草稿将其映射为 kebab-case 并保留原名别名，后续使用 scaffold 返回的规范名。
+3. scaffold_adapter_draft 只生成安全骨架。write 骨架含 AGENT_AUTHORED_WRITE_REQUIRED，必须读取对应文件并改写为业务语义实现；禁止让占位骨架进入验证通过状态。v2 包的 manifest 命令必须声明 safety: 'write'，schema 中保留 x-webcli-requires-confirmation 并将 x-webcli-agent-authored 设为 true；命令脚本仅注册 handler。通过 inspect_generation_evidence 读取来源，用 write_generation_fixture 保存独立于包的 mock 用例；历史草稿继续使用 access: 'write' 与内联 writeVerification。mock 用例至少包含 representativeArgs、expectedRequest{method,url,body}、successResponse、successExpectation、failureResponse、failureExpectation，可用 forbiddenValues 声明禁止出现的捕获值。验证器会真实执行 handler，但 fetch 为本地 mock，不会访问站点。
    writeVerification 的 representativeArgs 仅提供虚构业务参数，不要填 __confirmed；验证器会分别测试省略确认、__confirmed:false 和 __confirmed:true。successExpectation 与 failureExpectation 必须是非空 JSON 对象，用于匹配结果字段子集，例如 {"ok":true} 和 {"ok":false}；禁止填写 JavaScript 表达式字符串。successResponse/failureResponse 使用 {"status":200,"body":{...}} 格式。
 4. validate_adapter_draft 做静态验证；失败就读取/修改草稿文件后重验。
 5. validate_adapter_runtime 做真实页面运行验证；失败按责任域处置：
@@ -62,6 +64,11 @@ function createOrchestratorTools(state, deps) {
   };
 
   return [
+    ...createDraftEvidenceTools(() => { requiresDraft(); return state.draft.adapterDir; }, commandId => {
+      state.writes.push({ path: `fixture:${commandId}`, reason: 'mock verification' });
+      state.staticValidation = null;
+      state.runtimeValidation = null;
+    }),
     {
       name: 'inspect_generation_context',
       description: '读取探索结果的指定部分。overview 必看；存在 previous_failure 时必须读取。',
@@ -170,7 +177,10 @@ function createOrchestratorTools(state, deps) {
           { outputRoot: draftRoot, plan: state.plan },
         );
         run.trace('draft_phase', { phase: 'scaffold_write_completed', toolCount: draft.toolNames?.length || 0 });
+        state.activeToolNames = plannedToolNames(memory.siteKey, state.plan, draft.packageFormat);
         state.draft = {
+          packageFormat: draft.packageFormat,
+          managedBaseline: draft.managedBaseline,
           revision,
           rootDir: draftRoot,
           adapterDir: draft.adapterDir,
@@ -263,6 +273,9 @@ function createOrchestratorTools(state, deps) {
       parameters: { type: 'object', properties: {}, additionalProperties: false },
       execute: async () => {
         requiresDraft();
+        if (run.status === GENERATION_STATUSES.RUNTIME_VALIDATING) {
+          run.transition(GENERATION_STATUSES.REVISING, { currentAction: 'validate_adapter_draft' });
+        }
         run.transition(GENERATION_STATUSES.STATIC_VALIDATING, { currentAction: 'validate_adapter_draft' });
         state.staticValidation = staticValidator({
           adapterDir: state.draft.adapterDir,
@@ -660,7 +673,7 @@ export async function resumeGenerationOrchestrator(deps, answer) {
     draft: draftArtifact || null,
     staticValidation: null,
     runtimeValidation: null,
-    activeToolNames: plannedToolNames(deps.memory.siteKey, planArtifact),
+    activeToolNames: plannedToolNames(deps.memory.siteKey, planArtifact, draftArtifact?.packageFormat),
     writes: [],
     pendingQuestion: null,
     lastModelMessages: orchestrationState?.messages || [],

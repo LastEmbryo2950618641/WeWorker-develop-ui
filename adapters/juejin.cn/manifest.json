@@ -1,0 +1,84 @@
+{
+  "schema_version": 2,
+  "name": "juejin.cn",
+  "version": "1.0.8",
+  "description": "Generated adapter shell for juejin.cn",
+  "match": [
+    "juejin.cn"
+  ],
+  "requires_auth": true,
+  "commands": [
+    {
+      "id": "check-login-status",
+      "runtime": "extension",
+      "module": "extension/commands/check-login-status.js",
+      "description": "登录状态检查工具。用于确认 juejin.cn 当前页面是否已登录，以及当前会话是否可继续调用站点接口。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "aliases": [
+        "check_login_status"
+      ]
+    },
+    {
+      "id": "like-current-item",
+      "runtime": "extension",
+      "module": "extension/commands/like-current-item.js",
+      "description": "对当前打开的掘金内容执行点赞动作。需要用户已在浏览器登录，调用前必须获得用户确认。",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "aliases": [
+        "like_current_item"
+      ]
+    },
+    {
+      "id": "favorite-current-item",
+      "runtime": "extension",
+      "module": "extension/commands/favorite-current-item.js",
+      "description": "对当前打开的掘金内容执行收藏动作。需要用户已在浏览器登录，调用前必须获得用户确认。",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "collection_name": {
+            "type": "string",
+            "description": "可选。要收藏到的收藏夹名称；不传时选择弹窗中的第一个收藏夹。"
+          }
+        },
+        "required": []
+      },
+      "aliases": [
+        "favorite_current_item"
+      ]
+    },
+    {
+      "id": "list-detail-candidates",
+      "runtime": "extension",
+      "module": "extension/commands/list-detail-candidates.js",
+      "description": "详情候选辅助工具。返回探索阶段捕获到的详情链接候选及相关元数据。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "aliases": [
+        "list_detail_candidates"
+      ]
+    }
+  ],
+  "homepage_url": "https://juejin.cn/frontend",
+  "generated_from": {
+    "source": "site_memory",
+    "workflow_version": "opencli-like-v12",
+    "generated_at": "2026-05-21T02:37:07.073Z",
+    "recommended_strategy": "HYBRID"
+  }
+}

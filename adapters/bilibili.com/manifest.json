@@ -1,0 +1,186 @@
+{
+  "schema_version": 2,
+  "name": "bilibili.com",
+  "version": "1.0.0",
+  "description": "Bilibili / B 站：登录检查、搜索视频、打开视频详情、读取评论、点赞/收藏视频",
+  "match": [
+    "bilibili.com"
+  ],
+  "requires_auth": false,
+  "commands": [
+    {
+      "id": "check-login-status",
+      "runtime": "extension",
+      "module": "extension/commands/check-login-status.js",
+      "description": "检查当前 B 站浏览器会话是否已登录，并返回登录状态。不会返回 Cookie、Token、账号凭据或其他敏感信息。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "aliases": [
+        "check_login_status"
+      ]
+    },
+    {
+      "id": "search-videos",
+      "runtime": "extension",
+      "module": "extension/commands/search-videos.js",
+      "description": "根据关键词搜索 B 站视频，并返回标题、链接、UP 主、播放信息和摘要。首次调用可能会跳转搜索页，页面加载后再次调用可读取结果。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "搜索关键词"
+          },
+          "limit": {
+            "type": "number",
+            "description": "返回数量，1-10"
+          }
+        },
+        "required": []
+      },
+      "aliases": [
+        "search_videos"
+      ]
+    },
+    {
+      "id": "open-video-detail",
+      "runtime": "extension",
+      "module": "extension/commands/open-video-detail.js",
+      "description": "打开或读取 B 站视频详情页，返回标题、UP 主、播放量、弹幕数、发布时间、简介和关键链接。首次调用可能会跳转视频页，页面加载后再次调用可读取详情。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "video_url": {
+            "type": "string",
+            "description": "视频 URL、BV 号或 av 号；为空时使用当前页"
+          }
+        },
+        "required": []
+      },
+      "aliases": [
+        "open_video_detail"
+      ]
+    },
+    {
+      "id": "read-comments",
+      "runtime": "extension",
+      "module": "extension/commands/read-comments.js",
+      "description": "读取当前 B 站视频页的评论摘要。页面评论未加载时，可先滚动到评论区后再次调用。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "number",
+            "description": "最多返回评论数量，1-20"
+          }
+        },
+        "required": []
+      },
+      "aliases": [
+        "read_comments"
+      ]
+    },
+    {
+      "id": "like-video",
+      "runtime": "extension",
+      "module": "extension/commands/like-video.js",
+      "description": "对当前或指定 B 站视频执行点赞；如果已经点赞则返回已点赞，不执行取消。必须显式传入 confirm=true 才会修改当前账号状态。",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "video_url": {
+            "type": "string",
+            "description": "视频 URL、BV 号或 av 号；为空时使用当前页"
+          },
+          "confirm": {
+            "type": "boolean",
+            "description": "必须显式为 true 才执行点赞"
+          }
+        },
+        "required": []
+      },
+      "aliases": [
+        "like_video"
+      ]
+    },
+    {
+      "id": "favorite-video",
+      "runtime": "extension",
+      "module": "extension/commands/favorite-video.js",
+      "description": "对当前或指定 B 站视频执行收藏；如果已经收藏则返回已收藏，不执行取消。必须显式传入 confirm=true 才会修改当前账号状态；需要选择收藏夹时可传 folder_name。",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "video_url": {
+            "type": "string",
+            "description": "视频 URL、BV 号或 av 号；为空时使用当前页"
+          },
+          "folder_name": {
+            "type": "string",
+            "description": "收藏夹名称；当页面弹出收藏夹选择时用于选择目标收藏夹"
+          },
+          "confirm": {
+            "type": "boolean",
+            "description": "必须显式为 true 才执行收藏"
+          }
+        },
+        "required": []
+      },
+      "aliases": [
+        "favorite_video"
+      ]
+    }
+  ],
+  "homepage_url": "https://www.bilibili.com",
+  "icon": "video",
+  "scenarios": [
+    {
+      "id": "search-video",
+      "title": "搜索视频",
+      "summary": "按关键词搜索 B 站视频并整理结果",
+      "prompts": [
+        {
+          "text": "帮我在 B 站搜索${开源项目介绍}相关视频"
+        }
+      ]
+    },
+    {
+      "id": "video-detail",
+      "title": "查看视频详情",
+      "summary": "打开或读取视频详情页，提取标题、UP 主、播放量和简介",
+      "prompts": [
+        {
+          "text": "帮我打开这个 B 站视频并总结基础信息"
+        }
+      ]
+    },
+    {
+      "id": "comments",
+      "title": "读取评论",
+      "summary": "读取当前视频页的评论摘要"
+    },
+    {
+      "id": "like-favorite",
+      "title": "点赞或收藏视频",
+      "summary": "在用户明确确认后对当前或指定 B 站视频执行点赞或收藏"
+    }
+  ],
+  "test_prompts": [
+    "打开 B 站，搜索开源项目介绍，读取一个视频详情和评论摘要"
+  ],
+  "i18n": {
+    "zh": {
+      "name": "Bilibili / B 站",
+      "description": "Bilibili / B 站：登录检查、搜索视频、打开视频详情、读取评论、点赞/收藏视频"
+    }
+  }
+}

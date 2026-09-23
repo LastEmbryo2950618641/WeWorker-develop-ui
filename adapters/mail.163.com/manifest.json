@@ -1,0 +1,245 @@
+{
+  "schema_version": 2,
+  "name": "mail.163.com",
+  "version": "1.0.8",
+  "description": "网易163邮箱：读取邮件列表、搜索邮件、查看邮件详情、下载附件、写邮件",
+  "match": [
+    "mail.163.com"
+  ],
+  "requires_auth": true,
+  "commands": [
+    {
+      "id": "check-login-status",
+      "runtime": "extension",
+      "module": "extension/commands/check-login-status.js",
+      "description": "检测163邮箱是否已登录。打开163邮箱后应首先调用此工具确认登录状态，未登录时需提醒用户先登录。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "aliases": [
+        "check_login_status"
+      ]
+    },
+    {
+      "id": "navigate-to-inbox",
+      "runtime": "extension",
+      "module": "extension/commands/navigate-to-inbox.js",
+      "description": "返回163邮箱收件箱首页。当需要执行多步骤操作（如批量下载附件）或当前页面状态不明确时，使用此工具返回初始状态。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "aliases": [
+        "navigate_to_inbox"
+      ]
+    },
+    {
+      "id": "search-emails",
+      "runtime": "extension",
+      "module": "extension/commands/search-emails.js",
+      "description": "在163邮箱中搜索邮件，支持按关键词搜索",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "keyword": {
+            "type": "string",
+            "description": "搜索关键词，例如「发票」「合同」「会议」"
+          }
+        },
+        "required": [
+          "keyword"
+        ]
+      },
+      "aliases": [
+        "search_emails"
+      ]
+    },
+    {
+      "id": "get-unread-emails",
+      "runtime": "extension",
+      "module": "extension/commands/get-unread-emails.js",
+      "description": "获取163邮箱收件箱中的未读邮件列表",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "number",
+            "description": "最多返回的邮件数量，默认20"
+          }
+        },
+        "required": []
+      },
+      "aliases": [
+        "get_unread_emails"
+      ]
+    },
+    {
+      "id": "open-email",
+      "runtime": "extension",
+      "module": "extension/commands/open-email.js",
+      "description": "打开163邮箱中的指定邮件，查看完整内容。邮件ID可以从search_emails或get_unread_emails的返回结果中获取",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "emailId": {
+            "type": "string",
+            "description": "邮件的唯一ID，例如：1771635701103_741xtbC5RBFmml9PfBxwQAA3D_6fd294bhq81771635724863Dom"
+          }
+        },
+        "required": [
+          "emailId"
+        ]
+      },
+      "aliases": [
+        "open_email"
+      ]
+    },
+    {
+      "id": "download-attachment",
+      "runtime": "extension",
+      "module": "extension/commands/download-attachment.js",
+      "description": "下载163邮箱中当前打开邮件的附件。使用前需要先调用open_email打开邮件。",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "attachmentName": {
+            "type": "string",
+            "description": "要下载的附件名称（例如：'发票.pdf'），或使用'all'打包下载所有附件"
+          }
+        },
+        "required": [
+          "attachmentName"
+        ]
+      },
+      "aliases": [
+        "download_attachment"
+      ]
+    },
+    {
+      "id": "get-current-page-info",
+      "runtime": "extension",
+      "module": "extension/commands/get-current-page-info.js",
+      "description": "获取当前163邮箱页面的状态信息，用于判断当前在哪个页面（收件箱、邮件详情、写信等）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "aliases": [
+        "get_current_page_info"
+      ]
+    },
+    {
+      "id": "compose-email",
+      "runtime": "extension",
+      "module": "extension/commands/compose-email.js",
+      "description": "在163邮箱中写邮件：打开写信界面，自动填入收件人、主题、正文，并可选择发送、保存草稿或仅填充。支持添加附件（通过 file_path 传入本地文件路径）。多个收件人或抄送地址用分号分隔。",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "to": {
+            "type": "string",
+            "description": "收件人邮箱地址，多个用分号分隔，例如 alice@example.com;bob@example.com"
+          },
+          "subject": {
+            "type": "string",
+            "description": "邮件主题"
+          },
+          "body": {
+            "type": "string",
+            "description": "邮件正文内容（纯文本或 HTML 格式均可）"
+          },
+          "cc": {
+            "type": "string",
+            "description": "抄送地址，多个用分号分隔"
+          },
+          "file_path": {
+            "type": "string",
+            "description": "附件文件的本地绝对路径，通过 CDP 上传到浏览器"
+          },
+          "file_name": {
+            "type": "string",
+            "description": "附件文件名（含扩展名），例如 report.pdf"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "send",
+              "draft",
+              "fill"
+            ],
+            "description": "操作类型：send 填写后直接发送（默认），draft 保存为草稿，fill 仅填充不执行操作"
+          }
+        },
+        "required": [
+          "to"
+        ]
+      },
+      "aliases": [
+        "compose_email"
+      ]
+    }
+  ],
+  "homepage_url": "https://github.com/WeWorker/WeWorker/tree/main/extension/adapters/mail.163.com",
+  "icon": "mailbox",
+  "scenarios": [
+    {
+      "id": "read-mail-list",
+      "title": "读取邮件列表",
+      "summary": "帮我看看有没有未读邮件",
+      "prompts": [
+        {
+          "text": "帮我看看有没有未读邮件",
+          "reply": "我会打开 163 邮箱，先查看收件箱和未读状态。\n如果有未读邮件，我会整理发件人、主题和时间；需要打开邮件确认内容时会先告诉你。"
+        }
+      ]
+    },
+    {
+      "id": "search-mail",
+      "title": "搜索邮件",
+      "summary": "在163 邮箱中按关键词搜索邮件"
+    },
+    {
+      "id": "view-mail-detail",
+      "title": "查看邮件详情",
+      "summary": "在163 邮箱中查看邮件详情"
+    },
+    {
+      "id": "download-attachment",
+      "title": "下载附件",
+      "summary": "打开163邮箱，下载我这个月收到的联通发票",
+      "prompts": [
+        {
+          "text": "打开163邮箱，下载我${这个月}收到的${发票}",
+          "reply": "我会打开 163 邮箱，按月份和发票关键词搜索邮件。\n找到附件后会下载到本地，并把下载结果和文件位置告诉你。"
+        }
+      ]
+    },
+    {
+      "id": "compose-mail",
+      "title": "写邮件",
+      "summary": "在163 邮箱中写邮件"
+    }
+  ],
+  "test_prompts": [
+    "打开163邮箱，查看收件箱邮件列表，然后搜索关键词'test'，打开搜索结果中的第一封邮件查看详情"
+  ],
+  "i18n": {
+    "zh": {
+      "name": "163邮箱",
+      "description": "网易163邮箱：读取邮件列表、搜索邮件、查看邮件详情、下载附件、写邮件"
+    }
+  },
+  "verified_on": "2026-03-21"
+}

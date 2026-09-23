@@ -283,6 +283,7 @@ export function resolveToolsForAdapter(
   adapter: ParsedAdapter,
   adaptersDir: string | null,
 ): StaticToolDef[] {
+  if (adapter.managed) return adapter.tools
   const tools = !adaptersDir ? adapter.tools : resolveAdapterToolList({
     adapterDir: path.join(adaptersDir, adapter.id),
     staticTools: adapter.tools,

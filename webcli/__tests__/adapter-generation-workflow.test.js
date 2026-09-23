@@ -107,7 +107,7 @@ describe('adapter generation workflow', () => {
     expect(result.result.pause).toBe(true);
     expect(result.artifacts.staticValidation.passed).toBe(true);
     expect(result.artifacts.draft.adapterDir).toContain(started.id);
-    expect(result.artifacts.draft.toolNames).toContain('example.test.query_rooms');
+    expect(result.artifacts.draft.toolNames).toContain('example.test.query-rooms');
     expect(result.artifacts.draft.semanticEnhancement.analysisSource).toBe('harness_plan');
     expect(result.modelCallCount).toBe(4);
     expect(JSON.stringify(result)).not.toContain(os.homedir());
@@ -332,9 +332,9 @@ describe('adapter generation workflow', () => {
     expect(result.status).toBe(GENERATION_STATUSES.FAILED);
     // OpenCLI 对齐后，不完整写证据只能生成待 agent 改写的安全骨架，不能直接发布。
     expect(result.artifacts.plan.tools.map((tool) => tool.name)).toEqual(['query_rooms', 'book_room']);
-    expect(result.artifacts.draft.toolNames).toContain('v2.example.test.query_rooms');
-    expect(result.artifacts.draft.toolNames.join('\n')).toMatch(/book_room/);
-    expect(result.artifacts.draft.toolNames.join('\n')).not.toMatch(/cancel_room/);
+    expect(result.artifacts.draft.toolNames).toContain('v2.example.test.query-rooms');
+    expect(result.artifacts.draft.toolNames.join('\n')).toMatch(/book-room/);
+    expect(result.artifacts.draft.toolNames.join('\n')).not.toMatch(/cancel-room/);
     expect(result.artifacts.staticValidation.errors.map((item) => item.code)).toEqual(expect.arrayContaining([
       'WRITE_AGENT_AUTHORING_REQUIRED',
       'MISSING_WRITE_VERIFICATION',

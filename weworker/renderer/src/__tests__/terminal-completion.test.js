@@ -11,7 +11,7 @@ import {
   shouldUsePathCompletionForCommand,
 } from '../utils/terminal-completion.js'
 
-const root = 'C:\\Users\\liuqi\\.weworker\\user-files'
+const root = 'C:\\Users\\fixture-user\\.weworker\\user-files'
 const files = [
   { name: 'TestDev_new', path: `${root}\\TestDev_new`, is_directory: true },
   { name: 'WeWorker', path: `${root}\\WeWorker`, is_directory: true },
@@ -241,10 +241,10 @@ describe('terminal path completion', () => {
         sessions: [{
           output: [
             'total 77',
-            'drwxr-xr-x 1 liuqi 197609     0 Jul  7 18:38 TestDev_new',
-            'drwxr-xr-x 1 liuqi 197609     0 Jul  2 19:04 WeWorker',
-            '-rwxr-xr-x 1 liuqi 197609 68120 Jul  1 20:03 vfcompat.dll',
-            '-rw-r--r-- 1 liuqi 197609   545 Jul  2 10:29 目录摘要报告.txt',
+            'drwxr-xr-x 1 fixture-user 197609     0 Jul  7 18:38 TestDev_new',
+            'drwxr-xr-x 1 fixture-user 197609     0 Jul  2 19:04 WeWorker',
+            '-rwxr-xr-x 1 fixture-user 197609 68120 Jul  1 20:03 vfcompat.dll',
+            '-rw-r--r-- 1 fixture-user 197609   545 Jul  2 10:29 目录摘要报告.txt',
           ].join('\n'),
         }],
       }),
@@ -262,10 +262,10 @@ describe('terminal path completion', () => {
         sessions: [{
           output: [
             'total 77',
-            'drwxr-xr-x 1 liuqi 197609     0 Jul  7 18:38 TestDev_new',
-            'drwxr-xr-x 1 liuqi 197609     0 Jul  2 19:04 WeWorker',
-            '-rwxr-xr-x 1 liuqi 197609 68120 Jul  1 20:03 vfcompat.dll',
-            '-rw-r--r-- 1 liuqi 197609   545 Jul  2 10:29 目录摘要报告.txt',
+            'drwxr-xr-x 1 fixture-user 197609     0 Jul  7 18:38 TestDev_new',
+            'drwxr-xr-x 1 fixture-user 197609     0 Jul  2 19:04 WeWorker',
+            '-rwxr-xr-x 1 fixture-user 197609 68120 Jul  1 20:03 vfcompat.dll',
+            '-rw-r--r-- 1 fixture-user 197609   545 Jul  2 10:29 目录摘要报告.txt',
           ].join('\n'),
         }],
       }),
@@ -317,7 +317,7 @@ describe('terminal path completion', () => {
     assert.deepEqual(
       getWebcliCompletionCandidates({
         command: 'webcli call expense.example.com.navigate_to_budget_request ',
-        cursor: 57,
+        cursor: 'webcli call expense.example.com.navigate_to_budget_request '.length,
         sites,
       }).map((item) => ({ name: item.name, value: item.value, kind: item.kind })),
       [
@@ -334,7 +334,7 @@ describe('terminal path completion', () => {
     assert.deepEqual(
       getWebcliCompletionCandidates({
         command: 'webcli call expense.example.com.wecli watch ',
-        cursor: 42,
+        cursor: 'webcli call expense.example.com.wecli watch '.length,
         sites,
       }).map((item) => item.value),
       ['--target=<target> --timeout=<timeout> '],
@@ -343,7 +343,7 @@ describe('terminal path completion', () => {
 
   it('shows site tools for webcli call from loaded sites', () => {
     assert.deepEqual(
-      getWebcliCompletionCandidates({ command: 'webcli call cost', cursor: 16, sites }).map((item) => ({
+      getWebcliCompletionCandidates({ command: 'webcli call expense', cursor: 19, sites }).map((item) => ({
         name: item.name,
         value: item.value,
         kind: item.kind,

@@ -1,12 +1,13 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { resolveAdapterPaths } from '../paths.js';
 
 const SAFE_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
 const SENSITIVE_KEY_RE = /api[_-]?key|authorization|cookie|credential|password|passwd|secret|session|ticket|token|csrf/i;
 const RAW_PREVIEW_KEY_RE = /(?:output|request|response)Preview/i;
 const DIAGNOSTIC_TEXT_KEY_RE = /^(?:stack)$/i;
-const PATH_KEY_RE = /(?:rootDir|draftRoot|adapterDir|adapterIndex|previewAdapterDir|draftAdapterDir|filePath|manifest|supportFile|sharedRuntime|indexSnippet|integrationGuide|skill|generatedSkill|writtenSkill|knowledgeJson|knowledgeMarkdown|discoveryIndex)$/i;
+const PATH_KEY_RE = /(?:rootDir|draftRoot|adapterDir|adapterIndex|previewAdapterDir|draftAdapterDir|filePath|manifest|supportFile|sharedRuntime|sourceEvidence|indexSnippet|integrationGuide|skill|generatedSkill|writtenSkill|knowledgeJson|knowledgeMarkdown|discoveryIndex)$/i;
 
 function assertSafeId(value, label) {
   const text = String(value || '');
@@ -95,11 +96,9 @@ function writeJsonAtomic(filePath, value) {
 }
 
 export class GenerationRunStore {
-  constructor({
-    rootDir = process.env.WEBCLI_GENERATION_RUNS_DIR
-      || path.join(os.homedir(), '.webcli', 'generation-runs'),
-  } = {}) {
-    this.rootDir = path.resolve(rootDir);
+  constructor({ rootDir, legacyRootDir } = {}) {
+    this.rootDir = path.resolve(rootDir || process.env.WEBCLI_GENERATION_RUNS_DIR || path.join(resolveAdapterPaths().workspaceDir, 'runs'));
+    this.legacyRootDir = legacyRootDir || (!rootDir ? process.env.WEBCLI_GENERATION_LEGACY_RUNS_DIR || (!process.env.WEBCLI_GENERATION_RUNS_DIR ? path.join(os.homedir(), '.webcli', 'generation-runs') : null) : null);
   }
 
   _persistPath(value) {
@@ -155,7 +154,15 @@ export class GenerationRunStore {
   }
 
   getRunDir(runId) {
-    return path.join(this.rootDir, assertSafeId(runId, 'runId'));
+    const id = assertSafeId(runId, 'runId');
+    const current = path.join(this.rootDir, id);
+    if (!fs.existsSync(current) && this.legacyRootDir && fs.existsSync(path.join(this.legacyRootDir, id, 'run.json'))) return path.join(this.legacyRootDir, id);
+    return current;
+  }
+
+  _historicalStore(runId) {
+    const parent = path.dirname(this.getRunDir(runId));
+    return parent !== this.rootDir ? new GenerationRunStore({ rootDir: parent }) : null;
   }
 
   getDraftRoot(runId) {
@@ -163,18 +170,24 @@ export class GenerationRunStore {
   }
 
   save(snapshot) {
+    const historical = this._historicalStore(snapshot.id);
+    if (historical) return historical.save(snapshot);
     const safeSnapshot = this._redactValue(snapshot);
     writeJsonAtomic(path.join(this.getRunDir(snapshot.id), 'run.json'), safeSnapshot);
     return safeSnapshot;
   }
 
   load(runId) {
+    const historical = this._historicalStore(runId);
+    if (historical) return historical.load(runId);
     const filePath = path.join(this.getRunDir(runId), 'run.json');
     if (!fs.existsSync(filePath)) return null;
     return this._restoreValue(JSON.parse(fs.readFileSync(filePath, 'utf8')));
   }
 
   appendTrace(runId, event) {
+    const historical = this._historicalStore(runId);
+    if (historical) return historical.appendTrace(runId, event);
     const tracePath = path.join(this.getRunDir(runId), 'trace.jsonl');
     fs.mkdirSync(path.dirname(tracePath), { recursive: true });
     fs.appendFileSync(tracePath, `${JSON.stringify(this._redactValue(event))}\n`, 'utf8');

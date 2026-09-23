@@ -133,6 +133,7 @@ export class WebwrightManager {
     userFilesDir = resolveWeWorkerUserFilesDir(),
     modelConfigToken = '',
     explorationInstanceId = '',
+    instanceId = '',
   } = {}) {
     if (!repoRoot) throw new Error('WebwrightManager requires repoRoot')
     this._log = log
@@ -149,7 +150,7 @@ export class WebwrightManager {
     this._webwrightHome = webwrightHome
     this._userFilesDir = userFilesDir
     this._modelConfigToken = modelConfigToken
-    this._explorationInstanceId = explorationInstanceId
+    this._explorationInstanceId = explorationInstanceId || instanceId
     this._status = 'stopped'
     this._process = null
     this._identity = null
@@ -222,6 +223,10 @@ export class WebwrightManager {
       env: {
         ...buildWebwrightEnvironment(process.env, this._webwrightHome),
         WEWORKER_USER_FILES_DIR: this._userFilesDir,
+        WEWORKER_WEBCLI_NODE: process.execPath,
+        WEWORKER_WEBCLI_ENTRY: this._isPackaged
+          ? path.join(this._resourcesPath, 'webcli', 'webcli.cjs')
+          : path.join(this._repoRoot, 'webcli', 'index.js'),
         WEWORKER_MODEL_CONFIG_URL: 'http://127.0.0.1:8765/internal/webwright/model-config',
         WEWORKER_MODEL_CONFIG_TOKEN: this._modelConfigToken,
         WEWORKER_EXPLORATION_INSTANCE_ID: this._explorationInstanceId,
@@ -273,7 +278,8 @@ export class WebwrightManager {
         const response = await this._fetch(`${WEBWRIGHT_URL}/api/health`)
         if (response.ok) {
           const health = await response.json()
-          if (health.ok && health.bind === '127.0.0.1' && String(health.port) === String(WEBWRIGHT_PORT)) return health
+          if (health.ok && health.bind === '127.0.0.1' && String(health.port) === String(WEBWRIGHT_PORT)
+            && (!this._explorationInstanceId || health.instance_id === this._explorationInstanceId)) return health
           lastError = new Error('health response has an invalid bind identity')
         } else {
           lastError = new Error(`health returned HTTP ${response.status}`)

@@ -4,6 +4,9 @@ import { plannedToolNames } from './plan-binding.js';
 import { GENERATION_STATUSES } from './constants.js';
 import { runToolLoop } from './tool-loop.js';
 import { copyAdapterDirectorySafe } from './adapter-workspace.js';
+import { generationEvidenceDir, resolveDraftToolName } from './package-inspection.js';
+import { createDraftEvidenceTools } from './draft-evidence-tools.js';
+import { assertManagedFile } from '../adapter-package-files.js';
 
 const ALLOWED_DRAFT_FILE_RE = /\.(?:js|json|md|txt)$/i;
 const MAX_DRAFT_FILE_CHARS = 50_000;
@@ -52,15 +55,20 @@ export function listDraftFiles(adapterDir) {
   return result.sort().slice(0, 200);
 }
 
-function cloneDraftRevision({ previousAdapterDir, nextDraftRoot, siteKey }) {
+function cloneDraftRevision({ previousAdapterDir, nextDraftRoot, siteKey, packageFormat }) {
   const nextAdapterDir = path.join(nextDraftRoot, siteKey);
   fs.mkdirSync(nextDraftRoot, { recursive: true });
   copyAdapterDirectorySafe(previousAdapterDir, nextAdapterDir);
+  if (packageFormat === 2) {
+    assertManagedFile(path.dirname(previousAdapterDir), `.generation/${path.basename(previousAdapterDir)}`);
+    assertManagedFile(nextDraftRoot, `.generation/${siteKey}`);
+    copyAdapterDirectorySafe(generationEvidenceDir(previousAdapterDir), generationEvidenceDir(nextAdapterDir));
+  }
   return nextAdapterDir;
 }
 
 function normalizedToolLocalName(value) {
-  return String(value || '').trim().split('.').pop();
+  return String(value || '').trim().split('.').pop().replace(/-/g, '_');
 }
 
 function fileToken(value) {
@@ -75,6 +83,20 @@ export function dropDraftTool(adapterDir, toolName) {
   const manifestPath = path.join(adapterDir, 'manifest.json');
   if (!fs.existsSync(manifestPath)) throw new Error('draft manifest.json not found');
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  if (manifest.schema_version === 2) {
+    const canonical = resolveDraftToolName(manifest, toolName);
+    const command = manifest.commands.find(command => `${manifest.name}.${command.id}` === canonical);
+    if (!command) throw new Error('Generated command not found.');
+    const source = resolveDraftFile(adapterDir, command.module).filePath;
+    // Retain discarded draft source as task evidence; never ship undeclared modules.
+    const discarded = path.join(generationEvidenceDir(adapterDir), 'discarded');
+    resolveDraftFile(path.dirname(adapterDir), `.generation/${manifest.name}/discarded/${command.id}.js`, { mustExist: false });
+    fs.mkdirSync(discarded, { recursive: true });
+    fs.renameSync(source, path.join(discarded, `${command.id}.js`));
+    manifest.commands = manifest.commands.filter(item => item !== command);
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+    return command.module;
+  }
   const supportFiles = Array.isArray(manifest.support_files) ? manifest.support_files.map(String) : [];
   const target = supportFiles.find((relativePath) => {
     const normalized = relativePath.replace(/\\/g, '/');
@@ -104,6 +126,7 @@ function remapDraftFiles(files, previousAdapterDir, nextAdapterDir) {
   if (!files || typeof files !== 'object') return files;
   return Object.fromEntries(Object.entries(files).map(([key, value]) => {
     if (typeof value !== 'string' || !path.isAbsolute(value)) return [key, value];
+    if (key === 'sourceEvidence') return [key, path.join(generationEvidenceDir(nextAdapterDir), 'source.json')];
     const relative = path.relative(previousAdapterDir, value);
     if (relative.startsWith('..') || path.isAbsolute(relative)) return [key, value];
     return [key, path.join(nextAdapterDir, relative)];
@@ -122,7 +145,8 @@ const REVISION_SYSTEM_PROMPT = `你是 Adapter 草稿修复器，只能在隔离
 7. 不得创建目录，不得访问草稿目录外的文件。
 8. 单个工具反复无法通过验证时按优先级处置：能修复则修复；确实无法自动验证但有保留价值时调用 mark_tool_unverifiable 转人工确认；确认不可用时可调用 drop_planned_tool 剔除（至少保留一个工具，剔除后需重新验证）。
 9. 无法继续推进时先调用 report_blocker 向用户说明卡点、已尝试的方案和建议动作，再输出 final。
-10. 需要回顾此前轮次的验证详情或失败原因时可调用 inspect_run_trace。`;
+10. 需要回顾此前轮次的验证详情或失败原因时可调用 inspect_run_trace。
+11. v2 包在 manifest 声明 schema 与 safety，脚本只注册 handler；用 inspect_generation_evidence 读取来源、write_generation_fixture 保存独立 mock 用例。写命令不得降级 safety 或移除确认门。`;
 
 export async function reviseAdapterDraft({
   run,
@@ -143,13 +167,14 @@ export async function reviseAdapterDraft({
     previousAdapterDir: draft.adapterDir,
     nextDraftRoot,
     siteKey: run.snapshot.siteKey,
+    packageFormat: draft.packageFormat,
   });
   let latestValidation = validation;
   let latestFeedback = validation;
   let runtimeValidation = null;
   const writes = [];
   const activeToolNames = plan?.tools
-    ? plannedToolNames(run.snapshot.siteKey, plan)
+    ? plannedToolNames(run.snapshot.siteKey, plan, draft.packageFormat)
     : [...(Array.isArray(draft.toolNames) ? draft.toolNames : [])];
   let activePlan = plan && Array.isArray(plan.tools)
     ? { ...plan, tools: plan.tools.map((tool) => ({ ...tool })) }
@@ -189,6 +214,10 @@ export async function reviseAdapterDraft({
         run.trace(`revision_loop_${event.type}`, event);
       },
       tools: [
+      ...createDraftEvidenceTools(() => adapterDir, commandId => {
+        writes.push({ path: `fixture:${commandId}`, reason: 'mock verification' });
+        runtimeValidation = null;
+      }),
       {
         name: 'inspect_validation_errors',
         description: '读取当前草稿的结构化验证错误，包括静态或真实运行错误。',

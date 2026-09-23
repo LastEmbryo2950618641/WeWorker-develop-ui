@@ -25,8 +25,7 @@ from webwright.server.development import build_development_input
 from webwright.server.development_store import DevelopmentRunStore
 from webwright.server.weworker_model_config import ManagedModelConfig, load_managed_model_config
 from webwright.server.publisher import (
-    EXECUTABLE_ARTIFACT_NAMES,
-    artifact_hash as compute_artifact_hash,
+    read_distribution,
     skill_name,
 )
 from webwright.server.records import TaskStore, atomic_write_json, make_run_id, now_iso, sanitize_id, timestamp_compact
@@ -362,6 +361,7 @@ class ProcessManager:
         channel: str,
         parameters: dict[str, Any],
         timeout_seconds: int = 60,
+        expected_distribution_hash: str | None = None,
     ) -> dict[str, Any]:
         if self.toolkit_store is None or self.debug_store is None:
             raise InvalidStateError("Toolkit Debug Store is not configured.")
@@ -371,54 +371,47 @@ class ProcessManager:
             raise ValueError("parameters must be a JSON object.")
         if timeout_seconds < 1 or timeout_seconds > 600:
             raise ValueError("timeout_seconds must be between 1 and 600.")
-        self.toolkit_store.get_tool(toolkit_id, tool_id)
-        slot = (
-            self.toolkit_store.read_formal_slot(toolkit_id, tool_id)
-            if channel == "formal"
-            else self.toolkit_store.read_development_slot(toolkit_id, tool_id)
-        )
-        if slot is None:
-            raise InvalidStateError(f"Tool has no {channel} version.")
+        package = None
         artifact_hash = ""
+        distribution_hash = ""
         if channel == "formal":
-            build = try_read_json(
-                self.toolkit_store.toolkit_dir(toolkit_id) / ".server" / "build.json"
-            )
-            build = build if isinstance(build, dict) else {}
-            artifact_hash = str(build.get("artifact_hash") or "")
-            formal_hashes = build.get("formal_hashes") or {}
-            if (
-                not artifact_hash.startswith("sha256:")
-                or not isinstance(formal_hashes, dict)
-                or formal_hashes.get(tool_id) != slot.get("code_hash")
-            ):
-                raise InvalidStateError("Published Toolkit artifacts are not consistent.")
-            skill_root = (
-                self.toolkit_store.toolkit_dir(toolkit_id) / skill_name(toolkit_id)
-            )
+            skill_root = self.toolkit_store.toolkit_dir(toolkit_id) / skill_name(toolkit_id)
             try:
-                installed = {
-                    name: (skill_root / name).read_text(encoding="utf-8")
-                    for name in EXECUTABLE_ARTIFACT_NAMES
-                }
-            except OSError as exc:
-                raise InvalidStateError(
-                    "Published Toolkit artifacts are not consistent."
-                ) from exc
-            if compute_artifact_hash(installed) != artifact_hash:
-                raise InvalidStateError("Published Toolkit artifacts are not consistent.")
+                package = read_distribution(skill_root)
+            except (OSError, ValueError) as error:
+                raise InvalidStateError("Published Adapter package is invalid.") from error
+            if tool_id.replace("_", "-") not in {item["id"] for item in package["manifest"]["tools"]}:
+                raise InvalidStateError("Tool is not present in the Adapter manifest.")
+            artifact_hash = package["artifact_hash"]
+            distribution_hash = package["distribution_hash"]
+            if expected_distribution_hash is not None and expected_distribution_hash != distribution_hash:
+                raise InvalidStateError("Adapter package changed. Refresh the validation form.")
+            code_hash = artifact_hash
+        else:
+            slot = self.toolkit_store.read_development_slot(toolkit_id, tool_id)
+            if slot is None:
+                raise InvalidStateError("Tool has no development version.")
+            code_hash = str(slot["code_hash"])
 
         with self.lock:
             self._ensure_not_busy_locked()
             run = self.debug_store.create(
                 tool_id=tool_id,
                 channel=channel,
-                code_hash=str(slot["code_hash"]),
+                code_hash=code_hash,
+                toolkit_id=toolkit_id,
+                distribution_hash=distribution_hash,
                 artifact_hash=artifact_hash,
                 parameters=parameters,
             )
             debug_run_id = str(run["debug_run_id"])
             run_dir = self.debug_store.run_dir(tool_id, debug_run_id)
+            adapter_root = run_dir / "artifacts" / skill_name(toolkit_id)
+            if package:
+                for name, content in package["artifacts"].items():
+                    target = adapter_root / name
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(content.encode("utf-8"))
             spec_path = run_dir / "debug_spec.json"
             atomic_write_json(
                 spec_path,
@@ -427,7 +420,9 @@ class ProcessManager:
                     "toolkit_id": toolkit_id,
                     "tool_id": tool_id,
                     "channel": channel,
-                    "code_hash": slot["code_hash"],
+                    "code_hash": code_hash,
+                    "distribution_hash": distribution_hash,
+                    "adapter_root": str(adapter_root) if package else "",
                     "artifact_hash": artifact_hash,
                     "parameters": parameters,
                     "timeout_seconds": timeout_seconds,

@@ -35,6 +35,14 @@ export default defineConfig({
           Authorization: `Bearer ${process.env.METRICS_TOKEN || ''}`,
         },
       },
+      '/api/visits': {
+        target: process.env.METRICS_TARGET || 'http://127.0.0.1:8787',
+        changeOrigin: true,
+        rewrite: (p) => p.replace('/api/visits', '/v1/visits'),
+        headers: {
+          Authorization: `Bearer ${process.env.METRICS_TOKEN || ''}`,
+        },
+      },
     },
   },
 })

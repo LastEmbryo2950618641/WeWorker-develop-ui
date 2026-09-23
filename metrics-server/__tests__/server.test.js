@@ -15,8 +15,8 @@ function freshDb() {
 function rec(over = {}) {
   return {
     ts: Date.now(),
-    tool: "itsm.example.com.search_tickets",
-    domain: "itsm.example.com",
+    tool: "tickets.example.com.search_tickets",
+    domain: "tickets.example.com",
     kind: "adapter",
     ok: true,
     ms: 1200,
@@ -30,7 +30,7 @@ test("pickWhitelist 丢弃 args/result 等多余字段", () => {
   const r = pickWhitelist({ ...rec(), args: { secret: "x" }, result: "leak" });
   assert.equal(r.args, undefined);
   assert.equal(r.result, undefined);
-  assert.equal(r.tool, "itsm.example.com.search_tickets");
+  assert.equal(r.tool, "tickets.example.com.search_tickets");
 });
 
 test("validRecord 拒绝缺 tool / 缺 ts", () => {
@@ -82,10 +82,10 @@ test("queryStats 聚合 domain：calls / okRate / topTool", () => {
   });
   const { rows, totalCalls } = queryStats(db, { by: "domain", since: "1d" });
   assert.equal(totalCalls, 3);
-  const itsm = rows.find((r) => r.key === "itsm.example.com");
+  const itsm = rows.find((r) => r.key === "tickets.example.com");
   assert.equal(itsm.calls, 2);
   assert.equal(itsm.okRate, 50);
-  assert.equal(itsm.topTool, "itsm.example.com.search_tickets");
+  assert.equal(itsm.topTool, "tickets.example.com.search_tickets");
 });
 
 test("queryStats kind 过滤 builtin", () => {
@@ -100,7 +100,7 @@ test("queryStats kind 过滤 builtin", () => {
   });
   const adapters = queryStats(db, { kind: "adapter", since: "1d" });
   assert.equal(adapters.rows.length, 1);
-  assert.equal(adapters.rows[0].key, "itsm.example.com");
+  assert.equal(adapters.rows[0].key, "tickets.example.com");
 });
 
 test("queryStats by=user：返回 user×domain 二维分布", () => {
@@ -132,10 +132,10 @@ test("queryStats by=user：返回 user×domain 二维分布", () => {
   const rick = rows.filter((r) => r.user === "rickhuang");
   const alice = rows.filter((r) => r.user === "alice");
   assert.equal(rick.length, 2);
-  assert.equal(rick.find((r) => r.domain === "itsm.example.com").calls, 1);
+  assert.equal(rick.find((r) => r.domain === "tickets.example.com").calls, 1);
   assert.equal(rick.find((r) => r.domain === "mail.163.com").calls, 1);
   assert.equal(alice.length, 1);
-  assert.equal(alice[0].domain, "itsm.example.com");
+  assert.equal(alice[0].domain, "tickets.example.com");
   assert.equal(alice[0].calls, 1);
 });
 
@@ -153,7 +153,7 @@ test("queryStats by=user：kind 过滤 + top 限制每用户 domain 数", () => 
   const { rows } = queryStats(db, { by: "user", kind: "adapter", since: "1d" });
   // builtin 被过滤，只剩 itsm
   assert.equal(rows.length, 1);
-  assert.equal(rows[0].domain, "itsm.example.com");
+  assert.equal(rows[0].domain, "tickets.example.com");
 });
 
 test("queryStats by=route:命中率 + 分 kind 调用数/p50(隔离 adapter)", () => {

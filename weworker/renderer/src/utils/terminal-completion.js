@@ -354,7 +354,7 @@ export function shouldUsePathCompletionForCommand({ command, cursor }) {
 export function getTerminalCompletionCandidates({ command, cursor, cwd, root, files }) {
   const value = String(command || '')
   const position = Math.max(0, Math.min(Number(cursor) || 0, value.length))
-  if (isCommandToken(value, position)) return []
+  if (isCommandToken(value, position) && value.trim()) return []
   const { token } = findTokenBounds(value, position)
   const parsedToken = parsePathToken(token)
   const { dirPart, basePart } = splitPathToken(parsedToken.value)

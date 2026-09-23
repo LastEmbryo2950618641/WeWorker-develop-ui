@@ -69,6 +69,8 @@ outputs/
 .tmp-wecli-src/
 
 webcli/extension/
+webcli/adapters/
+webcli/*.tgz
 
 # offline packaging output (regenerable wheels/vendor.zip) + 临时账单导出
 offline_zips/

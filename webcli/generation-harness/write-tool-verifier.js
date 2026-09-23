@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
+import { isPackageDraft, packageDraftBundle, readGenerationEvidence } from './package-inspection.js';
 
 function error(code, message, extra = {}) {
   return { code, message, severity: 'error', ...extra };
@@ -104,11 +105,26 @@ export async function verifyGeneratedWriteTools({ adapterDir, expectedSiteKey = 
   window.document = sandbox.document;
   window.fetch = sandbox.fetch;
   const context = vm.createContext(sandbox);
+  let packageWriteTools = null;
 
   try {
+    if (isPackageDraft(adapterDir)) {
+      const bundle = packageDraftBundle(adapterDir);
+      const fixtures = readGenerationEvidence(adapterDir, 'write-verification.json', { optional: true });
+      const rawHandlers = new Map();
+      window.__webmcpRegister = () => {};
+      new vm.Script(bundle.scripts[0].source).runInContext(context, { timeout: 1000 });
+      const register = window.__webcliRegisterCommand;
+      window.__webcliRegisterCommand = (id, handler) => { rawHandlers.set(id, handler); register(id, handler); };
+      for (const script of bundle.scripts.slice(1)) new vm.Script(script.source).runInContext(context, { timeout: 1000 });
+      packageWriteTools = bundle.manifest.commands.filter(command => command.safety === 'write').map(command => ({
+        name: `${bundle.manifest.name}.${command.id}`, handler: rawHandlers.get(command.id), writeVerification: fixtures?.commands?.[command.id],
+      }));
+    } else {
     for (const supportFile of safeSupportFiles(adapterDir)) {
       const source = fs.readFileSync(supportFile.filePath, 'utf8');
       new vm.Script(source, { filename: supportFile.relativePath }).runInContext(context);
+    }
     }
   } catch (cause) {
     return {
@@ -120,7 +136,7 @@ export async function verifyGeneratedWriteTools({ adapterDir, expectedSiteKey = 
   }
 
   const siteStore = window.__webmcpGeneratedSupport?.[expectedSiteKey];
-  const writeTools = (Array.isArray(siteStore?.tools) ? siteStore.tools : []).filter((tool) => tool?.access === 'write');
+  const writeTools = packageWriteTools || (Array.isArray(siteStore?.tools) ? siteStore.tools : []).filter((tool) => tool?.access === 'write');
   for (const tool of writeTools) {
     const fixture = tool.writeVerification;
     if (!fixture || typeof fixture !== 'object') {

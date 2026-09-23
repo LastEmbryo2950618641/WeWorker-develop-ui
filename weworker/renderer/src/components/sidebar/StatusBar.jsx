@@ -3,6 +3,7 @@ import { useStatusStore } from '../../store/status.js'
 import { useSettingsStore } from '../../store/settings.js'
 import ExtensionGuide from '../ExtensionGuide.jsx'
 import { getWebwrightPresentation } from '../../utils/webwright-status.js'
+import { useWebsiteExplorationStore } from '../../store/website-exploration.js'
 
 export default function StatusBar() {
   const { extension, extensionVersion, channels } = useStatusStore()
@@ -70,7 +71,7 @@ export default function StatusBar() {
       <button
         type="button"
         disabled={!webwright.enabled}
-        onClick={() => window.electronAPI?.openWebwright?.()}
+        onClick={() => useWebsiteExplorationStore.setState({ open: true })}
         title={webwright.label}
         style={{
           alignSelf: 'flex-start',

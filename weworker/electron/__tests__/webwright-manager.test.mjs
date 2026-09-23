@@ -24,6 +24,7 @@ function createChild() {
 function sourceHealth() {
   return {
     ok: true,
+    instance_id: 'exploration-fixture',
     version: '0.1.0',
     platform: 'darwin',
     arch: 'arm64',

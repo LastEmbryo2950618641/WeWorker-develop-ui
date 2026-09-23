@@ -597,38 +597,11 @@ async function triggerGenerate() {
     if (response.error) {
       resultEl.innerHTML = `<div style="color:#991b1b">${escHtml(response.error)}</div>`;
     } else {
-      const toolCount = response.toolNames?.length || 0;
-      const toolItems = (response.toolNames || []).map((toolName) => `<div>• ${escHtml(toolName)}</div>`).join('');
-      const fileLines = collectUniqueGeneratedFileLines(response.files);
-      const semanticSummary = response.semanticEnhancement
-        ? `semantic: ${response.semanticEnhancement.analysisSource || 'heuristic'}${response.semanticEnhancement.model ? ` / ${response.semanticEnhancement.model}` : ''} / overrides=${response.semanticEnhancement.toolOverrideCount || 0} / uiHints=${response.semanticEnhancement.uiHintCount || 0}`
-        : '';
-      const cleanupSummary = Array.isArray(response.removedGeneratedFiles)
-        ? `cleanup: removed=${response.removedGeneratedFiles.length}`
-        : '';
-      const refreshSummary = Number.isFinite(Number(response.refreshedTabs))
-        ? `runtime-refresh: tabs=${Number(response.refreshedTabs)} / tools=${Number(response.refreshedToolCount || 0)}`
-        : '';
-      const skillSummary = response.skillPreserved
-        ? 'skill: 已保留现有 SKILL.md，新草稿写入 SKILL.generated.md'
-        : 'skill: 已写入 SKILL.md';
-      const summaryLines = [
-        `mode: ${response.mode || 'unknown'}`,
-        `strategy: ${response.generationStrategy || 'unknown'}`,
-        skillSummary,
-        semanticSummary,
-        cleanupSummary,
-        refreshSummary,
-        `adapterDir: ${response.adapterDir || ''}`,
-        ...fileLines.map((filePath) => `file: ${filePath}`),
-      ].filter(Boolean);
-      resultEl.innerHTML = `
-        <div class="explore-generate-header">已生成网站工具（${escHtml(siteKey)}）</div>
-        <div style="color:#166534;margin-bottom:6px">已写入: ${escHtml(response.filePath || response.adapterDir || '')}，当前页面工具已自动刷新</div>
-        <div style="margin-bottom:8px;color:#374151">生成工具数: ${toolCount}</div>
-        ${toolItems ? `<div style="margin-bottom:8px;color:#111827">${toolItems}</div>` : ''}
-        <pre>${escHtml(summaryLines.join('\n'))}</pre>
-      `;
+      if (!response.ok || !response.run?.id) throw new Error('无法启动生成任务');
+      const stored = await chrome.storage.local.get('generationRunsBySite');
+      await chrome.storage.local.set({ generationRunsBySite: { ...(stored.generationRunsBySite || {}), [siteKey]: response.run.id } });
+      resultEl.innerHTML = '<div>已创建快速生成任务。请在侧栏开发页查看验证结果并确认安装。</div><button id="openGenerationReview" type="button">查看生成任务</button>';
+      document.getElementById('openGenerationReview').onclick = () => chrome.sidePanel.open({ tabId: tab[0].id });
     }
     resultEl.hidden = false;
   } catch (err) {

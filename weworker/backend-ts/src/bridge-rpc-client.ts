@@ -22,6 +22,7 @@ export interface BridgeCapabilities {
 }
 
 export interface GenerationRunSnapshot {
+  artifacts?: Record<string, unknown>
   id: string
   siteKey: string
   status: string
@@ -306,7 +307,7 @@ export class BridgeRpcClient {
     budget?: Record<string, unknown>
     modelConfig?: GenerationModelConfig
     previousRunId?: string
-    mode?: 'agent' | 'classic'
+    mode?: 'agent' | 'classic' | 'quick'
   }): Promise<GenerationRunSnapshot> {
     const message = await this.request(
       {
@@ -358,9 +359,9 @@ export class BridgeRpcClient {
     return this.readGenerationRun(message)
   }
 
-  async publishGenerationRun(runId: string): Promise<GenerationRunSnapshot> {
+  async publishGenerationRun(runId: string, approval?: { reviewId?: string; acceptChanges?: boolean }): Promise<GenerationRunSnapshot> {
     const message = await this.request(
-      { type: 'publish_generation_run', runId },
+      { type: 'publish_generation_run', runId, approval },
       ['publish_generation_run_result'],
       60_000,
     )

@@ -1,3 +1,10 @@
+import { scopedGenerationPreviewScripts } from './generation-preview-bundle.js';
+import { buildV2Bootstrap, v2InjectionFiles } from "./v2-loader.js";
+import { injectAdapterSources } from './adapter-script-loader.js';
+import { createHostAdapterClient } from './host-adapter-client.js';
+import { createHostAdapterRuntime } from './host-adapter-runtime.js';
+import { createManagedBackgroundRuntime, MANAGED_RUNNER_PATH } from './managed-background-runtime.js';
+
 /**
  * Background Service Worker
  *
@@ -16,6 +23,8 @@ import {
 
 const WS_URL = "ws://localhost:3711";
 const EXTENSION_CAPABILITIES = [
+  'adapter_catalog_v1',
+  'adapter_background_v1',
   'passive_exploration_v1',
   'safe_api_probe_v1',
   'api_replay_v1',
@@ -400,14 +409,8 @@ function rankActionCaptureEntries(entries, actionName = '') {
 async function ensureCdpAttached(tabId) {
   if (cdpAttachedTabs.has(tabId)) return ensureCdpState(tabId);
 
-  try {
-    await chrome.debugger.attach({ tabId }, '1.3');
-  } catch (err) {
-    const message = err?.message || String(err);
-    if (!/Another debugger is already attached/i.test(message)) {
-      throw err;
-    }
-  }
+  // An attachment owned by another debugger must not be reused.
+  await chrome.debugger.attach({ tabId }, '1.3');
 
   cdpAttachedTabs.add(tabId);
   const state = ensureCdpState(tabId);
@@ -592,23 +595,11 @@ async function findExtensionIsolatedWorldContext(tabId) {
 }
 
 async function injectGenerationPreviewSourcesWithCdp(tabId, scripts) {
-  const contextId = await findExtensionIsolatedWorldContext(tabId);
-  for (const script of scripts) {
-    const sourcePath = String(script.path || '').replace(/[^a-zA-Z0-9._/-]/g, '_');
-    const result = await chrome.debugger.sendCommand({ tabId }, 'Runtime.evaluate', {
-      expression: `${script.source}\n//# sourceURL=webmcp-preview://${sourcePath}`,
-      contextId,
-      returnByValue: true,
-      awaitPromise: true,
-      allowUnsafeEvalBlockedByCSP: true,
-    });
-    if (result?.exceptionDetails) {
-      const message = result.exceptionDetails.exception?.description
-        || result.exceptionDetails.text
-        || `preview script execution failed: ${sourcePath}`;
-      throw new Error(message);
-    }
-  }
+  return injectAdapterSources({
+    tabId, scripts,
+    borrowedSession: cdpAttachedTabs.has(tabId),
+    existingContexts: () => [...getCdpExecutionContextMap(tabId).values()],
+  });
 }
 
 async function runExplorationAction(tabId, expression, waitMs = 1200) {
@@ -1139,7 +1130,9 @@ async function runExplorationCandidateReplay({ tabId, url, method = 'GET', heade
     method: normalizedMethod,
     headers: sanitizeExplorationReplayHeaders(headers),
     body: ['GET', 'HEAD'].includes(normalizedMethod) ? undefined : String(body || '').slice(0, 4000),
-    maxBytes: 16384,
+    // Article feeds often exceed 16 KiB. Keep a hard bound while allowing
+    // complete JSON to reach the structural evidence parser.
+    maxBytes: 1024 * 1024,
   };
   const startedAt = Date.now();
   const [{ result } = {}] = await chrome.scripting.executeScript({
@@ -1159,15 +1152,19 @@ async function runExplorationCandidateReplay({ tabId, url, method = 'GET', heade
         const decoder = new TextDecoder();
         let size = 0;
         let text = '';
+        let truncated = false;
         if (reader) {
-          while (size < input.maxBytes) {
+          while (true) {
             const next = await reader.read();
             if (next.done) break;
             const remaining = input.maxBytes - size;
             const chunk = next.value.slice(0, remaining);
             size += chunk.byteLength;
             text += decoder.decode(chunk, { stream: true });
-            if (chunk.byteLength < next.value.byteLength) break;
+            if (chunk.byteLength < next.value.byteLength) {
+              truncated = true;
+              break;
+            }
           }
           text += decoder.decode();
           await reader.cancel().catch(() => {});
@@ -1176,7 +1173,8 @@ async function runExplorationCandidateReplay({ tabId, url, method = 'GET', heade
           status: response.status,
           ok: response.ok,
           contentType: response.headers.get('content-type') || '',
-          responsePreview: size >= input.maxBytes ? `${text}...[truncated]` : text,
+          responsePreview: truncated ? `${text}...[truncated]` : text,
+          truncated,
         };
       } catch (error) {
         return { error: error?.message || String(error) };
@@ -1193,7 +1191,7 @@ async function runExplorationCandidateReplay({ tabId, url, method = 'GET', heade
     contentType: String(result?.contentType || ''),
     responsePreview: String(result?.responsePreview || ''),
     durationMs: Date.now() - startedAt,
-    errorCode: '',
+    errorCode: result?.truncated ? 'RESPONSE_TOO_LARGE' : '',
   };
 }
 
@@ -2291,6 +2289,7 @@ chrome.debugger.onDetach.addListener((source, reason) => {
 let isConnecting = false;
 let lastNativeAckAt = 0;
 let lastBridgeDisconnectReason = '';
+let bridgeCapabilities = [];
 let nativeHeartbeatAckTimer = null;
 const NATIVE_ACK_GRACE_MS = 10000;
 
@@ -2330,6 +2329,7 @@ function sendNativeHeartbeat() {
 }
 
 function resetNativeSocket(reason) {
+  bridgeCapabilities = [];
   console.warn("[WebMCP] Reset native socket:", reason);
   lastBridgeDisconnectReason = `Bridge 连接已断开：${reason || '连接异常'}`;
   clearNativeHeartbeatAckTimer();
@@ -2406,6 +2406,7 @@ function connectToNativeHost() {
     let msg;
     try { msg = JSON.parse(event.data); } catch { return; }
     if (msg.type === "extension_hello_ack") {
+      bridgeCapabilities = Array.isArray(msg.capabilities) ? msg.capabilities : [];
       lastNativeAckAt = Date.now();
       clearNativeHeartbeatAckTimer();
       return;
@@ -2415,6 +2416,7 @@ function connectToNativeHost() {
 
   socket.addEventListener("close", (event) => {
     if (ws !== socket) return;
+    bridgeCapabilities = [];
     clearNativeHeartbeatAckTimer();
     const closeDetail = event?.reason || (event?.code ? `WebSocket close code ${event.code}` : 'WebSocket 已关闭');
     lastBridgeDisconnectReason = `Bridge 连接已断开：${closeDetail}`;
@@ -2447,7 +2449,9 @@ async function handleNativeMessage(msg) {
   }
 
   if (
-    msg.type === "write_adapter_file_result"
+    msg.type === "adapter_catalog_result"
+    || msg.type === "adapter_bundle_result"
+    || msg.type === "write_adapter_file_result"
     || msg.type === "generate_adapter_with_ai_result"
     || msg.type === "generate_adapter_scaffold_result"
     || msg.type === "get_ai_config_result"
@@ -2456,6 +2460,7 @@ async function handleNativeMessage(msg) {
     || msg.type === "analyze_action_capture_result"
     || msg.type === "analyze_exploration_result"
     || msg.type === "start_generation_run_result"
+    || msg.type === "resume_generation_run_result"
     || msg.type === "get_generation_run_result"
     || msg.type === "cancel_generation_run_result"
     || msg.type === "publish_generation_run_result"
@@ -2469,6 +2474,30 @@ async function handleNativeMessage(msg) {
       pendingWriteRequests.delete(msg.id);
       clearTimeout(pending.timer);
       pending.resolve(msg);
+    }
+    return;
+  }
+
+  if (msg.type === 'adapter_state_changed') {
+    try {
+      const registry = await doRefreshRegistry();
+      let refreshedTabs = 0;
+      const adapters = Array.isArray(msg.adapters)
+        ? msg.adapters.filter((name) => typeof name === "string" && SAFE_ADAPTER_ID_RE.test(name))
+        : [];
+      // An empty sync snapshot means the consumer reconnected and must refresh all
+      // managed packages; it does not claim knowledge of which names changed.
+      const adapterIds = adapters.length > 0 ? adapters : registry.adapters.filter((name) =>
+        typeof name === "string" && SAFE_ADAPTER_ID_RE.test(name)
+      );
+      for (const adapterId of adapterIds) {
+        const result = await refreshAdapterTabs(adapterId);
+        refreshedTabs += result.refreshedTabs;
+      }
+      chrome.runtime.sendMessage({ ...msg, registry, refreshedTabs }, () => void chrome.runtime.lastError);
+    } catch (error) {
+      console.error("[WebMCP] Adapter state refresh failed:", error?.message || error);
+      chrome.runtime.sendMessage({ ...msg, error: error?.message || String(error) }, () => void chrome.runtime.lastError);
     }
     return;
   }
@@ -2501,7 +2530,7 @@ async function handleNativeMessage(msg) {
   }
 
   if (msg.type === "list_tools") {
-    const tools = gatherAllTools();
+    const tools = await getHostAdapterClient().tools(gatherAllTools());
     sendToNative({ type: "list_tools_result", id: msg.id, tools });
 
   } else if (msg.type === "call_tool") {
@@ -2511,6 +2540,30 @@ async function handleNativeMessage(msg) {
     console.log(`${tracePrefix}[WebMCP] <- native: call_tool ${toolName}`);
     traceLog(traceID, `[ServiceWorker] 收到 call_tool: ${toolName}`);
     try {
+      const selected = await getHostAdapterClient().tool(toolName);
+      if (msg.adapterSnapshot && (!selected.managed || msg.adapterSnapshot.name !== selected.manifest.name
+        || msg.adapterSnapshot.digest !== selected.manifest._hostSnapshot.digest
+        || msg.adapterSnapshot.profile !== selected.manifest._hostSnapshot.profile)) {
+        throw new Error('Adapter changed since this call started; refresh the catalog.');
+      }
+      if (selected.managed) {
+        if (selected.command.runtime !== 'extension') throw new Error('This command requires the host Toolkit runtime.');
+        if (selected.command.safety === 'write' && args?.__confirmed !== true) throw new Error('Explicit confirmation is required for this write command.');
+        if (selected.command.execution?.runtime === 'background') {
+          const result = await callManagedBackgroundTool(selected.manifest, selected.command, args || {}, traceID);
+          sendToNative({ type: 'call_tool_result', id: msg.id, result, traceID });
+          return;
+        }
+        const tabs = await chrome.tabs.query({});
+        const tab = tabs.find((entry) => {
+          try { return adapterMatchesHostname(selected.manifest, new URL(entry.url).hostname); } catch { return false; }
+        });
+        if (!tab?.id) throw new Error('Open a matching website tab before calling this Adapter command.');
+        const result = await getHostAdapterRuntime().execute(tab.id, selected.manifest, tab.url,
+          () => callToolInTab(tab.id, selected.manifest.name + '.' + selected.command.id, args || {}, traceID));
+        sendToNative({ type: 'call_tool_result', id: msg.id, result, traceID });
+        return;
+      }
       if (isLegacyWecliHandlerName(toolName)) {
         throw new Error(`"${toolName}" is an internal handler name. Use the public WebCLI command name without "wecli_".`);
       }
@@ -4507,10 +4560,12 @@ async function findTabByDomain(domain, excludeTabDomain, requiredTabDomain) {
     if (!domainData.tabIds.has(tab.id)) continue;
 
     // 验证 tab URL 与 domain 一致，防止 tabId 被错误归入其他 domain
+    // （同 adapter 匹配多个 host 时，以注册时记录的来源主机 hostAliases 为准）
     let tabHostname;
     try {
       tabHostname = new URL(tab.url).hostname;
-      if (!hostnameMatchesDomain(tabHostname, domain)) {
+      const aliasOk = domainData.hostAliases?.has(tabHostname) === true;
+      if (!hostnameMatchesDomain(tabHostname, domain) && !aliasOk) {
         console.warn(`[WebMCP] Tab ${tab.id} hostname "${tabHostname}" does not match domain "${domain}", skipping`);
         domainData.tabIds.delete(tab.id);
         continue;
@@ -5904,6 +5959,17 @@ async function loadExploreState(context = {}) {
 // ─── 来自 Content Script / 测试页面的消息 ──────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === 'managed_adapter_runtime_request') {
+    getManagedBackgroundRuntime().handleMessage(msg, sender)
+      .then(result => sendResponse({ ok: true, result }))
+      .catch(err => sendResponse({ ok: false, error: toStructuredRuntimeError(err) }));
+    return true;
+  }
+  // The managed document may use only its call-bound helper channel.
+  if (sender?.url?.split('?')[0] === chrome.runtime.getURL(MANAGED_RUNNER_PATH)) {
+    sendResponse({ ok: false, error: { code: 'RUNTIME_CHANNEL_DENIED', message: 'Use the current Adapter runtime context.' } });
+    return;
+  }
   if (msg.type === "wecli_direct_runtime_request") {
     handleDirectRuntimeMessage(msg)
       .then(result => sendResponse({ ok: true, result }))
@@ -6065,6 +6131,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
 
       const resolved = await resolveAdapterForHostname(domain);
+      if (Number.isInteger(msg.tabId)) await injectAdapters(msg.tabId, url, resolved);
       if (resolved.adapterId) {
         const originalDomain = domain;
         domain = resolved.adapterId;
@@ -6392,46 +6459,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
-  if (msg.type === "popup_explore_generate_scaffold") {
-    (async () => {
-      try {
-        const { siteKey } = msg;
-        if (!siteKey) throw new Error('siteKey required');
-        const stored = await chrome.storage.local.get('siteMemories');
-        const memories = stored.siteMemories || {};
-        const memory = memories[siteKey];
-        if (!memory) throw new Error(`未找到 ${siteKey} 的探索记录，请先保存探索结果`);
-
-        // Send to bridge for scaffold generation from site memory
-        const result = await requestBridge(
-          { type: 'generate_adapter_scaffold', siteKey, memory },
-          120000,
-          'Scaffold 生成超时。请检查 AI 配置、网络与 webcli bridge 状态；如果 bridge 早于本次代码变更启动，它仍是旧版，不支持新的 scaffold 语义增强链路',
-        );
-
-        if (!result.ok) {
-          throw new Error(result.error);
-        }
-
-        const refreshResult = await refreshAdapterTabs(siteKey);
-
-        sendResponse({
-          ok: true,
-          siteKey,
-          written: true,
-          ...result.result,
-          refreshedTabs: refreshResult.refreshedTabs,
-          refreshedToolCount: refreshResult.toolCount,
-          filePath: result.result?.files?.adapterIndex || result.result?.adapterDir || '',
-        });
-      } catch (err) {
-        sendResponse({ error: err.message });
-      }
-    })();
-    return true;
-  }
-
-  if (msg.type === 'popup_explore_start_generation') {
+  if (msg.type === 'popup_explore_start_generation' || msg.type === 'popup_explore_generate_scaffold') {
     (async () => {
       try {
         const { siteKey } = msg;
@@ -6442,6 +6470,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const result = await requestBridge(
           {
             type: 'start_generation_run',
+            mode: msg.type === 'popup_explore_generate_scaffold' || msg.mode === 'quick' ? 'quick' : 'agent',
             siteKey,
             memory,
             tabId: Number.isInteger(msg.tabId) ? msg.tabId : null,
@@ -6470,6 +6499,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === 'popup_explore_resume_generation') {
+    requestBridge({ type: 'resume_generation_run', runId: msg.runId, answer: String(msg.answer || '') }, 30000, '继续验证超时')
+      .then(sendResponse, error => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
   if (msg.type === 'popup_explore_cancel_generation') {
     (async () => {
       const result = await requestBridge(
@@ -6486,14 +6521,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
       try {
         const result = await requestBridge(
-          { type: 'publish_generation_run', runId: msg.runId },
+          { type: 'publish_generation_run', runId: msg.runId, approval: msg.approval },
           60000,
-          '发布智能生成结果超时',
+          '安装生成结果超时',
         );
         if (!result.ok) {
           sendResponse(result);
           return;
         }
+        if (result.run?.status !== 'completed') { sendResponse(result); return; }
         const refreshResult = await refreshAdapterTabs(result.run?.siteKey || msg.siteKey || '');
         sendResponse({
           ...result,
@@ -6634,10 +6670,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
         // 更新或创建域名数据
         if (!domainData) {
-          toolRegistry.set(domain, { tools: newTools, tabIds: new Set([tabId]) });
+          toolRegistry.set(domain, { tools: newTools, tabIds: new Set([tabId]), hostAliases: new Set([hostname]) });
         } else {
           domainData.tools = newTools;
           domainData.tabIds.add(tabId);
+          // 记录实际注册来源主机（同一 adapter 可能匹配多个 host，如 passport / uat.sso）
+          if (!domainData.hostAliases) domainData.hostAliases = new Set();
+          domainData.hostAliases.add(hostname);
         }
 
         // 记录tab到域名的映射
@@ -6652,6 +6691,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             clearTabDomainRegistration(tabId);
           }
           domainData.tabIds.add(tabId);
+          if (!domainData.hostAliases) domainData.hostAliases = new Set();
+          domainData.hostAliases.add(hostname);
           tabDomainMap.set(tabId, domain);
         }
         console.log(`[WebMCP] Domain ${domain} tools unchanged, skipping notification, tab count: ${domainData.tabIds.size}`);
@@ -6707,6 +6748,72 @@ async function getCachedRegistry() {
   return { adapters: localAdapters };
 }
 
+let hostAdapterClient;
+function getHostAdapterClient() {
+  return hostAdapterClient ||= createHostAdapterClient((message, timeout) => bridgeCapabilities.includes('adapter_catalog_v1')
+    ? requestBridge(message, timeout) : Promise.resolve(null));
+}
+
+let hostAdapterRuntime;
+let managedBackgroundRuntime;
+function getManagedBackgroundRuntime() {
+  return managedBackgroundRuntime ||= createManagedBackgroundRuntime({
+    bundle: manifest => getHostAdapterClient().bundle(manifest),
+    exclusive: (task, context) => runDirectToolExclusive(async () => {
+      const previous = directRuntimeContext;
+      directRuntimeContext = context;
+      try { return await task(); } finally { directRuntimeContext = previous; }
+    }),
+    request: async (action, payload, context) => {
+      assertManagedRuntimeRequest(action, payload, context);
+      return handleDirectRuntimeRequest(action, payload);
+    },
+  });
+}
+
+function assertManagedRuntimeRequest(action, payload, context) {
+  const allowed = ['cookies_get', 'download', 'backend_fetch', 'browser_fetch', 'backend_file_read',
+    'backend_xlsx_read', 'backend_file_write', 'main_world_eval', 'storage_get', 'navigate', 'set_file_input'];
+  if (!allowed.includes(action)) throw new Error('Unsupported Adapter runtime helper.');
+  for (const value of [payload.url, payload.host, payload.hostname, payload.domain, payload.storageScope, ...(Array.isArray(payload.domains) ? payload.domains : [])]) {
+    if (!value) continue;
+    let host = String(value).replace(/^\.+/, '').toLowerCase();
+    if (host.includes('://')) {
+      const url = new URL(host);
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Unsupported Adapter helper URL.');
+      host = url.hostname;
+    }
+    if (!context.declaredHosts.some((entry) => {
+      const pattern = entry.toLowerCase();
+      return pattern.startsWith('*.') ? host === pattern.slice(2) || host.endsWith(pattern.slice(1)) : host === pattern;
+    })) throw new Error('Adapter helper host is not declared in the current package.');
+  }
+}
+
+async function callManagedBackgroundTool(manifest, command, args, traceID) {
+  const routeDomain = manifest.match[0].replace(/^\*\./, '');
+  const context = { adapterId: manifest.name, routeDomain, tabDomain: routeDomain, traceID,
+    declaredHosts: [...manifest.match, ...(manifest.runtime_allowed_hosts || [])],
+    allowedHosts: [...manifest.match, ...(manifest.runtime_allowed_hosts || [])].map(host => host.replace(/^\*\./, '')) };
+  // The runtime owns the shared queue. Set global legacy helper context only
+  // while its queued task runs, including settlement of in-flight helpers.
+  const runtime = getManagedBackgroundRuntime();
+  return runtime.execute(manifest, command, args, context);
+}
+
+function getHostAdapterRuntime() {
+  return hostAdapterRuntime ||= createHostAdapterRuntime({
+    bundle: (manifest) => getHostAdapterClient().bundle(manifest),
+    prepare: (tabId) => chrome.scripting.executeScript({ target: { tabId }, world: 'ISOLATED', files: ['content/injector.js'] }),
+    clear: async (tabId, name) => {
+      await chrome.tabs.sendMessage(tabId, { type: 'clear_tools', siteKey: name });
+      clearTabDomainRegistration(tabId);
+      tabInjectedAdapters.delete(tabId);
+    },
+    inject: injectV2AdapterWithCode,
+  });
+}
+
 // ─── 用户 adapter 目录访问（经 bridge 代理）─────────────────────────────────
 
 /**
@@ -6749,6 +6856,8 @@ async function isUserAdapterInstalled(adapterId) {
  * @returns {Promise<boolean>}
  */
 async function isAnyAdapterInstalled(adapterId) {
+  const selected = await getHostAdapterClient().manifest(adapterId);
+  if (selected.managed) return Boolean(selected.manifest);
   if (await isAdapterFileInstalled(adapterId)) return true;
   return isUserAdapterInstalled(adapterId);
 }
@@ -6759,6 +6868,8 @@ async function isAnyAdapterInstalled(adapterId) {
  * @returns {Promise<object|null>}
  */
 async function loadAdapterManifestAnywhere(adapterId) {
+  const selected = await getHostAdapterClient().manifest(adapterId);
+  if (selected.managed) return selected.manifest;
   const builtin = await loadAdapterManifest(adapterId);
   if (builtin) return builtin;
   const content = await readUserAdapterFile(adapterId, "manifest.json");
@@ -6815,18 +6926,31 @@ async function loadLocalAdapterManifests() {
     try {
       const manifest = JSON.parse(content);
       if (manifest && typeof manifest === "object") {
-        manifests.push(manifest);
+        // v2：name 即安装身份，归一化出 id 供 hostname 路由使用
+        manifests.push(manifest.schema_version === 2 ? { ...manifest, id: manifest.name } : manifest);
       }
     } catch { }
   }
 
-  return manifests;
+  return getHostAdapterClient().merge(manifests);
 }
 
 /**
  * 初始化已安装 adapter ID 列表。
  * 从本地 adapters/index.json 读取（打包时生成），然后逐个验证文件存在。
  */
+async function doRefreshRegistry() {
+  await initInstalledAdapterIds();
+  await loadStaticToolRoutes();
+  const [stored, hostCatalog] = await Promise.all([
+    chrome.storage.local.get("installedAdapterIds"),
+    getHostAdapterClient().catalog().catch(() => null),
+  ]);
+  const managedNames = Array.isArray(hostCatalog?.managedNames) ? hostCatalog.managedNames : [];
+  const legacyIds = Array.isArray(stored.installedAdapterIds) ? stored.installedAdapterIds : [];
+  const adapters = [...new Set([...managedNames, ...legacyIds])].sort();
+  return { count: adapters.length, adapters };
+}
 async function initInstalledAdapterIds() {
   // 始终重新扫描（不依赖缓存，确保刷新后能发现新 adapter）
   const knownIds = [];
@@ -7079,7 +7203,9 @@ function normalizeGenerationPreviewBundle(bundle) {
     if (totalChars > 1_000_000) throw new Error('inline generation preview bundle is too large');
     return { path: scriptPath, source };
   });
-  return { manifest, scripts: normalizedScripts };
+  const packageDigest = bundle.packageDigest || null;
+  if (packageDigest !== null && !/^[a-f0-9]{64}$/.test(packageDigest)) throw new Error('Invalid preview package digest');
+  return { manifest, scripts: normalizedScripts, packageDigest };
 }
 
 async function loadAdapterManifest(adapterId) {
@@ -7094,9 +7220,14 @@ async function loadAdapterManifest(adapterId) {
 }
 
 function adapterMatchesHostname(adapterMeta, hostname) {
+  const matches = (domain) => {
+    const normalized = String(domain).toLowerCase().replace(/^\*\./, '').replace(/\.$/, '');
+    const host = String(hostname).toLowerCase().replace(/\.$/, '');
+    return host === normalized || host.endsWith('.' + normalized);
+  };
   return Array.isArray(adapterMeta?.match)
-    && adapterMeta.match.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`))
-    && !(adapterMeta.except ?? []).some((domain) => hostname === domain || hostname.endsWith(`.${domain}`));
+    && adapterMeta.match.some(matches)
+    && !(adapterMeta.except ?? []).some(matches);
 }
 
 async function findAdapterIdByFileProbe(hostname) {
@@ -7133,6 +7264,9 @@ async function resolveAdapterForHostname(hostname) {
   }
 
   const adapterManifest = adapterMeta?.id === adapterId ? adapterMeta : await loadAdapterManifestAnywhere(adapterId);
+  if (adapterManifest?._hostSnapshot && !adapterMatchesHostname(adapterManifest, hostname)) {
+    return { registry, adapterId: null, adapterMeta: null, adapterManifest: null };
+  }
 
   return {
     registry,
@@ -7347,9 +7481,9 @@ function describeGenerationOutputShape(value) {
   };
 }
 
-async function callGenerationPreviewTool(tabId, toolName, args, timeoutMs = 30000) {
+async function callGenerationPreviewTool(tabId, token, toolName, args, timeoutMs = 30000) {
   const response = await Promise.race([
-    chrome.tabs.sendMessage(tabId, { type: 'call_tool', toolName, args }),
+    chrome.tabs.sendMessage(tabId, { type: 'call_generation_preview', token, toolName, args }),
     new Promise((_, reject) => setTimeout(() => reject(new Error(`tool timed out after ${timeoutMs}ms`)), timeoutMs)),
   ]);
   if (response?.error) throw new Error(response.error);
@@ -7386,27 +7520,20 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
   const supportFiles = normalizeAdapterSupportFiles(previewAdapterId, manifest.support_files);
   const expected = [...new Set((expectedToolNames || []).map(String).filter(Boolean))];
 
+  const token = crypto.randomUUID();
+  let began = false;
   try {
-    clearTabDomainRegistration(targetTab.id);
-    await sendTabMessage(targetTab.id, { type: 'clear_tools', siteKey });
-    try {
-      await chrome.scripting.executeScript({
-        target: { tabId: targetTab.id },
-        world: 'ISOLATED',
-        files: ['content/injector.js'],
-      });
-    } catch {}
-    if (inlinePreview) {
-      await injectGenerationPreviewSourcesWithCdp(targetTab.id, inlinePreview.scripts);
-    } else {
-      await chrome.scripting.executeScript({
-        target: { tabId: targetTab.id },
-        world: 'ISOLATED',
-        files: [...supportFiles, `adapters/${previewAdapterId}/index.js`],
-      });
-    }
-
-    const domainData = await waitForPreviewTools(siteKey, targetTab.id, expected, 3500);
+    await chrome.scripting.executeScript({ target: { tabId: targetTab.id }, world: 'ISOLATED', files: ['content/preview-registry.js'] });
+    const opened = await chrome.tabs.sendMessage(targetTab.id, { type: 'begin_generation_preview', token, siteKey, previewAdapterId, packageDigest: inlinePreview?.packageDigest || null });
+    if (!opened?.ok) throw new Error(opened?.error || 'Unable to begin preview');
+    began = true;
+    const scripts = inlinePreview?.scripts || await Promise.all([...supportFiles, `adapters/${previewAdapterId}/index.js`].map(async file => {
+      const response = await fetch(chrome.runtime.getURL(file));
+      if (!response.ok) throw new Error('Missing preview script');
+      return { path: file, source: await response.text() };
+    }));
+    await injectGenerationPreviewSourcesWithCdp(targetTab.id, scopedGenerationPreviewScripts(scripts, token));
+    const domainData = await chrome.tabs.sendMessage(targetTab.id, { type: 'get_generation_preview', token });
     const registeredTools = (domainData?.tools || []).map((tool) => ({
       name: tool.publicName || tool.name,
       description: tool.description || '',
@@ -7415,7 +7542,7 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
     }));
     const registeredNames = new Set(registeredTools.map((tool) => tool.name));
     const missingTools = expected.filter((name) => !registeredNames.has(name));
-    const tabRegistered = Boolean(domainData?.tabIds?.has(targetTab.id));
+    const tabRegistered = domainData?.ok === true;
     const errors = [];
     if (!tabRegistered) errors.push({ code: 'PREVIEW_NOT_REGISTERED_ON_TAB', message: 'Preview Adapter 未在目标页面完成注册' });
     for (const toolName of missingTools) {
@@ -7463,7 +7590,7 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
             }
             runtimeArguments = buildCaptureBoundArguments(capturedEntry, tool, testCase);
           }
-          const output = await callGenerationPreviewTool(targetTab.id, toolName, runtimeArguments);
+          const output = await callGenerationPreviewTool(targetTab.id, token, toolName, runtimeArguments);
           const contractResult = validateGenerationPreviewOutput(output, testCase.contract || {});
           toolResults.push({
             toolName,
@@ -7520,11 +7647,7 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
       errors,
     };
   } finally {
-    clearTabDomainRegistration(targetTab.id);
-    await sendTabMessage(targetTab.id, { type: 'clear_tools', siteKey });
-    await injectAdapters(targetTab.id, targetTab.url).catch((error) => {
-      console.warn(`[WebMCP] Failed to restore official adapter after preview validation: ${error?.message || error}`);
-    });
+    if (began) await sendTabMessage(targetTab.id, { type: 'end_generation_preview', token });
   }
 }
 
@@ -7635,31 +7758,43 @@ function hasTabInjectedAdapter(tabId, adapterId) {
 }
 function clearTabInjectedAdapters(tabId) {
   tabInjectedAdapters.delete(tabId);
+  hostAdapterRuntime?.invalidate(tabId);
 }
 
 /**
  * 检查给定 URL 的 Tab，注入已安装的 adapter（本地文件存在则注入）。
  */
-async function injectAdapters(tabId, url) {
+async function injectAdapters(tabId, url, selection = null) {
   let hostname;
   try { hostname = new URL(url).hostname; } catch { return; }
 
   console.log(`[WebMCP] injectAdapters called for tab ${tabId}, hostname: ${hostname}`);
 
-  const { adapterId, adapterMeta, adapterManifest } = await resolveAdapterForHostname(hostname);
+  const { adapterId, adapterMeta, adapterManifest } = selection || await resolveAdapterForHostname(hostname);
   console.log(`[WebMCP] Found adapter meta:`, adapterMeta || adapterManifest);
 
   if (!adapterId) {
     clearTabDomainRegistration(tabId);
     clearTabInjectedAdapters(tabId);
+    chrome.tabs.sendMessage(tabId, { type: 'clear_tools' }, () => void chrome.runtime.lastError);
     console.log(`[WebMCP] No adapter found for hostname: ${hostname}`);
     clearBadge(tabId);
     return;
   }
 
   // Guard against path traversal or unexpected characters in the adapter id
-  if (!SAFE_ADAPTER_ID_RE.test(adapterId)) {
+  if (!adapterManifest?._hostSnapshot && !SAFE_ADAPTER_ID_RE.test(adapterId)) {
     console.warn(`[WebMCP] Unsafe adapter id "${adapterId}", skipping`);
+    return;
+  }
+
+  if (adapterManifest?._hostSnapshot) {
+    try {
+      await getHostAdapterRuntime().execute(tabId, adapterManifest, url);
+      setAdapterInjectionStatus(adapterId, { ok: true, tabId });
+    } catch (error) {
+      setAdapterInjectionStatus(adapterId, { ok: false, tabId, error: error?.message || 'Adapter injection failed.' });
+    }
     return;
   }
 
@@ -7695,7 +7830,7 @@ async function injectAdapters(tabId, url) {
     try {
       if (isUser) {
         // 用户 adapter：文件在 ~/.weworker/adapters，无法用 {files} 注入，改为从 bridge 读内容后 {code} 注入
-        await injectUserAdapterWithCode(tabId, adapterId, supportFiles);
+        await injectUserAdapterWithCode(tabId, adapterId, supportFiles, url);
       } else {
         await chrome.scripting.executeScript({
           target: { tabId },
@@ -7726,27 +7861,33 @@ async function injectAdapters(tabId, url) {
  * @param {string} adapterId
  * @param {string[]} supportFiles 已归一化为 adapters/<id>/... 的包内路径（仅用于内置；用户 adapter 需转回相对路径）
  */
-async function injectUserAdapterWithCode(tabId, adapterId, supportFiles) {
-  const relPaths = supportFiles.map((p) => p.replace(`adapters/${adapterId}/`, ""));
-  // 先注入 support files（若有）
+async function injectV2AdapterWithCode(tabId, manifest, expectedUrl, suppliedBundle = null) {
+  const bundle = suppliedBundle || await getHostAdapterClient().bundle(manifest);
+  const { internal, commands } = v2InjectionFiles(bundle.manifest, Object.keys(bundle.files));
+  const scripts = [{ path: 'bootstrap.js', source: buildV2Bootstrap(bundle.manifest) }];
+  for (const relPath of [...internal, ...commands]) {
+    const source = bundle.files[relPath];
+    if (typeof source !== 'string') throw new Error(`Adapter source unavailable: ${relPath}`);
+    scripts.push({ path: relPath, source });
+  }
+  return injectAdapterSources({
+    tabId, scripts, expectedUrl,
+    borrowedSession: cdpAttachedTabs.has(tabId),
+    existingContexts: () => [...getCdpExecutionContextMap(tabId).values()],
+  });
+}
+async function injectUserAdapterWithCode(tabId, adapterId, supportFiles, expectedUrl) {
+  const relPaths = [...supportFiles.map((p) => p.replace(`adapters/${adapterId}/`, '')), 'index.js'];
+  const scripts = [];
   for (const relPath of relPaths) {
-    const code = await readUserAdapterFile(adapterId, relPath);
-    if (code === null) continue;
-    await chrome.scripting.executeScript({
-      target: { tabId },
-      world: "ISOLATED",
-      code,
-    });
+    const source = await readUserAdapterFile(adapterId, relPath);
+    if (source === null) throw new Error(`Adapter source unavailable: ${relPath}`);
+    scripts.push({ path: relPath, source });
   }
-  // 再注入 index.js
-  const indexCode = await readUserAdapterFile(adapterId, "index.js");
-  if (indexCode === null) {
-    throw new Error(`用户 adapter "${adapterId}" 缺少 index.js`);
-  }
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    world: "ISOLATED",
-    code: indexCode,
+  return injectAdapterSources({
+    tabId, scripts, expectedUrl,
+    borrowedSession: cdpAttachedTabs.has(tabId),
+    existingContexts: () => [...getCdpExecutionContextMap(tabId).values()],
   });
 }
 
@@ -8198,6 +8339,7 @@ async function runRuntimeBrowserFetch(tab, payload = {}, allowedHosts = directRu
   if (result?.error) {
     throw createRuntimeHelperError('BROWSER_FETCH_ERROR', result.error, { url, tabId: tab.id });
   }
+  if (result?.redirected) assertRuntimeUrlAllowed(tab, result.url, allowedHosts);
   return {
     status: Number(result?.status || 0),
     ok: Boolean(result?.ok),
@@ -8232,9 +8374,10 @@ async function loadRuntimeAllowedHostsForTab(tab) {
   } catch {
     return [];
   }
-  // Page helpers only trust manifests bundled with the extension. A web page
-  // cannot expand its own cross-host authority through message payloads.
-  const manifest = await loadAdapterManifest(tabHost);
+  // Page helpers only trust host-managed/bundled manifests. A web page cannot
+  // expand its own cross-host authority through a runtime message payload.
+  const selected = await getHostAdapterClient().manifest(tabHost);
+  const manifest = selected.managed ? selected.manifest : await loadAdapterManifest(tabHost);
   return normalizeRouteHosts(manifest?.runtime_allowed_hosts);
 }
 

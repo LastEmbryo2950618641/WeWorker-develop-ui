@@ -102,6 +102,7 @@ function arbitraryParsedAdapter(): fc.Arbitrary<ParsedAdapter> {
       defaultEnabled: r.defaultEnabled,
       detailDescription: '',
       registryScenarios: [],
+      routeTemplates: [],
       icon: 'globe',
       promptVarDisplay: {},
     }))
@@ -203,13 +204,13 @@ describe('Property 4: Skill content completeness', () => {
     )
   })
 
-  it('(f) generated content contains a "How to Use" section mentioning call_adapter_tool', () => {
+  it('(f) generated content contains a "How to Use" section mentioning webcli call', () => {
     fc.assert(
       fc.property(arbitraryParsedAdapter(), (adapter) => {
         const content = generateSkillContent(adapter)
 
         expect(content).toContain('## How to Use')
-        expect(content).toContain('call_adapter_tool')
+        expect(content).toContain('webcli call')
       }),
       { numRuns: 100 },
     )
@@ -221,8 +222,8 @@ describe('Property 4: Skill content completeness', () => {
         const content = generateSkillContent(adapter)
 
         for (const tool of adapter.tools) {
-          // Each tool should have an example with its tool_name
-          expect(content).toContain(`tool_name: "${tool.name}"`)
+          // Each tool should have an example using its exact public name.
+          expect(content).toContain(`webcli call '${tool.name}'`)
         }
       }),
       { numRuns: 100 },

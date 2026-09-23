@@ -7,11 +7,21 @@ import Docs from './pages/Docs.jsx'
 import Download from './pages/Download.jsx'
 import Stats from './pages/Stats.jsx'
 import { THEME_STORAGE_KEY, applyTheme, getInitialTheme } from './lib/theme.js'
+import { reportVisit } from './lib/visits.js'
 
 function ScrollToTop() {
   const { pathname } = useLocation()
   useEffect(() => {
     window.scrollTo(0, 0)
+  }, [pathname])
+  return null
+}
+
+// 页面访问上报：每次路由切换（含首次加载）记一次 PV。
+function VisitReporter() {
+  const { pathname } = useLocation()
+  useEffect(() => {
+    reportVisit(pathname)
   }, [pathname])
   return null
 }
@@ -31,6 +41,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <ScrollToTop />
+      <VisitReporter />
       <div className="min-h-screen flex flex-col bg-bg text-[rgb(var(--color-text))] transition-colors">
         <Navbar theme={theme} onToggleTheme={toggleTheme} />
         <main className="flex-1">

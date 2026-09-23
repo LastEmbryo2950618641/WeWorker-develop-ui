@@ -14,6 +14,7 @@ const REGISTRY_METADATA_FIELDS = [
   'test_prompts',
   'i18n',
   'prompt_var_display',
+  'route_templates',
   'hidden',
   'enabled',
   'verified_on',

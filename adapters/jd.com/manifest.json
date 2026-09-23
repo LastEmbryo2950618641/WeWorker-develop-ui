@@ -1,0 +1,228 @@
+{
+  "schema_version": 2,
+  "name": "jd.com",
+  "version": "1.0.8",
+  "description": "京东：导航主页、查看购物车、查看订单、购买商品、支付",
+  "match": [
+    "jd.com",
+    "pc-settlement-lite-pro.pf.jd.com"
+  ],
+  "requires_auth": true,
+  "commands": [
+    {
+      "id": "check-login-status",
+      "runtime": "extension",
+      "module": "extension/commands/check-login-status.js",
+      "description": "检测京东是否已登录。打开京东后应首先调用此工具确认登录状态，未登录时需提醒用户先登录。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "aliases": [
+        "check_login_status"
+      ],
+      "excludeTabDomain": "pc-settlement-lite-pro.pf.jd.com"
+    },
+    {
+      "id": "search-products",
+      "runtime": "extension",
+      "module": "extension/commands/search-products.js",
+      "description": "Search for products on JD.com homepage by keyword. Fills the search box and submits the search. If currently on the homepage, it navigates to the search results page — call this tool again after 3-5 seconds to get the product list. If already on the search results page, it returns the parsed product list.",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "keyword": {
+            "type": "string",
+            "description": "Search keyword (e.g., \"耳机\", \"笔记本电脑\", \"运动鞋\")"
+          }
+        },
+        "required": [
+          "keyword"
+        ]
+      },
+      "aliases": [
+        "search_products"
+      ],
+      "excludeTabDomain": "pc-settlement-lite-pro.pf.jd.com"
+    },
+    {
+      "id": "navigate-to-homepage",
+      "runtime": "extension",
+      "module": "extension/commands/navigate-to-homepage.js",
+      "description": "Navigate to the JD.com homepage. Use this before multi-step operations to ensure a clean starting state.",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "aliases": [
+        "navigate_to_homepage"
+      ],
+      "excludeTabDomain": "pc-settlement-lite-pro.pf.jd.com"
+    },
+    {
+      "id": "view-cart",
+      "runtime": "extension",
+      "module": "extension/commands/view-cart.js",
+      "description": "View shopping cart. Navigates to the cart page from the homepage navigation bar. Returns cart URL and page status. Cart items parsing will be implemented after HTML structure is provided.",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "aliases": [
+        "view_cart"
+      ],
+      "excludeTabDomain": "pc-settlement-lite-pro.pf.jd.com"
+    },
+    {
+      "id": "view-orders",
+      "runtime": "extension",
+      "module": "extension/commands/view-orders.js",
+      "description": "View my orders. Navigates to the orders page and returns parsed order list including order ID, products, status, amount, and consignee. Supports both split orders (parent/child) and independent orders.",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "aliases": [
+        "view_orders"
+      ],
+      "excludeTabDomain": "pc-settlement-lite-pro.pf.jd.com"
+    },
+    {
+      "id": "open-product",
+      "runtime": "extension",
+      "module": "extension/commands/open-product.js",
+      "description": "Open a product page by URL. Use this before buying a product.",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "Product page URL (e.g., https://item.jd.com/100054010576.html)"
+          }
+        },
+        "required": [
+          "url"
+        ]
+      },
+      "aliases": [
+        "open_product"
+      ],
+      "excludeTabDomain": "pc-settlement-lite-pro.pf.jd.com"
+    },
+    {
+      "id": "buy-now",
+      "runtime": "extension",
+      "module": "extension/commands/buy-now.js",
+      "description": "Click the \"立即购买\" (Buy Now) button on the current product page. Must be on a product page (item.jd.com). Must wait at least 7 seconds after Open Product. Use jd.com.open_product first to navigate to a product page. After clicking, a checkout iframe will appear.",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "aliases": [
+        "buy_now"
+      ],
+      "excludeTabDomain": "pc-settlement-lite-pro.pf.jd.com"
+    },
+    {
+      "id": "pay-now",
+      "runtime": "extension",
+      "module": "extension/commands/pay-now.js",
+      "description": "Select payment method and click \"立即支付\" (Pay Now) button on the JD.com checkout confirmation page. Must be called after buy_now when the settlement page is open.",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "paymentMethod": {
+            "type": "string",
+            "description": "Payment method to use. Options: \"京东支付\", \"京东白条\", \"微信支付\", \"云闪付\", \"APP支付\"",
+            "enum": [
+              "京东支付",
+              "京东白条",
+              "微信支付",
+              "云闪付",
+              "APP支付"
+            ]
+          }
+        },
+        "required": [
+          "paymentMethod"
+        ]
+      },
+      "aliases": [
+        "pay_now"
+      ],
+      "tabDomain": "pc-settlement-lite-pro.pf.jd.com"
+    }
+  ],
+  "homepage_url": "https://github.com/WeWorker/WeWorker/tree/main/extension/adapters/jd.com",
+  "icon": "cart",
+  "scenarios": [
+    {
+      "id": "navigate-home",
+      "title": "导航主页",
+      "summary": "打开京东主页并进入可操作状态"
+    },
+    {
+      "id": "search-product",
+      "title": "搜索商品",
+      "summary": "在京东中搜索商品"
+    },
+    {
+      "id": "view-cart",
+      "title": "查看购物车",
+      "summary": "在京东中查看购物车"
+    },
+    {
+      "id": "view-order",
+      "title": "查看订单",
+      "summary": "帮我看看我这个月在京东消费了多少钱",
+      "prompts": [
+        {
+          "text": "帮我看看我${这个月}在京东消费了多少钱"
+        }
+      ]
+    },
+    {
+      "id": "buy-product",
+      "title": "购买商品",
+      "summary": "帮我在京东再买一个我之前买过的牙膏",
+      "prompts": [
+        {
+          "text": "帮我在京东再买一个我之前买过的${牙膏}"
+        }
+      ]
+    },
+    {
+      "id": "pay-order",
+      "title": "支付",
+      "summary": "在京东中确认订单后完成支付流程",
+      "prompts": [
+        {
+          "text": "帮我在京东再买一个我之前买过的${牙膏}"
+        }
+      ]
+    }
+  ],
+  "test_prompts": [
+    "打开京东，查看我的订单列表，然后查看购物车，再搜索'牙膏'并告诉我搜索结果"
+  ],
+  "i18n": {
+    "zh": {
+      "name": "京东",
+      "description": "京东：导航主页、查看购物车、查看订单、购买商品、支付"
+    }
+  },
+  "verified_on": "2026-03-16"
+}

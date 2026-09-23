@@ -277,6 +277,7 @@ export default function Sidebar({ onOpenSettings, collapsed, onCollapse, width }
             <Tooltip text="新任务">
               <button
                 type="button"
+                data-weworker-new-work="true"
                 onClick={handleCreateWork}
                 style={{
                 WebkitAppRegion: 'no-drag',

@@ -1101,6 +1101,20 @@
   padding: 5px 12px;
 }
 
+.settings-card-builtin {
+  border-color: rgba(21, 153, 87, 0.35);
+  background: rgba(21, 153, 87, 0.05);
+}
+
+.settings-builtin-probe {
+  margin: 0 16px 14px 48px;
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.settings-builtin-probe .is-success { color: var(--success); }
+.settings-builtin-probe .is-error { color: var(--error); }
+
 .settings-btn-success {
   background: var(--success);
   color: #fff;

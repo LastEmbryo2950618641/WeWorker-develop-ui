@@ -5,6 +5,7 @@ import io
 import json
 import os
 import subprocess
+from types import SimpleNamespace
 import sys
 import zipfile
 from pathlib import Path
@@ -204,6 +205,7 @@ def test_exploration_only_start_clears_draft_and_preserves_formal_artifact(
         channel="formal",
         code_hash=formal["code_hash"],
         artifact_hash=build["artifact_hash"],
+        distribution_hash=build["distribution_hash"],
         parameters={"keyword": "Webwright"},
     )
     debug_runs.update(
@@ -223,7 +225,7 @@ def test_exploration_only_start_clears_draft_and_preserves_formal_artifact(
         model_config_loader=_managed_model,
     )
     monkeypatch.setattr(manager, "_spawn", lambda *args, **kwargs: PendingProcess())
-    monkeypatch.setattr("webwright.server.process_manager.threading.Thread", NoStartThread)
+    monkeypatch.setattr("webwright.server.process_manager.threading", SimpleNamespace(Thread=NoStartThread))
 
     run = manager.start_development(
         toolkit_id="blog_admin",
@@ -272,7 +274,7 @@ def test_exploration_only_failure_leaves_formal_active_and_development_empty(
         model_config_loader=_managed_model,
     )
     monkeypatch.setattr(manager, "_spawn", lambda *args, **kwargs: PendingProcess())
-    monkeypatch.setattr("webwright.server.process_manager.threading.Thread", NoStartThread)
+    monkeypatch.setattr("webwright.server.process_manager.threading", SimpleNamespace(Thread=NoStartThread))
     run = manager.start_development(
         toolkit_id="blog_admin",
         tool_id="search_blog",
@@ -306,7 +308,7 @@ def test_exploration_only_success_is_published_before_formal_artifact_changes(
         model_config_loader=_managed_model,
     )
     monkeypatch.setattr(manager, "_spawn", lambda *args, **kwargs: PendingProcess())
-    monkeypatch.setattr("webwright.server.process_manager.threading.Thread", NoStartThread)
+    monkeypatch.setattr("webwright.server.process_manager.threading", SimpleNamespace(Thread=NoStartThread))
     run = manager.start_development(
         toolkit_id="blog_admin",
         tool_id="search_blog",
@@ -466,7 +468,7 @@ def test_developer_child_writes_structured_slot(monkeypatch, tmp_path: Path) -> 
     )
 
     assert slot["description"] == "Search posts"
-    assert json.loads(result_path.read_text())["ok"] is True
+    assert json.loads(result_path.read_text(encoding="utf-8"))["ok"] is True
     assert len(model.payloads) == 1
     assert model.payloads[0]["mode"] == "structured"
     assert model.payloads[0]["schema_name"] == "developer_slot"
@@ -763,7 +765,7 @@ def test_consistency_generator_installs_formal_artifacts(tmp_path: Path) -> None
 
     root = toolkits.toolkit_dir("blog_admin") / "blog-admin"
     scripts = root / "scripts"
-    toolkit_source = (scripts / "toolkit.py").read_text()
+    toolkit_source = (scripts / "toolkit.py").read_text(encoding="utf-8")
     assert compile(toolkit_source, "toolkit.py", "exec")
     assert "TOOL_SPECS" in toolkit_source
     assert "https://blog.example.com/posts" in toolkit_source
@@ -776,7 +778,7 @@ def test_consistency_generator_installs_formal_artifacts(tmp_path: Path) -> None
 
     (root / "SKILL.md").write_text("corrupted", encoding="utf-8")
     repaired = publisher.ensure_consistent("blog_admin")
-    assert (root / "SKILL.md").read_text() != "corrupted"
+    assert (root / "SKILL.md").read_text(encoding="utf-8") != "corrupted"
     assert repaired["artifact_hash"] == build["artifact_hash"]
 
 
@@ -946,6 +948,7 @@ def test_export_requires_every_formal_tool_for_current_artifact(tmp_path: Path) 
         channel="formal",
         code_hash=search_formal["code_hash"],
         artifact_hash=build["artifact_hash"],
+        distribution_hash=build["distribution_hash"],
         parameters={"keyword": "x"},
     )
     debug_runs.update(search_run["debug_run_id"], status=DebugRunStatus.SUCCEEDED.value)
@@ -961,6 +964,7 @@ def test_export_requires_every_formal_tool_for_current_artifact(tmp_path: Path) 
         channel="formal",
         code_hash=open_formal["code_hash"],
         artifact_hash=build["artifact_hash"],
+        distribution_hash=build["distribution_hash"],
         parameters={"keyword": "x"},
     )
     debug_runs.update(open_run["debug_run_id"], status=DebugRunStatus.SUCCEEDED.value)
@@ -996,6 +1000,7 @@ def test_export_api_rechecks_eligibility_and_old_artifact_is_invalidated(tmp_pat
         channel="formal",
         code_hash=formal["code_hash"],
         artifact_hash=build["artifact_hash"],
+        distribution_hash=build["distribution_hash"],
         parameters={"keyword": "x"},
     )
     debug_runs.update(run["debug_run_id"], status=DebugRunStatus.SUCCEEDED.value)
@@ -1047,6 +1052,7 @@ def test_embedded_capability_directly_overwrites_project_skill(
         channel="formal",
         code_hash=formal["code_hash"],
         artifact_hash=build["artifact_hash"],
+        distribution_hash=build["distribution_hash"],
         parameters={"keyword": "x"},
     )
     debug_runs.update(run["debug_run_id"], status=DebugRunStatus.SUCCEEDED.value)
@@ -1100,6 +1106,7 @@ def test_direct_install_restores_existing_skill_when_directory_switch_fails(
         channel="formal",
         code_hash=formal["code_hash"],
         artifact_hash=build["artifact_hash"],
+        distribution_hash=build["distribution_hash"],
         parameters={"keyword": "x"},
     )
     debug_runs.update(run["debug_run_id"], status=DebugRunStatus.SUCCEEDED.value)
@@ -1168,19 +1175,20 @@ def test_export_rejects_distribution_file_changes_without_repairing(
         channel="formal",
         code_hash=formal["code_hash"],
         artifact_hash=build["artifact_hash"],
+        distribution_hash=build["distribution_hash"],
         parameters={"keyword": "x"},
     )
     debug_runs.update(run["debug_run_id"], status=DebugRunStatus.SUCCEEDED.value)
     skill_path = toolkits.toolkit_dir("blog_admin") / "blog-admin" / "SKILL.md"
     skill_path.write_text("corrupted", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="distribution files changed"):
+    with pytest.raises(ValueError, match="not eligible"):
         publisher.export_zip("blog_admin")
 
     assert skill_path.read_text(encoding="utf-8") == "corrupted"
 
 
-def test_startup_rebuild_preserves_runtime_and_development_but_old_formal_run_is_unverified(
+def test_startup_preserves_package_and_development_but_old_formal_run_is_unverified(
     tmp_path: Path,
 ) -> None:
     toolkits, debug_runs, _development_runs = _stores(tmp_path)
@@ -1195,7 +1203,9 @@ def test_startup_rebuild_preserves_runtime_and_development_but_old_formal_run_is
         last_title="Posts",
     )
     root = toolkits.toolkit_dir("blog_admin")
-    (root / "toolkit.py").write_text("# legacy generated artifact\n", encoding="utf-8")
+    ToolkitPublisher(toolkits, debug_runs).ensure_consistent("blog_admin")
+    skill_file = root / "blog-admin" / "SKILL.md"
+    skill_file.write_text("# Package documentation preserved across restart\n")
     legacy_run = debug_runs.create(
         tool_id="search_blog",
         channel="formal",
@@ -1210,7 +1220,7 @@ def test_startup_rebuild_preserves_runtime_and_development_but_old_formal_run_is
         debug_store=debug_runs,
     )
 
-    assert "PublishedToolkitRunner" in (root / "blog-admin" / "scripts" / "toolkit.py").read_text(encoding="utf-8")
+    assert skill_file.read_text(encoding="utf-8") == "# Package documentation preserved across restart\n"
     assert toolkits.read_runtime("blog_admin")["target_id"] == "existing-target"
     assert toolkits.read_development_slot("blog_admin", "search_blog")[
         "code_hash"
@@ -1274,7 +1284,7 @@ def test_publish_installs_all_artifacts_and_clears_development(tmp_path: Path) -
             "scripts/requirements.txt",
         )
     )
-    toolkit_source = (root / "blog-admin" / "scripts" / "toolkit.py").read_text()
+    toolkit_source = (root / "blog-admin" / "scripts" / "toolkit.py").read_text(encoding="utf-8")
     assert "'search_blog':" in toolkit_source
     assert "'open_blog':" in toolkit_source
     assert not publisher.journal_path("blog_admin").exists()
@@ -1406,6 +1416,9 @@ class PendingProcess:
     def wait(self, timeout=None):
         return -15
 
+    def send_signal(self, signal):
+        pass
+
     def terminate(self):
         pass
 
@@ -1461,7 +1474,7 @@ def test_start_development_from_formal_isolated_model_spec(monkeypatch, tmp_path
         model_config_loader=_managed_model,
     )
     monkeypatch.setattr(manager, "_spawn", lambda *args, **kwargs: PendingProcess())
-    monkeypatch.setattr("webwright.server.process_manager.threading.Thread", NoStartThread)
+    monkeypatch.setattr("webwright.server.process_manager.threading", SimpleNamespace(Thread=NoStartThread))
 
     run = manager.start_development(
         toolkit_id="blog_admin",
@@ -1470,8 +1483,8 @@ def test_start_development_from_formal_isolated_model_spec(monkeypatch, tmp_path
     )
 
     run_dir = development_runs.run_dir("blog_admin", run["development_run_id"])
-    spec = json.loads((run_dir / "development_spec.json").read_text())
-    evidence = json.loads((run_dir / "input.json").read_text())
+    spec = json.loads((run_dir / "development_spec.json").read_text(encoding="utf-8"))
+    evidence = json.loads((run_dir / "input.json").read_text(encoding="utf-8"))
     assert evidence["base_slot"]["code_hash"] == formal["code_hash"]
     assert spec["model"]["model_class"] == "zhipu"
     assert spec["model"]["zhipu_endpoint"] == "http://model.local/chat/completions"

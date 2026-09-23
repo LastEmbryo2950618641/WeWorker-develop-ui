@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import subprocess
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,7 @@ from webwright.server.app import create_app
 from webwright.server.debug_store import DebugRunStore
 from webwright.server import process_manager
 from webwright.server.process_manager import ProcessManager
-from webwright.server.publisher import ToolkitPublisher
+from webwright.server.publisher import ToolkitPublisher, read_distribution
 from webwright.server.records import TaskStore, atomic_write_json
 from webwright.server.status import DebugRunStatus
 from webwright.server.toolkit_store import ToolkitStore
@@ -48,6 +49,9 @@ class PendingProcess:
 
     def poll(self):
         return None
+
+    def send_signal(self, signal):
+        pass
 
     def terminate(self):
         pass
@@ -126,7 +130,7 @@ def test_process_manager_starts_debug_with_selected_slot_and_no_code_snapshot(
         )
         or PendingProcess(),
     )
-    monkeypatch.setattr("webwright.server.process_manager.threading.Thread", NoStartThread)
+    monkeypatch.setattr("webwright.server.process_manager.threading", SimpleNamespace(Thread=NoStartThread))
 
     run = manager.start_debug_run(
         toolkit_id="blog_admin",
@@ -164,7 +168,7 @@ def test_process_manager_formal_debug_fixes_current_artifact_hash(
         python_executable="python-test",
     )
     monkeypatch.setattr(manager, "_spawn", lambda *args, **kwargs: PendingProcess())
-    monkeypatch.setattr("webwright.server.process_manager.threading.Thread", NoStartThread)
+    monkeypatch.setattr("webwright.server.process_manager.threading", SimpleNamespace(Thread=NoStartThread))
 
     run = manager.start_debug_run(
         toolkit_id="blog_admin",
@@ -181,9 +185,9 @@ def test_process_manager_formal_debug_fixes_current_artifact_hash(
 
     assert run["artifact_hash"] == build["artifact_hash"]
     assert spec["artifact_hash"] == build["artifact_hash"]
-    assert spec["code_hash"] == toolkits.read_formal_slot(
-        "blog_admin", "search_blog"
-    )["code_hash"]
+    assert spec["code_hash"] == build["artifact_hash"]
+    assert spec["distribution_hash"] == build["distribution_hash"]
+    assert read_distribution(Path(spec["adapter_root"]))["distribution_hash"] == build["distribution_hash"]
 
 
 def test_process_manager_formal_debug_rejects_changed_published_execution_file(
@@ -204,7 +208,7 @@ def test_process_manager_formal_debug_rejects_changed_published_execution_file(
         debug_store=debug_runs,
     )
 
-    with pytest.raises(process_manager.InvalidStateError, match="not consistent"):
+    with pytest.raises(process_manager.InvalidStateError, match="package is invalid"):
         manager.start_debug_run(
             toolkit_id="blog_admin",
             tool_id="search_blog",
@@ -233,14 +237,16 @@ class CompletedCliProcess:
         )
 
 
-def test_formal_debug_runs_published_cli_with_json_parameters_on_stdin(
+def test_formal_debug_runs_webcli_with_json_parameters(
     monkeypatch, tmp_path: Path, capsys
 ) -> None:
-    toolkit_dir = tmp_path / "toolkits" / "blog_admin"
-    toolkit_dir.mkdir(parents=True)
-    scripts_dir = toolkit_dir / "blog-admin" / "scripts"
-    scripts_dir.mkdir(parents=True)
-    (scripts_dir / "toolkit.py").write_text("# published cli\n", encoding="utf-8")
+    toolkits, runs = _stores(tmp_path)
+    ToolkitPublisher(toolkits, runs).ensure_consistent("blog_admin")
+    toolkit_dir = toolkits.toolkit_dir("blog_admin")
+    adapter_root = toolkit_dir / "blog-admin"
+    package = read_distribution(adapter_root)
+    monkeypatch.setenv("WEWORKER_WEBCLI_NODE", tool_debug.sys.executable)
+    monkeypatch.setenv("WEWORKER_WEBCLI_ENTRY", __file__)
     (toolkit_dir / "runtime.json").write_text(
         '{"target_id":"","last_url":"https://blog.example.com/before","last_title":"Before","updated_at":""}',
         encoding="utf-8",
@@ -266,7 +272,9 @@ def test_formal_debug_runs_published_cli_with_json_parameters_on_stdin(
             {
                 "toolkit_root": str(tmp_path / "toolkits"),
                 "toolkit_id": "blog_admin",
-                "tool_id": "typed_tool",
+                "tool_id": "search_blog",
+                "adapter_root": str(adapter_root),
+                "distribution_hash": package["distribution_hash"],
                 "channel": "formal",
                 "cdp_url": "http://127.0.0.1:9222",
                 "parameters": {
@@ -284,13 +292,9 @@ def test_formal_debug_runs_published_cli_with_json_parameters_on_stdin(
     )
 
     command, process_options = calls[0]
-    assert command[:3] == (
-        tool_debug.sys.executable,
-        str(scripts_dir / "toolkit.py"),
-        "typed-tool",
-    )
-    assert command[3:] == ()
-    assert json.loads(processes[0].input) == {
+    assert command[:4] == (tool_debug.sys.executable, __file__, "call", "blog-admin.search-blog")
+    assert command[-1] == "--output-format=json"
+    assert json.loads(command[5]) == {
         "text": "hello",
         "count": 2,
         "ratio": 1.5,

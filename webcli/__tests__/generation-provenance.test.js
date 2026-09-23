@@ -45,10 +45,10 @@ describe('generation harness provenance', () => {
     expect(setArtifact).toHaveBeenCalledWith('provenance', provenance);
   });
 
-  it('makes the legacy quick-generation path clear stale harness provenance', () => {
+  it('does not strip provenance through old direct AI publication', () => {
     const bridgeSource = fs.readFileSync(path.resolve(import.meta.dirname, '..', 'bridge.js'), 'utf8');
-    expect(bridgeSource).toContain('function clearGenerationHarnessProvenance');
-    expect(bridgeSource).toContain('clearGenerationHarnessProvenance(result.files?.manifest)');
-    expect(bridgeSource).toContain('clearGenerationHarnessProvenance(manifestPath)');
+    expect(bridgeSource).not.toContain('function clearGenerationHarnessProvenance');
+    expect(bridgeSource).not.toContain('clearGenerationHarnessProvenance(result.files?.manifest)');
+    expect(bridgeSource).not.toContain('clearGenerationHarnessProvenance(manifestPath)');
   });
 });

@@ -760,6 +760,7 @@ def test_property_certificate_fixture_rebuilds_and_exports_independent_formal_ar
         channel="formal",
         code_hash=formal["code_hash"],
         artifact_hash=build["artifact_hash"],
+        distribution_hash=build["distribution_hash"],
         parameters={},
     )
     debug_store.update(

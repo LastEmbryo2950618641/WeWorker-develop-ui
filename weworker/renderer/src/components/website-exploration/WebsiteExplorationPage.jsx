@@ -4,7 +4,7 @@ import { useWebsiteExplorationStore as useStore, changeWebsiteContext } from '..
 import { useToolPackagePageStore } from '../../store/tool-package-page.js'
 import ExploreWorkspace from './ExploreWorkspace.jsx'
 import DevelopWorkspace, { TestRunner } from './DevelopWorkspace.jsx'
-import { ActionMenu, Icon, ErrorMessage, Modal, Status, useAction, useDraft, useSnapshot } from './shared.jsx'
+import { ActionMenu, Icon, ErrorMessage, Modal, RequiredMark, Status, useAction, useDraft, useSnapshot } from './shared.jsx'
 import './website-exploration.css'
 
 export default function WebsiteExplorationPage({ onOpenSettings }) {
@@ -95,10 +95,14 @@ function ManageModal({ config, toolkitId, onClose, onSaved }) {
   const isKit = config.kind === 'kit'
   const [values, setValues] = useState({ ...config.value, allowed_domains: config.value?.allowed_domains?.join('\n') || '' })
   const [deleting, setDeleting] = useState(false)
+  const [touched, setTouched] = useState({})
   const action = useAction()
   const fields = isKit ? [['name', 'Adapter 名称'], ['description', '描述'], ['allowed_domains', '允许域名，一行一个']] : [['name', 'Tool 名称'], ['goal', '功能目标'], ['start_url', '起始网址'], ['expected_effect', '运行后预期效果']]
+  const requiredFields = isKit ? ['name', 'allowed_domains'] : ['name', 'goal', 'start_url']
+  const missing = name => name === 'allowed_domains' ? !String(values[name] || '').split(/[,，\s]+/).filter(Boolean).length : !String(values[name] || '').trim()
+  const incomplete = requiredFields.some(missing)
   return <Modal title={(config.create ? '新建' : '管理') + (isKit ? ' Adapter' : ' Tool')} onClose={onClose}>
-    <form onSubmit={e => { e.preventDefault(); void action.run(async () => {
+    <form onSubmit={e => { e.preventDefault(); if (incomplete) return; void action.run(async () => {
       const body = { ...values }
       if (isKit) body.allowed_domains = String(values.allowed_domains || '').split(/[,，\s]+/).filter(Boolean)
       if (config.create) {
@@ -108,8 +112,13 @@ function ManageModal({ config, toolkitId, onClose, onSaved }) {
       else await api.updateTool(toolkitId, config.value.tool_id, body)
       await onSaved()
     }) }}>
-      {fields.map(([name, label]) => <label key={name}>{label}<input disabled={name === 'name' && !config.create} required={['name', 'allowed_domains', 'goal', 'start_url'].includes(name)} value={values[name] || ''} onChange={e => setValues({ ...values, [name]: e.target.value })} /></label>)}
-      <ErrorMessage>{action.error}</ErrorMessage><footer>{!config.create && <button type="button" className="wx-danger" onClick={() => setDeleting(true)}>删除</button>}<button type="button" onClick={onClose}>取消</button><button className="wx-primary" disabled={action.busy}>保存</button></footer>
+      {fields.map(([name, label]) => {
+        const required = requiredFields.includes(name)
+        const invalid = Boolean(required && touched[name] && missing(name))
+        const props = { 'aria-label': label, required, 'aria-invalid': invalid, disabled: name === 'name' && !config.create, value: values[name] || '', onBlur: () => setTouched(current => ({ ...current, [name]: true })), onChange: e => setValues({ ...values, [name]: e.target.value }) }
+        return <label key={name}><span>{label}{required && <RequiredMark />}</span>{name === 'allowed_domains' ? <textarea {...props} rows={4} /> : <input {...props} />}{invalid && <small className="wx-required">请填写{label.split('，')[0]}</small>}</label>
+      })}
+      <ErrorMessage>{action.error}</ErrorMessage><footer>{!config.create && <button type="button" className="wx-danger" onClick={() => setDeleting(true)}>删除</button>}<button type="button" onClick={onClose}>取消</button><button className="wx-primary" disabled={action.busy || incomplete} title={incomplete ? '请填写所有必填项' : undefined}>保存</button></footer>
     </form>
     {deleting && <section className="wx-delete"><p>确认删除{isKit ? '此 Adapter 及其 Tool' : '此 Tool'}？相关内容将被移除。</p><button onClick={() => setDeleting(false)}>取消删除</button><button className="wx-danger" disabled={action.busy} onClick={() => action.run(async () => {
       if (!await useStore.getState().guard()) return
@@ -122,7 +131,9 @@ function ManageModal({ config, toolkitId, onClose, onSaved }) {
 
 function VerifyWorkspace({ kit, tool, disabled, globalBusy }) {
   const snapshot = useSnapshot(() => api.getExportStatus(kit.toolkit_id), [kit.toolkit_id])
-  const slots = useSnapshot(() => tool ? api.getSlots(kit.toolkit_id, tool.tool_id) : Promise.resolve(null), [kit.toolkit_id, tool?.tool_id])
+  const [selectedId, setSelectedId] = useState(null)
+  useEffect(() => setSelectedId(null), [kit.toolkit_id, tool?.tool_id])
+  const formal = snapshot.data?.tools?.find(item => item.tool_id === (selectedId || tool?.tool_id)) || snapshot.data?.tools?.[0]
   const [message, setMessage] = useState('')
   const [downloading, setDownloading] = useState(false)
   const [installedSkill, setInstalledSkill] = useState('')
@@ -151,19 +162,21 @@ function VerifyWorkspace({ kit, tool, disabled, globalBusy }) {
       useToolPackagePageStore.setState(s => ({ openSessionId: s.openSessionId + 1 }))
     })}>安装到 WeWorker</button>
   </div></header>
-    <ErrorMessage>{snapshot.error || slots.error || action.error}</ErrorMessage>{message && <p role="status">{message} {installedSkill && <button onClick={async () => { if (await useStore.getState().guard()) { useStore.setState({ open: false }); useToolPackagePageStore.getState().openPage('', { publicSkillName: installedSkill }) } }}>查看已安装能力</button>}</p>}
+    <ErrorMessage>{snapshot.error || snapshot.data?.error || action.error}</ErrorMessage>{message && <p role="status">{message} {installedSkill && <button onClick={async () => { if (await useStore.getState().guard()) { useStore.setState({ open: false }); useToolPackagePageStore.getState().openPage('', { publicSkillName: installedSkill }) } }}>查看已安装能力</button>}</p>}
     {!eligible && <p>待验证：{snapshot.data?.unverified_tools?.join('、') || '请先将开发中版本应用到 Adapter'}</p>}
-    <table><thead><tr><th>Tool</th><th>当前产物</th></tr></thead><tbody>{snapshot.data?.tools?.map(item => <tr key={item.tool_id}><td><button className="wx-quiet" aria-current={tool?.tool_id === item.tool_id ? 'true' : undefined} onClick={() => changeWebsiteContext({ toolId: item.tool_id })}>{item.tool_id}</button></td><td>{item.verified ? '已验证' : '待验证'}</td></tr>)}</tbody></table>
-    {tool && slots.data?.formal && <section><h3>{tool.name}</h3><TestRunner key={tool.tool_id} toolkitId={kit.toolkit_id} tool={tool} slot={slots.data.formal} channel="formal" primary={!eligible} disabled={disabled || globalBusy} onRefresh={snapshot.refresh} onEvidence={run => action.run(async () => {
-      if (!slots.data.development) await api.startDevelopmentFromFormal(kit.toolkit_id, tool.tool_id)
-      useStore.getState().setDraft(kit.toolkit_id + '/' + tool.tool_id + '/evidence', run)
-      await changeWebsiteContext({ workspace: 'develop' })
+    <table><thead><tr><th>Tool</th><th>当前产物</th></tr></thead><tbody>{snapshot.data?.tools?.map(item => <tr key={item.tool_id}><td><button className="wx-quiet" aria-current={formal?.tool_id === item.tool_id ? 'true' : undefined} onClick={() => setSelectedId(item.tool_id)}>{item.tool_id}</button></td><td>{item.verified ? '已验证' : '待验证'}</td></tr>)}</tbody></table>
+    {formal && <section><h3>{formal.name}</h3><TestRunner key={formal.tool_id + formal.distribution_hash} toolkitId={kit.toolkit_id} tool={formal} slot={formal} channel="formal" primary={!eligible} disabled={disabled || globalBusy} onRefresh={snapshot.refresh} onEvidence={run => action.run(async () => {
+      const slots = await api.getSlots(kit.toolkit_id, formal.tool_id)
+      if (!slots.development) await api.startDevelopmentFromFormal(kit.toolkit_id, formal.tool_id)
+      useStore.getState().setDraft(kit.toolkit_id + '/' + formal.tool_id + '/evidence', run)
+      await changeWebsiteContext({ toolId: formal.tool_id, workspace: 'develop' })
     })} /></section>}
   </div>
 }
 
 export function WebsiteExplorationGuard() {
   const leave = useStore(s => s.leaveRequest)
+  const emptyCode = useStore(s => !s.codeDraft?.code.trim())
   const action = useAction()
   useEffect(() => {
     const sync = state => window.electronAPI?.setExplorationDirty?.(Boolean(state.codeDraft))
@@ -188,6 +201,6 @@ export function WebsiteExplorationGuard() {
   }, [])
   if (!leave) return null
   return <Modal title="有未保存的代码修改" onClose={() => useStore.getState().resolveLeave(false)}><p>保存当前代码后继续，或明确放弃修改。</p><ErrorMessage>{action.error}</ErrorMessage><footer>
-    <button onClick={() => useStore.getState().resolveLeave(false)}>留在当前页</button><button disabled={action.busy} onClick={() => { useStore.setState({ codeDraft: null }); useStore.getState().resolveLeave(true) }}>放弃修改</button><button className="wx-primary" disabled={action.busy} onClick={() => action.run(async () => { await useStore.getState().saveCode(); useStore.getState().resolveLeave(true) })}>保存并继续</button>
+    <button onClick={() => useStore.getState().resolveLeave(false)}>留在当前页</button><button disabled={action.busy} onClick={() => { useStore.setState({ codeDraft: null }); useStore.getState().resolveLeave(true) }}>放弃修改</button><button className="wx-primary" disabled={action.busy || emptyCode} title={emptyCode ? '请先填写代码' : undefined} onClick={() => action.run(async () => { await useStore.getState().saveCode(); useStore.getState().resolveLeave(true) })}>保存并继续</button>
   </footer></Modal>
 }

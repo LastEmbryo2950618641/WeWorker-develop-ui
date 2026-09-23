@@ -180,7 +180,7 @@ export function listDefaultCatalogTools(): QueryRouteCatalogTool[] {
   const adaptersDir = findAdaptersDirectory()
   const result: QueryRouteCatalogTool[] = []
   for (const adapter of adapters.values()) {
-    if (!getSiteEnabled(adapter.id, adapter.defaultEnabled)) continue
+    if (!getSiteEnabled(adapter.id, adapter.defaultEnabled, adapter.managed?.enabled)) continue
     for (const tool of resolveToolsForAdapter(adapter, adaptersDir)) {
       const toolName = tool.name.startsWith(`${adapter.id}.`) ? tool.name : `${adapter.id}.${tool.name}`
       result.push({

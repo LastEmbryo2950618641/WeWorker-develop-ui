@@ -126,7 +126,32 @@ test('candidate replay is capture-bound and blocks write-like requests', () => {
   assert.match(source, /API_REPLAY_WRITE_SIGNAL_BLOCKED/)
   assert.match(source, /credentials: 'include'/)
   assert.match(source, /world: 'MAIN'/)
-  assert.match(source, /maxBytes: 16384/)
+  assert.match(source, /maxBytes: 1024 \* 1024/)
+})
+
+test('candidate replay preserves large JSON and reports the byte limit accurately', async () => {
+  const endpoint = 'https://example.com/api/list'
+  let body = JSON.stringify({ data: [{ title: 'x'.repeat(32 * 1024) }] })
+  const context = vm.createContext({
+    URL, Date, TextDecoder,
+    shouldHandleTabUrl: () => true,
+    ensureCdpAttached: async () => ({ entries: [{ url: endpoint, method: 'GET' }] }),
+    fetch: async () => new Response(body, { headers: { 'content-type': 'application/json' } }),
+    chrome: { scripting: { executeScript: async ({ func, args }) => [{ result: await func(...args) }] } },
+  })
+  const start = source.indexOf('function sanitizeExplorationReplayHeaders(')
+  const end = source.indexOf('\n// Kept temporarily', start)
+  vm.runInContext(source.slice(start, end), context)
+  const replay = () => context.runExplorationCandidateReplay({ tabId: 7, url: endpoint })
+  const large = await replay()
+  assert.equal(JSON.parse(large.responsePreview).data[0].title.length, 32 * 1024)
+  assert.equal(large.errorCode, '')
+  body = JSON.stringify('x'.repeat(1024 * 1024 - 2))
+  assert.equal((await replay()).errorCode, '')
+  body = JSON.stringify('x'.repeat(1024 * 1024))
+  const oversized = await replay()
+  assert.equal(oversized.errorCode, 'RESPONSE_TOO_LARGE')
+  assert.match(oversized.responsePreview, /\[truncated\]$/)
 })
 
 test('candidate replay write detection does not reject read-only bookTime parameters', () => {

@@ -2,7 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { normalizeSiteMemoryForScaffold } from '../bridge.js';
 
 describe('generation site-memory normalization', () => {
-  it('preserves list response samples and backfills legacy captured responses', () => {
+  it('merges duplicate response shapes without bringing samples back into the task', () => {
+    const normalized = normalizeSiteMemoryForScaffold({ siteKey: 'example.com', listApiCandidates: [
+      { url: 'https://example.com/api/list', method: 'GET', responsePreview: '' },
+      { url: 'https://example.com/api/list', method: 'GET', responsePreview: '{"title":"fixture-private-sample"}' },
+    ] });
+    expect(normalized.listApiCandidates).toHaveLength(1);
+    expect(normalized.listApiCandidates[0].responseEvidence).toMatchObject({ bodyKind: 'json', bodyKeys: ['title'] });
+    expect(normalized.listApiCandidates[0]).not.toHaveProperty('responsePreview');
+    expect(JSON.stringify(normalized)).not.toContain('fixture-private-sample');
+  });
+
+  it('preserves response structure from legacy fallback without captured values', () => {
     const normalized = normalizeSiteMemoryForScaffold({
       siteKey: 'example.test',
       listApiCandidates: [{
@@ -22,7 +33,7 @@ describe('generation site-memory normalization', () => {
     expect(normalized.listApiCandidates).toEqual([expect.objectContaining({
       status: 200,
       responseContentType: 'application/json',
-      responsePreview: '{"code":0,"data":{"records":[]}}',
+      responseEvidence: expect.objectContaining({ bodyKind: 'json', bodyKeys: ['code', 'data'] }),
       sourceEvidence: expect.objectContaining({
         version: 'api-source-v2',
         sourceKind: 'passive_list',
@@ -31,7 +42,7 @@ describe('generation site-memory normalization', () => {
     })]);
   });
 
-  it('keeps response samples already attached to list candidates', () => {
+  it('keeps only response structure already attached to list candidates', () => {
     const normalized = normalizeSiteMemoryForScaffold({
       siteKey: 'example.test',
       listApiCandidates: [{
@@ -49,7 +60,7 @@ describe('generation site-memory normalization', () => {
         bodyKeys: ['page'],
         bodyOmitted: false,
       }),
-      responsePreview: '[{"id":1}]',
+      responseEvidence: expect.objectContaining({ bodyKind: 'json', bodyOmitted: false }),
       responseContentType: 'application/json',
       sourceEvidence: {
         version: 'api-source-v2',
@@ -64,6 +75,7 @@ describe('generation site-memory normalization', () => {
       },
     });
     expect(normalized.listApiCandidates[0]).not.toHaveProperty('requestBodyPreview');
+    expect(normalized.listApiCandidates[0]).not.toHaveProperty('responsePreview');
   });
 
   it('persists write evidence for interfaces captured from user actions', () => {

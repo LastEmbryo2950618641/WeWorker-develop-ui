@@ -13,13 +13,18 @@ class DebugRunStore:
     def __init__(self, toolkit_store: ToolkitStore):
         self.toolkit_store = toolkit_store
 
-    def debug_root(self, tool_id: str) -> Path:
+    def debug_root(self, tool_id: str, toolkit_id: str | None = None) -> Path:
+        if toolkit_id is not None:
+            return self.toolkit_store.toolkit_dir(toolkit_id) / "debug_runs"
         tool = self.toolkit_store.find_tool(tool_id)
         return self.toolkit_store.toolkit_dir(str(tool["toolkit_id"])) / "debug_runs"
 
-    def run_dir(self, tool_id: str, debug_run_id: str) -> Path:
+    def run_dir(self, tool_id: str, debug_run_id: str, toolkit_id: str | None = None) -> Path:
         self._validate_debug_run_id(debug_run_id)
-        root = self.debug_root(tool_id).resolve()
+        if toolkit_id is None:
+            for path in self.toolkit_store.root.glob(f"*/debug_runs/{debug_run_id}/debug_run.json"):
+                return path.parent
+        root = self.debug_root(tool_id, toolkit_id).resolve()
         path = (root / debug_run_id).resolve()
         if root not in path.parents:
             raise ValueError(f"Invalid debug_run_id: {debug_run_id}")
@@ -32,9 +37,12 @@ class DebugRunStore:
         channel: str,
         code_hash: str,
         artifact_hash: str = "",
+        distribution_hash: str = "",
+        toolkit_id: str | None = None,
         parameters: dict[str, Any],
     ) -> dict[str, Any]:
-        self.toolkit_store.find_tool(tool_id)
+        if toolkit_id is None:
+            toolkit_id = str(self.toolkit_store.find_tool(tool_id)["toolkit_id"])
         if channel not in {"formal", "development"}:
             raise ValueError("channel must be formal or development.")
         if not str(code_hash or "").startswith("sha256:"):
@@ -45,9 +53,11 @@ class DebugRunStore:
         payload = {
             "debug_run_id": debug_run_id,
             "tool_id": tool_id,
+            "toolkit_id": toolkit_id,
             "channel": channel,
             "code_hash": code_hash,
             "artifact_hash": str(artifact_hash or "") if channel == "formal" else "",
+            "distribution_hash": distribution_hash if channel == "formal" else "",
             "parameters": parameters,
             "status": DebugRunStatus.QUEUED.value,
             "result": {},
@@ -59,7 +69,7 @@ class DebugRunStore:
             "finished_at": "",
             "screenshot_url": "",
         }
-        atomic_write_json(self.run_dir(tool_id, debug_run_id) / "debug_run.json", payload)
+        atomic_write_json(self.run_dir(tool_id, debug_run_id, toolkit_id) / "debug_run.json", payload)
         return payload
 
     def read(self, debug_run_id: str) -> dict[str, Any]:
@@ -80,9 +90,9 @@ class DebugRunStore:
         ):
             raise ValueError(f"Invalid debug_run_id: {debug_run_id}")
 
-    def list_for_tool(self, tool_id: str) -> list[dict[str, Any]]:
+    def list_for_tool(self, tool_id: str, toolkit_id: str | None = None) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
-        for path in self.debug_root(tool_id).glob("*/debug_run.json"):
+        for path in self.debug_root(tool_id, toolkit_id).glob("*/debug_run.json"):
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
@@ -96,15 +106,18 @@ class DebugRunStore:
         *,
         tool_id: str,
         channel: str,
-        code_hash: str,
+        code_hash: str | None = None,
         artifact_hash: str | None = None,
+        distribution_hash: str | None = None,
+        toolkit_id: str | None = None,
     ) -> bool:
         return any(
             item.get("status") == DebugRunStatus.SUCCEEDED.value
             and item.get("channel") == channel
-            and item.get("code_hash") == code_hash
+            and (code_hash is None or item.get("code_hash") == code_hash)
             and (artifact_hash is None or item.get("artifact_hash") == artifact_hash)
-            for item in self.list_for_tool(tool_id)
+            and (distribution_hash is None or item.get("distribution_hash") == distribution_hash)
+            for item in self.list_for_tool(tool_id, toolkit_id)
         )
 
     def update(self, debug_run_id: str, **updates: Any) -> dict[str, Any]:
@@ -122,23 +135,21 @@ class DebugRunStore:
 
     def recover_incomplete(self) -> int:
         recovered = 0
-        for toolkit in self.toolkit_store.list_toolkits():
-            root = self.toolkit_store.toolkit_dir(str(toolkit["toolkit_id"])) / "debug_runs"
-            for path in root.glob("*/debug_run.json"):
-                try:
-                    payload = json.loads(path.read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError):
-                    continue
-                if payload.get("status") not in {
-                    DebugRunStatus.QUEUED.value,
-                    DebugRunStatus.RUNNING.value,
-                }:
-                    continue
-                self.update(
-                    str(payload["debug_run_id"]),
-                    status=DebugRunStatus.FAILED.value,
-                    error="Server restarted before Debug Run completed.",
-                    finished_at=now_iso(),
-                )
-                recovered += 1
+        for path in self.toolkit_store.root.glob("*/debug_runs/*/debug_run.json"):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if payload.get("status") not in {
+                DebugRunStatus.QUEUED.value,
+                DebugRunStatus.RUNNING.value,
+            }:
+                continue
+            self.update(
+                str(payload["debug_run_id"]),
+                status=DebugRunStatus.FAILED.value,
+                error="Server restarted before Debug Run completed.",
+                finished_at=now_iso(),
+            )
+            recovered += 1
         return recovered

@@ -1,6 +1,9 @@
 // Plan indexes refer to the original generation context, never to ranked slots.
-export function plannedToolNames(siteKey, plan) {
-  return (plan?.tools || []).map((tool) => `${siteKey}.${String(tool.name || '').split('.').pop()}`);
+export function plannedToolNames(siteKey, plan, packageFormat = 1) {
+  return (plan?.tools || []).map((tool) => {
+    const local = String(tool.name || '').split('.').pop();
+    return `${siteKey}.${packageFormat === 2 ? local.replace(/_/g, '-') : local}`;
+  });
 }
 
 export function bindGenerationPlan(memory, plan) {
@@ -20,11 +23,12 @@ export function bindGenerationPlan(memory, plan) {
     if (!Array.isArray(indexes) || indexes.length !== 1 || !Number.isInteger(indexes[0])) {
       throw new Error(`planned tool requires exactly one source API index: ${name}`);
     }
-    const candidates = tool.risk === 'write' ? memory.actionApiCandidates : memory.listApiCandidates;
+    const actionSource = tool.risk === 'write' || tool.sourceApiKind === 'action';
+    const candidates = actionSource ? memory.actionApiCandidates : memory.listApiCandidates;
     const candidate = candidates?.[indexes[0]];
     if (!candidate?.url) throw new Error(`planned source API not found: ${name}`);
     let sourceToolName;
-    if (tool.risk === 'write') {
+    if (actionSource) {
       if (!candidate.toolName) throw new Error(`planned action has no tool name: ${name}`);
       sourceToolName = candidate.toolName;
       actions.push(candidate);

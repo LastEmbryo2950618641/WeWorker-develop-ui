@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
+import { createManagedAdapterSkillValidator } from '../../../webcli/adapter-desktop.js'
 
 export interface LoadedSkillContext {
   type: 'skill_context'
@@ -11,7 +12,7 @@ export interface LoadedSkillContext {
   text: string
 }
 
-function readSkillSource(directory: string, roots: string[]) {
+function readSkillSource(directory: string, roots: string[], validate = createManagedAdapterSkillValidator()) {
   try {
     const realDirectory = fs.realpathSync(directory)
     const allowed = roots.some(root => {
@@ -26,6 +27,7 @@ function readSkillSource(directory: string, roots: string[]) {
     const file = path.join(realDirectory, 'SKILL.md')
     if (fs.realpathSync(file) !== file) return undefined
     const source = fs.readFileSync(file, 'utf8')
+    if (!validate(source, path.basename(directory))) return undefined
     const frontmatter = source.match(/^---\s*\r?\n([\s\S]*?)\r?\n---/u)?.[1] ?? ''
     const name = frontmatter.match(/^name:\s*["']?([^\r\n"']+)/imu)?.[1]?.trim()
     return { directory: realDirectory, name, digest: createHash('sha256').update(source).digest('hex') }
@@ -96,7 +98,8 @@ export function buildLoadedSkillContext(messages: Array<{ content: unknown[] }>,
       latest.set(block.name, block)
     }
   }
-  const texts = [...latest.values()].filter(block => readSkillSource(block.directory, roots)?.digest === block.digest)
+  const validate = createManagedAdapterSkillValidator()
+  const texts = [...latest.values()].filter(block => readSkillSource(block.directory, roots, validate)?.digest === block.digest)
     .map(block => block.text)
   return texts.length ? `[已加载的 Skill 说明：以下为已校验当前版本的完整正文，可直接使用其中的工具和参数]\n${texts.join('\n\n')}` : ''
 }

@@ -3,6 +3,10 @@ import { createPortal } from 'react-dom'
 import * as api from '../../api/website-exploration-api.js'
 import { useWebsiteExplorationStore as useStore } from '../../store/website-exploration.js'
 
+export function RequiredMark() {
+  return <span className="wx-required" aria-hidden="true" title="必填"> *</span>
+}
+
 export function Icon({ name }) {
   const paths = { plus: 'M12 5v14M5 12h14', chevron: 'm9 5 7 7-7 7', tool: 'm8 5-6 7 6 7m8-14 6 7-6 7', panel: 'M9 3v18M3 3h18v18H3z', more: 'M5 12h.01M12 12h.01M19 12h.01' }
   return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[name]} /></svg>

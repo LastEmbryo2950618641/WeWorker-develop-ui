@@ -31,6 +31,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   focusWindow: () => ipcRenderer.invoke('focus-main-window'),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   openWebwright: () => ipcRenderer.invoke('open-webwright'),
+  downloadWebsiteAdapter: (toolkitId) => ipcRenderer.invoke('download-website-adapter', toolkitId),
+  cancelWebsiteAdapterDownload: () => ipcRenderer.invoke('cancel-website-adapter-download'),
+  onWebsiteExplorationOpen: (callback) => {
+    const handler = () => callback()
+    ipcRenderer.on('website-exploration:open', handler)
+    return () => ipcRenderer.removeListener('website-exploration:open', handler)
+  },
+  setExplorationDirty: (value) => ipcRenderer.send('website-exploration:dirty', value === true),
+  onExplorationLeave: (callback) => {
+    const handler = async (_event, id) => {
+      let allowed = false
+      try { allowed = await callback() } catch {}
+      ipcRenderer.send('website-exploration:leave-result', id, allowed === true)
+    }
+    ipcRenderer.on('website-exploration:leave', handler)
+    return () => ipcRenderer.removeListener('website-exploration:leave', handler)
+  },
   openChromeUrl: (url) => ipcRenderer.invoke('open-chrome-url', url),
   openChrome: () => ipcRenderer.invoke('open-chrome'),
   selectFiles: (options) => ipcRenderer.invoke('select-files', options),

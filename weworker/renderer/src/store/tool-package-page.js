@@ -24,6 +24,7 @@ export const useToolPackagePageStore = create((set) => ({
   selectedSiteIds: [],
   scenarioSiteIds: [],
   skillScope: SKILL_SCOPE_SITE,
+  selectedPublicSkillName: '',
   openPage: (siteId, options = {}) => set((state) => {
     const normalizedSiteId = typeof siteId === 'string' && siteId ? siteId : ''
     const nextSiteIds = normalizedSiteId
@@ -36,6 +37,8 @@ export const useToolPackagePageStore = create((set) => ({
       open: true,
       openSessionId: state.openSessionId + 1,
       workspaceTab: normalizeWorkspaceTab(options.workspaceTab),
+      selectedPublicSkillName: options.publicSkillName || '',
+      ...(options.publicSkillName ? { skillScope: SKILL_SCOPE_PUBLIC } : {}),
       selectedSiteIds: nextSiteIds,
       scenarioSiteIds: nextScenarioSiteIds,
     }

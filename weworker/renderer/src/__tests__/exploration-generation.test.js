@@ -10,11 +10,11 @@ const componentSource = fs.readFileSync(path.resolve(testDir, '../components/exp
 const sidebarSource = fs.readFileSync(path.resolve(testDir, '../components/layout/Sidebar.jsx'), 'utf8')
 const apiSource = fs.readFileSync(path.resolve(testDir, '../api/exploration-api.js'), 'utf8')
 
-test('client exploration exposes the v1 save, quick generation and smart generation flow', () => {
+test('client exploration exposes draft generation and reviewed local installation', () => {
   assert.match(componentSource, /保存探索结果/)
   assert.match(componentSource, /快速生成/)
   assert.match(componentSource, /智能生成/)
-  assert.match(componentSource, /确认发布/)
+  assert.match(componentSource, /安装并启用/)
   assert.match(componentSource, /取消生成/)
   assert.match(componentSource, /开始捕获操作/)
   assert.match(componentSource, /结束捕获/)
@@ -31,7 +31,7 @@ test('client exploration exposes the v1 save, quick generation and smart generat
   assert.match(componentSource, /generationRunning \|\| generation\.status === 'awaiting_approval'/)
   assert.match(componentSource, /<details open=\{running\}/)
   assert.match(componentSource, /查看探索详情/)
-  assert.doesNotMatch(componentSource, /schema_version|list-metrics|adapters\/aiep/)
+  assert.doesNotMatch(componentSource, /schema_version|list-metrics|adapters\//)
 })
 
 test('API exploration is distinct from the DOM exploration agent in user-facing copy', () => {

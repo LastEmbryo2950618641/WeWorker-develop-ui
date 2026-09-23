@@ -15,6 +15,13 @@ const path = require('path')
 const projectRoot = path.resolve(__dirname, '../..')
 const outDir = path.resolve(__dirname, '../build/webcli-dist')
 
+const internalPrepare = path.join(projectRoot, 'internal/scripts/run-profile-build.cjs')
+const prepareArgs = !process.env.WEWORKER_BUILD_PROFILE && fs.existsSync(internalPrepare)
+  ? [internalPrepare, 'prepare'] : [path.join(__dirname, 'prepare-build.cjs')]
+require('node:child_process').execFileSync(process.execPath, prepareArgs, {
+  cwd: path.resolve(__dirname, '..'), stdio: 'inherit',
+})
+
 for (const legacyWrapper of ['webcli-py', 'webcli-py.cmd']) {
   const legacyPath = path.join(outDir, legacyWrapper)
   if (fs.existsSync(legacyPath)) fs.unlinkSync(legacyPath)
@@ -25,20 +32,13 @@ function copyDirRecursive(srcDir, destDir) {
   for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
     const srcPath = path.join(srcDir, entry.name)
     const destPath = path.join(destDir, entry.name)
+    if (entry.isSymbolicLink()) throw new Error(`Bundled WebCLI resource must not be a symbolic link: ${srcPath}`)
     if (entry.isDirectory()) {
       copyDirRecursive(srcPath, destPath)
-    } else if (entry.isSymbolicLink()) {
-      const target = fs.readlinkSync(srcPath)
-      try { fs.symlinkSync(target, destPath) } catch {
-        const realPath = fs.realpathSync(srcPath)
-        if (fs.statSync(realPath).isDirectory()) {
-          copyDirRecursive(realPath, destPath)
-        } else {
-          fs.copyFileSync(realPath, destPath)
-        }
-      }
     } else if (entry.isFile()) {
       fs.copyFileSync(srcPath, destPath)
+    } else {
+      throw new Error(`Bundled WebCLI resource must be a regular file or directory: ${srcPath}`)
     }
   }
 }
@@ -131,15 +131,9 @@ fs.writeFileSync(cmdWrapperPath, cmdWrapperContent, 'utf-8')
 
 console.log('WebCLI cmd wrapper created: build/webcli-dist/webcli.cmd')
 
-// 4. Copy adapter metadata for dev-mode bundled webcli.
-//
-// In dev mode the backend puts build/webcli-dist on PATH after running this
-// script. The bundled webcli resolves adapters from either ./extension or
-// ../extension relative to webcli.cjs, so without this copy it cannot see the
-// repo's current extension/adapters tree and may leave stale runtime skills in
-// place. Packaged builds do not ship this copied folder because extraResources
-// only includes webcli/webcli.cjs/webcli.cmd/skills from build/webcli-dist.
-const adaptersSrcDir = path.resolve(projectRoot, 'extension/adapters')
+// 4. Development bundles use the same selected resources as the desktop.
+// Packaged builds resolve the sibling resources/adapters and resources/extension.
+const adaptersSrcDir = path.resolve(projectRoot, 'weworker/build/extension-dist/adapters')
 const adaptersDestDir = path.join(outDir, 'extension/adapters')
 if (fs.existsSync(adaptersSrcDir)) {
   fs.rmSync(adaptersDestDir, { recursive: true, force: true })
@@ -149,6 +143,11 @@ if (fs.existsSync(adaptersSrcDir)) {
 } else {
   console.warn('[bundle-webcli] extension/adapters not found, bundled webcli adapter commands may be unavailable')
 }
+
+const builtinSrcDir = path.resolve(projectRoot, 'weworker/build/builtin-adapters')
+const builtinDestDir = path.join(outDir, 'adapters')
+fs.rmSync(builtinDestDir, { recursive: true, force: true })
+copyDirRecursive(builtinSrcDir, builtinDestDir)
 
 // 5. Copy bundled skills directory (base webcli SKILL.md).
 //
@@ -165,4 +164,33 @@ if (fs.existsSync(skillsSrcDir)) {
   console.log('WebCLI skills copied: build/webcli-dist/skills/')
 } else {
   console.warn('[bundle-webcli] webcli/skills not found, skipping base skill copy')
+}
+
+// 6. Copy static column mapping assets.
+//
+// The bundled webcli resolves site column mappings (wecli-columns/*.json),
+// migrated public-name map and catalog aliases at runtime via fs.readFileSync
+// relative to webcli.cjs (new URL(..., import.meta.url)). Without this copy the
+// packaged WeWorker would silently fall back to full-field tables for every site.
+const mappingAssets = [
+  ['webcli/wecli-columns', 'wecli-columns'],
+  ['webcli/wecli-migrated-commands.json', 'wecli-migrated-commands.json'],
+  ['webcli/wecli-column-aliases.json', 'wecli-column-aliases.json'],
+]
+for (const [srcRel, destRel] of mappingAssets) {
+  const src = path.resolve(projectRoot, srcRel)
+  const dest = path.join(outDir, destRel)
+  if (fs.existsSync(src)) {
+    fs.rmSync(dest, { recursive: true, force: true })
+    if (fs.lstatSync(src).isSymbolicLink()) throw new Error(`Bundled WebCLI mapping asset must not be a symbolic link: ${src}`)
+    if (fs.lstatSync(src).isDirectory()) {
+      copyDirRecursive(src, dest)
+    } else {
+      fs.mkdirSync(path.dirname(dest), { recursive: true })
+      fs.copyFileSync(src, dest)
+    }
+    console.log(`WebCLI mapping asset copied: build/webcli-dist/${destRel}`)
+  } else {
+    console.warn(`[bundle-webcli] missing ${srcRel}, bundled webcli column mappings will be unavailable`)
+  }
 }

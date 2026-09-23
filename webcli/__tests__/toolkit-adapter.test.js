@@ -1,3 +1,4 @@
+import './helpers/legacy-adapter-environment.js';
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
@@ -68,6 +69,26 @@ async function createToolkit({ adapterId = "blog-admin" } = {}) {
   return { root, adaptersRoot, adapterRoot };
 }
 
+function createManagedBuiltin(root, adapterId = BUILTIN_EXTENSION_ADAPTER_ID) {
+  const adapterRoot = join(root, "builtin", adapterId, "extension", "commands");
+  mkdirSync(adapterRoot, { recursive: true });
+  writeFileSync(join(adapterRoot, "check-login-status.js"), '(function(){})();');
+  writeFileSync(join(root, "builtin", adapterId, "manifest.json"), JSON.stringify({
+    schema_version: 2,
+    name: adapterId,
+    version: "1.0.0",
+    description: "Built-in Extension fixture",
+    match: [adapterId],
+    commands: [{
+      id: "check-login-status",
+      runtime: "extension",
+      module: "extension/commands/check-login-status.js",
+      description: "Check login status",
+      schema: { type: "object", properties: {} },
+    }],
+  }, null, 2));
+  return join(root, "builtin");
+}
 function createUserExtension(root, { adapterId = "user-blog", toolName = `${adapterId}.search` } = {}) {
   const adapterRoot = join(root, ".weworker", "adapters", adapterId);
   mkdirSync(adapterRoot, { recursive: true });
@@ -145,9 +166,10 @@ describe("Toolkit Adapter registry", () => {
 
   it("fails closed when a Toolkit Adapter id conflicts with an Extension Adapter", async () => {
     const fixture = await createToolkit({ adapterId: BUILTIN_EXTENSION_ADAPTER_ID });
+    const builtinDir = createManagedBuiltin(fixture.root);
 
     await expect(execFileAsync(process.execPath, [cliPath, "adapter", "list", "--json"], {
-      env: { ...process.env, WEWORKER_ADAPTERS_DIR: fixture.adaptersRoot },
+      env: { ...process.env, WEWORKER_RESOURCES_PATH: undefined, WEWORKER_BUILTIN_ADAPTERS_DIR: builtinDir, WEWORKER_ADAPTERS_DIR: fixture.adaptersRoot },
     })).rejects.toMatchObject({
       stderr: expect.stringContaining(`Duplicate Adapter registration: "${BUILTIN_EXTENSION_ADAPTER_ID}"`),
     });
@@ -202,15 +224,18 @@ describe("Toolkit Adapter registry", () => {
   it("allows removing user Extension Adapters but refuses built-in and Toolkit Adapters", async () => {
     const fixture = await createToolkit();
     const userAdapterRoot = createUserExtension(fixture.root);
+    const builtinDir = createManagedBuiltin(fixture.root);
     const env = {
       ...process.env,
       HOME: fixture.root,
+      WEWORKER_RESOURCES_PATH: undefined,
+      WEWORKER_BUILTIN_ADAPTERS_DIR: builtinDir,
       WEWORKER_ADAPTERS_DIR: fixture.adaptersRoot,
       WEWORKER_USER_ADAPTERS_DIR: join(fixture.root, ".weworker", "adapters"),
     };
 
     await expect(execFileAsync(process.execPath, [cliPath, "adapter", "remove", BUILTIN_EXTENSION_ADAPTER_ID], { env }))
-      .rejects.toMatchObject({ stderr: expect.stringContaining("Built-in Extension Adapter") });
+      .rejects.toMatchObject({ stderr: expect.stringContaining("Built-in Adapter cannot be removed") });
     await expect(execFileAsync(process.execPath, [cliPath, "adapter", "remove", "blog-admin"], { env }))
       .rejects.toMatchObject({ stderr: expect.stringContaining("由网站探索管理") });
 

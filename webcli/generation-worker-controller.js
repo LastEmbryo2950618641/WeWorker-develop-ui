@@ -149,7 +149,7 @@ export class GenerationWorkerController extends EventEmitter {
     return createGenerationRunTransportSnapshot(this.#cancelPersistedRun(id, reason), { rootDir: this.store.rootDir });
   }
 
-  async publish(runId) {
+  async publish(runId, approval) {
     const id = String(runId || '');
     if (this.activeWorkers.has(id)) throw new Error(`generation run is still active: ${id}`);
     const snapshot = this.store.load(id);
@@ -157,7 +157,7 @@ export class GenerationWorkerController extends EventEmitter {
     if (snapshot.status !== GENERATION_STATUSES.AWAITING_APPROVAL) {
       throw new Error(`generation run is not awaiting approval: ${snapshot.status}`);
     }
-    const session = this.#spawn('publish', { runId: id });
+    const session = this.#spawn('publish', { runId: id, approval });
     session.runId = id;
     this.activeWorkers.set(id, session);
     await session.command.promise;
@@ -207,6 +207,7 @@ export class GenerationWorkerController extends EventEmitter {
         ELECTRON_RUN_AS_NODE: '1',
         WEBCLI_GENERATION_WORKER: '1',
         WEBCLI_GENERATION_RUNS_DIR: this.store.rootDir,
+        WEBCLI_GENERATION_LEGACY_RUNS_DIR: this.store.legacyRootDir || '',
         WEBCLI_AI_REPORT_DIR: this.reportDir,
       },
     });

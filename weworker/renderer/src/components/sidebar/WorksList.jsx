@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { useWorksStore } from '../../store/works.js'
 import { useToolPackagePageStore } from '../../store/tool-package-page.js'
+import { useExplorationPageStore } from '../../store/exploration-page.js'
+import { leaveWebsiteExploration } from '../../store/website-exploration.js'
 
 const LABEL_COLORS = {
   red: '#ef4444',
@@ -29,6 +31,7 @@ export default function WorksList({ searchQuery = '' }) {
   const deleteWork = useWorksStore((s) => s.deleteWork)
   const labelFilter = useWorksStore((s) => s.labelFilter)
   const closeToolPackagePage = useToolPackagePageStore((s) => s.closePage)
+  const closeExplorationPage = useExplorationPageStore((s) => s.closePage)
 
   const filtered = works.filter((w) => {
     if (labelFilter && w.label !== labelFilter) return false
@@ -64,8 +67,10 @@ export default function WorksList({ searchQuery = '' }) {
           key={w.id}
           work={w}
           active={w.id === activeWorkId}
-          onSelect={() => {
+          onSelect={async () => {
+            if (!await leaveWebsiteExploration()) return
             closeToolPackagePage()
+            closeExplorationPage()
             selectWork(w.id)
           }}
           onDelete={() => deleteWork(w.id)}

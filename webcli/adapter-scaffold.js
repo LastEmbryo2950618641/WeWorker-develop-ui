@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { resolveAdaptersDir } from './paths.js';
 import { bindGenerationPlan } from './generation-harness/plan-binding.js';
+import { draftCommandId, resolveGeneratedPackageRoot, writePackageDraft } from './generation-harness/package-draft.js';
 import {
     buildApiSourceEvidence,
     normalizeRequestBodyEvidence,
@@ -12,6 +13,9 @@ const log = {
 };
 const DEFAULT_ADAPTER_ROOT = resolveAdaptersDir();
 const GENERATED_SUBDIR = 'webcli-generated';
+export function writeAdapterPackageFromSiteMemory(memory, options = {}) {
+    return writeScaffoldFromSiteMemory(memory, { ...options, outputRoot: resolveGeneratedPackageRoot(options.outputRoot), packageFormat: 2 });
+}
 export function writeScaffoldFromSiteMemory(memory, options = {}) {
     memory = sanitizeScaffoldMemory(memory);
     if (options.plan) memory = bindGenerationPlan(memory, options.plan);
@@ -37,9 +41,6 @@ export function writeScaffoldFromSiteMemory(memory, options = {}) {
     const updateManifest = options.updateManifest ?? true;
     const existing = detectExistingAdapterState(adapterDir, manifestPath, indexPath);
     const mode = existing.indexExists || existing.manifestExists ? 'augment_existing_adapter' : 'bootstrap_adapter_draft';
-    fs.mkdirSync(generatedDir, {
-        recursive: true
-    });
     const initialActionCandidates = selectActionCandidates(memory);
     const { primary, secondary } = selectApis(memory, initialActionCandidates);
     const semanticConfig = buildScaffoldSemanticConfig(memory, {
@@ -83,6 +84,8 @@ export function writeScaffoldFromSiteMemory(memory, options = {}) {
         secondaryToolName,
         detailToolName
     });
+    if (options.packageFormat === 2) return writePackageDraft({ memory, adapterDir, supportBundle, paths: options.adapterPaths });
+    fs.mkdirSync(generatedDir, { recursive: true });
     const retainedGeneratedToolSupportFiles = collectRetainedGeneratedToolSupportFiles(manifestPath, adapterDir, supportBundle.supportFiles);
     const finalToolNames = mergeToolNamesWithRetainedGeneratedTools(memory.siteKey, toolNames, retainedGeneratedToolSupportFiles);
     const finalSupportFiles = mergeSupportFilesWithRetainedGeneratedTools(supportBundle.supportFiles, retainedGeneratedToolSupportFiles, supportFileRel);
@@ -575,6 +578,7 @@ function buildSupportBundle(memory, context) {
             relPath: module.relPath,
             absPath: path.join(context.adapterDir, module.relPath),
             content: module.content,
+            v2Content: module.v2Content,
             toolDefinition: module.toolDefinition || null
         }));
     const sharedRuntime = {
@@ -1176,7 +1180,7 @@ function buildToolModuleRel(siteKey, toolName) {
 function createGeneratedToolModule(siteKey, toolName, functionSource, toolDefinitionSource) {
     const definitionSource = typeof toolDefinitionSource === 'string' ? toolDefinitionSource : toolDefinitionSource.source;
     const toolDefinition = typeof toolDefinitionSource === 'string' ? null : toolDefinitionSource.metadata;
-    return {
+    const output = {
         toolName,
         relPath: buildToolModuleRel(siteKey, toolName),
         toolDefinition,
@@ -1214,11 +1218,18 @@ ${functionSource ? `${functionSource}\n\n` : ''}  registerTool(siteKey, ${defini
 })();
 `
     };
+    if (toolDefinitionSource.handlerSource && toolDefinition) {
+        const local = toolName.slice(siteKey.length + 1);
+        const registration = `  const handler = ${toolDefinitionSource.handlerSource};\n  registerTool(siteKey, { name: ${serializeJsValue(toolName)}, handler });\n  window.__webcliRegisterCommand(${serializeJsValue(draftCommandId(local))}, handler);`;
+        output.v2Content = output.content.replace(`  registerTool(siteKey, ${definitionSource});`, registration);
+    }
+    return output;
 }
 function buildGeneratedToolDefinitionSource(input) {
     const generationSource = input.generationSource || null;
     const accessSource = input.access ? `\n    access: ${serializeJsValue(input.access)},` : '';
     return {
+        handlerSource: input.handlerSource,
         source: `{
     name: ${serializeJsValue(input.toolName)},
     description: ${serializeJsValue(input.description)},

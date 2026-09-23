@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -45,7 +46,7 @@ def skill_name(toolkit_id: str) -> str:
 def _atomic_write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp")
-    temporary.write_text(content, encoding="utf-8")
+    temporary.write_bytes(content.encode("utf-8"))
     temporary.replace(path)
 
 
@@ -296,6 +297,65 @@ def _content_checksum(content: str) -> str:
     return f"sha256:{hashlib.sha256(content.encode()).hexdigest()}"
 
 
+def distribution_hash(artifacts: dict[str, str]) -> str:
+    digest = hashlib.sha256()
+    for name in DISTRIBUTION_FILE_NAMES:
+        digest.update(name.encode() + b"\0")
+        digest.update(_content_checksum(artifacts[name]).encode() + b"\0")
+    return f"sha256:{digest.hexdigest()}"
+
+
+def read_distribution(root: Path) -> dict[str, Any]:
+    """Read a standalone five-file package without consulting development state."""
+    if root.is_symlink() or (root / "scripts").is_symlink():
+        raise ValueError("Adapter directories must not be symbolic links.")
+    artifacts = {}
+    for name in DISTRIBUTION_FILE_NAMES:
+        path = root / name
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(f"Adapter is missing a regular file: {name}")
+        artifacts[name] = path.read_bytes().decode("utf-8")
+    manifest = json.loads(artifacts["manifest.json"])
+    if not isinstance(manifest, dict) or (
+        manifest.get("schema_version") != 1
+        or manifest.get("adapter_type") != "toolkit"
+        or manifest.get("id") != root.name
+        or not re.fullmatch(r"[a-z0-9][a-z0-9.-]*", root.name)
+        or manifest.get("entry") != "scripts/toolkit.py"
+        or manifest.get("artifact_hash") != artifact_hash(artifacts)
+    ):
+        raise ValueError("Adapter manifest or executable hash is invalid.")
+    tools = manifest.get("tools")
+    if not isinstance(tools, list) or not tools:
+        raise ValueError("Adapter manifest must contain tools.")
+    names = set()
+    for tool in tools:
+        if not isinstance(tool, dict):
+            raise ValueError("Adapter tool definition is invalid.")
+        tool_id = tool.get("id", "")
+        schema = tool.get("parameters_schema")
+        if (
+            not isinstance(tool_id, str)
+            or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", tool_id)
+            or tool_id in names
+            or tool.get("name") != f"{root.name}.{tool_id}"
+            or not isinstance(schema, dict)
+            or schema.get("type") != "object"
+            or not isinstance(schema.get("properties"), dict)
+            or not all(isinstance(field, dict) for field in schema["properties"].values())
+            or not isinstance(schema.get("required", []), list)
+            or any(not isinstance(key, str) or key not in schema["properties"] for key in schema.get("required", []))
+        ):
+            raise ValueError("Adapter tool registration or parameter schema is invalid.")
+        names.add(tool_id)
+    return {
+        "manifest": manifest,
+        "artifacts": artifacts,
+        "artifact_hash": artifact_hash(artifacts),
+        "distribution_hash": distribution_hash(artifacts),
+    }
+
+
 def _remove_path(path: Path) -> None:
     if path.is_symlink() or path.is_file():
         path.unlink(missing_ok=True)
@@ -322,7 +382,7 @@ def _directory_matches_artifacts(root: Path, artifacts: dict[str, str]) -> bool:
         return False
     try:
         return all(
-            (root / name).read_text(encoding="utf-8") == content
+            (root / name).read_bytes().decode("utf-8") == content
             for name, content in artifacts.items()
         )
     except OSError:
@@ -454,6 +514,7 @@ class ToolkitPublisher:
                 name: _content_checksum(artifacts[name])
                 for name in DISTRIBUTION_CHECKSUM_NAMES
             },
+            "distribution_hash": distribution_hash(artifacts),
             "built_at": now_iso(),
         }
         atomic_write_json(self.build_path(toolkit_id), build)
@@ -529,60 +590,42 @@ class ToolkitPublisher:
             return {"formal": formal, "build": build}
 
     def export_status(self, toolkit_id: str) -> dict[str, Any]:
-        try:
-            build = json.loads(self.build_path(toolkit_id).read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            build = {}
-        artifact = str((build or {}).get("artifact_hash") or "")
         root = self.store.toolkit_dir(toolkit_id) / skill_name(toolkit_id)
         try:
-            installed = {
-                name: (root / name).read_text(encoding="utf-8")
-                for name in DISTRIBUTION_FILE_NAMES
+            package = read_distribution(root)
+        except (OSError, ValueError) as error:
+            return {
+                "toolkit_id": toolkit_id, "artifact_hash": "", "distribution_hash": "",
+                "distribution_checksums": {}, "tools": [], "unverified_tools": [],
+                "artifacts_consistent": False, "export_eligible": False,
+                "error": str(error),
             }
-        except OSError:
-            installed = {}
-        checksums = build.get("distribution_checksums") or {}
-        artifacts_consistent = bool(
-            installed
-            and artifact_hash(installed) == artifact
-            and all(
-                checksums.get(name) == _content_checksum(installed[name])
-                for name in DISTRIBUTION_CHECKSUM_NAMES
-            )
-        )
         tools = []
-        for item in _formal_tools(self.store, toolkit_id):
-            tool_id = str(item["tool"]["tool_id"])
-            code_hash = str(item["slot"]["code_hash"])
-            verified = bool(
-                artifact
-                and self.debug_store.has_successful_run(
-                    tool_id=tool_id,
-                    channel="formal",
-                    code_hash=code_hash,
-                    artifact_hash=artifact,
-                )
+        for definition in package["manifest"]["tools"]:
+            tool_id = definition["id"].replace("-", "_")
+            verified = self.debug_store.has_successful_run(
+                toolkit_id=toolkit_id, tool_id=tool_id, channel="formal",
+                distribution_hash=package["distribution_hash"],
             )
-            tools.append(
-                {
-                    "tool_id": tool_id,
-                    "code_hash": code_hash,
-                    "verified": verified,
-                }
-            )
+            tools.append({
+                **definition, "tool_id": tool_id,
+                "code_hash": package["artifact_hash"],
+                "distribution_hash": package["distribution_hash"],
+                "verified": verified,
+            })
         unverified = [item["tool_id"] for item in tools if not item["verified"]]
         return {
             "toolkit_id": toolkit_id,
-            "artifact_hash": artifact,
+            "artifact_hash": package["artifact_hash"],
+            "distribution_hash": package["distribution_hash"],
             "distribution_checksums": {
-                name: str(checksums.get(name) or "")
+                name: _content_checksum(package["artifacts"][name])
                 for name in DISTRIBUTION_CHECKSUM_NAMES
             },
             "tools": tools,
             "unverified_tools": unverified,
-            "artifacts_consistent": artifacts_consistent,
-            "export_eligible": bool(tools) and not unverified and artifacts_consistent,
+            "artifacts_consistent": True,
+            "export_eligible": not unverified,
         }
 
     def export_zip(self, toolkit_id: str) -> bytes:
@@ -592,18 +635,9 @@ class ToolkitPublisher:
                 raise ValueError("Published Toolkit distribution files changed during export.")
             raise ValueError("Toolkit is not eligible for export.")
         root = self.store.toolkit_dir(toolkit_id) / skill_name(toolkit_id)
-        artifacts = {
-            name: (root / name).read_text(encoding="utf-8")
-            for name in DISTRIBUTION_FILE_NAMES
-        }
-        if artifact_hash(artifacts) != status["artifact_hash"]:
-            raise ValueError("Published Toolkit artifacts changed during export.")
-        build = json.loads(self.build_path(toolkit_id).read_text(encoding="utf-8"))
-        checksums = build.get("distribution_checksums") or {}
-        if any(
-            checksums.get(name) != _content_checksum(artifacts[name])
-            for name in DISTRIBUTION_CHECKSUM_NAMES
-        ):
+        package = read_distribution(root)
+        artifacts = package["artifacts"]
+        if package["distribution_hash"] != status["distribution_hash"]:
             raise ValueError("Published Toolkit distribution files changed during export.")
         output = io.BytesIO()
         with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -620,11 +654,9 @@ class ToolkitPublisher:
                 raise ValueError("Toolkit is not eligible for export.")
             name = skill_name(toolkit_id)
             root = self.store.toolkit_dir(toolkit_id) / name
-            artifacts = {
-                filename: (root / filename).read_text(encoding="utf-8")
-                for filename in DISTRIBUTION_FILE_NAMES
-            }
-            if artifact_hash(artifacts) != status["artifact_hash"]:
+            package = read_distribution(root)
+            artifacts = package["artifacts"]
+            if package["distribution_hash"] != status["distribution_hash"]:
                 raise ValueError("Published Toolkit artifacts changed during installation.")
             install_status = _replace_skill_directory(
                 Path(user_files_dir) / ".claude" / "skills" / name,
@@ -635,6 +667,7 @@ class ToolkitPublisher:
                 "toolkit_id": toolkit_id,
                 "skill_name": name,
                 "artifact_hash": status["artifact_hash"],
+                "distribution_hash": status["distribution_hash"],
             }
 
     def ensure_consistent(self, toolkit_id: str) -> dict[str, Any] | None:
@@ -675,7 +708,6 @@ class ToolkitPublisher:
     def recover(self, toolkit_id: str) -> None:
         path = self.journal_path(toolkit_id)
         if not path.is_file():
-            self.ensure_consistent(toolkit_id)
             return
         journal = json.loads(path.read_text(encoding="utf-8"))
         tool_id = str(journal["tool_id"])

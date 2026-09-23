@@ -86,7 +86,7 @@ export async function clearExplorationActionCapture(taskId) {
 export async function startExplorationGeneration(taskId, options = {}) {
   const payload = {}
   if (typeof options.goal === 'string' && options.goal.trim()) payload.goal = options.goal.trim()
-  if (options.mode === 'agent' || options.mode === 'classic') payload.mode = options.mode
+  if (['agent', 'classic', 'quick'].includes(options.mode)) payload.mode = options.mode
   return readJsonResponse(await backendFetch(`/exploration/runs/${encodeURIComponent(taskId)}/generation`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -112,8 +112,10 @@ export async function cancelExplorationGeneration(taskId) {
   }))
 }
 
-export async function publishExplorationGeneration(taskId) {
+export async function publishExplorationGeneration(taskId, approval = {}) {
   return readJsonResponse(await backendFetch(`/exploration/runs/${encodeURIComponent(taskId)}/generation/publish`, {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(approval),
   }))
 }

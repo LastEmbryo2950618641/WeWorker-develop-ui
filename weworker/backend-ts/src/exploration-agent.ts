@@ -781,7 +781,7 @@ export class ExplorationAgentCoordinator {
     return cloneRun(run)
   }
 
-  async startGeneration(taskId: string, goal?: string, mode?: 'agent' | 'classic'): Promise<ExplorationRun> {
+  async startGeneration(taskId: string, goal?: string, mode?: 'agent' | 'classic' | 'quick'): Promise<ExplorationRun> {
     const run = this.requireRun(taskId)
     if (run.status !== 'completed') throw new Error('请先完成网站探索')
     const saved = this.saveMemory(taskId)
@@ -809,9 +809,9 @@ export class ExplorationAgentCoordinator {
     const generationRun = await this._bridge.startGenerationRun({
       siteKey: memory.siteKey,
       memory: memory as unknown as Record<string, unknown>,
-      goal: goal?.trim() || `为 ${memory.siteKey} 生成并验证 API Adapter`,
+      goal: goal?.trim() || run.goal?.trim() || `为 ${memory.siteKey} 生成并验证 API Adapter`,
       tabId: Number.isInteger(run.tab.id) ? run.tab.id : null,
-      modelConfig: resolveClientGenerationModelConfig(this._settingsProvider()),
+      ...(mode === 'quick' ? {} : { modelConfig: resolveClientGenerationModelConfig(this._settingsProvider()) }),
       ...(previousFailedRunId ? { previousRunId: previousFailedRunId } : {}),
       mode: mode || 'agent',
     })
@@ -825,13 +825,14 @@ export class ExplorationAgentCoordinator {
   async resumeGeneration(taskId: string, answer: string): Promise<ExplorationRun> {
     const run = this.requireRun(taskId)
     if (!run.generationRunId) throw new Error('当前探索还没有生成任务')
+    run.generationRun = await this._bridge.getGenerationRun(run.generationRunId)
     if (run.generationRun?.status && run.generationRun.status !== 'needs_user_input') {
       throw new Error('当前生成任务不在等待补充信息状态')
     }
     run.generationRun = await this._bridge.resumeGenerationRun(
       run.generationRunId,
       answer,
-      resolveClientGenerationModelConfig(this._settingsProvider()),
+      run.generationRun?.artifacts?.generationMode === 'quick' ? undefined : resolveClientGenerationModelConfig(this._settingsProvider()),
     )
     run.updatedAt = new Date().toISOString()
     this._persistRuns()
@@ -856,11 +857,16 @@ export class ExplorationAgentCoordinator {
     return cloneRun(run)
   }
 
-  async publishGeneration(taskId: string): Promise<ExplorationRun> {
+  async publishGeneration(taskId: string, approval?: { reviewId?: string; acceptChanges?: boolean }): Promise<ExplorationRun> {
     const run = this.requireRun(taskId)
     if (!run.generationRunId) throw new Error('当前探索还没有生成任务')
-    const published = await this._bridge.publishGenerationRun(run.generationRunId)
+    const published = await this._bridge.publishGenerationRun(run.generationRunId, approval)
     run.generationRun = published
+    if (published.status !== 'completed') {
+      run.updatedAt = new Date().toISOString()
+      this._persistRuns()
+      return cloneRun(run)
+    }
     try {
       run.generationRefresh = await this._bridge.refreshAdapterTabs(published.siteKey)
       run.generationRefreshError = null

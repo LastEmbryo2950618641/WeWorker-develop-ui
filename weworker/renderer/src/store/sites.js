@@ -12,6 +12,8 @@ export const useSitesStore = create((set) => ({
   sites: [],
   systemTools: [],
   loading: false,
+  togglingIds: [],
+  toggleError: null,
   refreshSites: async () => {
     try {
       await reloadSites(set)
@@ -51,19 +53,21 @@ export const useSitesStore = create((set) => ({
   },
 
   toggle: async (id) => {
-    // Optimistic update
-    set((s) => ({
-      sites: s.sites.map((site) =>
-        site.id === id ? { ...site, enabled: !site.enabled, visible: !site.enabled ? site.visible : false } : site
-      ),
-    }))
+    if (useSitesStore.getState().togglingIds.includes(id)) return
+    set((s) => ({ togglingIds: [...s.togglingIds, id], toggleError: null }))
     try {
-      await backendFetch(`${API}/sites/${encodeURIComponent(id)}/toggle`, { method: 'POST' })
+      const response = await backendFetch(`${API}/sites/${encodeURIComponent(id)}/toggle`, { method: 'POST' })
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}))
+        throw new Error(error.detail || '无法切换 Adapter，请刷新后重试')
+      }
       // Reconcile with server response — reload full list to get correct visible state
       await reloadSites(set)
-    } catch {
-      // Revert on error — reload from server
-      await reloadSites(set)
+    } catch (error) {
+      set({ toggleError: { id, message: error.message } })
+      await reloadSites(set).catch(() => {})
+    } finally {
+      set((s) => ({ togglingIds: s.togglingIds.filter((entry) => entry !== id) }))
     }
   },
 

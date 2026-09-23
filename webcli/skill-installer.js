@@ -20,7 +20,9 @@ import { join, dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 import { generateSkillContent } from "./skill-writer.js";
 import { loadAdapterTools } from "./adapter-cli.js";
-import { resolveAdaptersDir, resolveUserAdaptersDir } from "./paths.js";
+import { resolveAdaptersDir, resolveUserAdaptersDir, resolveAdapterPaths } from "./paths.js";
+import { managedAdapterViews } from './adapter-views.js';
+import { syncManagedAdapterSkills } from './adapter-skill-sync.js';
 
 
 
@@ -277,7 +279,7 @@ function parseParams(block) {
 
  */
 
-async function getInstalledAdapters() {
+async function getInstalledAdapters(snapshot) {
 
   const USER_ADAPTERS_DIR = resolveUserAdaptersDir();
   const roots = [EXTENSION_ADAPTERS_DIR, USER_ADAPTERS_DIR];
@@ -293,12 +295,14 @@ async function getInstalledAdapters() {
       return existsSync(join(root, d, "manifest.json"));
     });
     for (const d of dirs) {
+      if (snapshot.managedNames.has(d)) continue;
       if (seen.has(d)) continue;
       seen.add(d);
       try {
         const manifest = JSON.parse(await readFile(join(root, d, "manifest.json"), "utf-8"));
+        if (manifest.schema_version === 2) continue;
         const skillPath = join(root, d, "SKILL.md");
-        const tools = await loadAdapterTools(d);
+        const tools = await loadAdapterTools(d, { adapterDir: join(root, d) });
         const adapterDir = join(root, d);
         adapters.push({ manifest, tools, adapterDir, skillPath: existsSync(skillPath) ? skillPath : "" });
       } catch {}
@@ -324,6 +328,8 @@ async function getInstalledAdapters() {
  */
 
 export async function installSkills({ target, adapterId }) {
+  const snapshot = managedAdapterViews();
+  const managed = syncManagedAdapterSkills({ target, snapshot, profile: resolveAdapterPaths().profile, adapterId });
 
   mkdirSync(target, { recursive: true });
 
@@ -357,9 +363,9 @@ export async function installSkills({ target, adapterId }) {
 
   // 2. Install adapter skills + standalone custom skills
 
-  const adapters = await getInstalledAdapters();
+  const adapters = await getInstalledAdapters(snapshot);
 
-  let installed = 0;
+  let installed = managed.installed;
 
   for (const { manifest, tools, adapterDir, skillPath } of adapters) {
     if (adapterId && manifest.id !== adapterId) continue;
@@ -387,7 +393,7 @@ export async function installSkills({ target, adapterId }) {
 
 
 
-  return { installed, total: adapters.length };
+  return { installed, total: adapters.length + snapshot.adapters.length, retired: managed.retired, preserved: managed.preserved };
 
 }
 

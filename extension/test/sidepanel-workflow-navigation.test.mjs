@@ -30,9 +30,10 @@ test('capture review lets the user choose the primary request', () => {
   assert.match(source, /已更新主接口，生成工具时将优先使用该请求/)
 })
 
-test('successful generation remains on step 3 after tab state refresh', () => {
-  const generateStart = source.indexOf('async function triggerGenerate()')
+test('successful installation remains on step 3 after tab state refresh', () => {
+  const generateStart = source.indexOf('async function publishGenerationRun()')
   const generateEnd = source.indexOf('\nfunction clearActionCapturePolling', generateStart)
+  assert.ok(generateStart >= 0 && generateEnd > generateStart)
   const generateSource = source.slice(generateStart, generateEnd)
   assert.match(generateSource, /await refreshCurrentTabState\(\);\s*[\s\S]*?setDevWorkflowStep\('generate'\)/)
 })

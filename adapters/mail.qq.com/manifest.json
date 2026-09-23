@@ -1,0 +1,237 @@
+{
+  "schema_version": 2,
+  "name": "mail.qq.com",
+  "version": "1.0.0",
+  "description": "QQ邮箱：搜索邮件、读取未读、打开邮件、下载附件、按关键词/月份批量下载发票",
+  "match": [
+    "mail.qq.com"
+  ],
+  "requires_auth": true,
+  "commands": [
+    {
+      "id": "check-login-status",
+      "runtime": "extension",
+      "module": "extension/commands/check-login-status.js",
+      "description": "检测QQ邮箱是否已登录。打开QQ邮箱后应首先调用此工具确认登录状态，未登录时需提醒用户先在浏览器中登录。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "aliases": [
+        "check_login_status"
+      ]
+    },
+    {
+      "id": "navigate-to-inbox",
+      "runtime": "extension",
+      "module": "extension/commands/navigate-to-inbox.js",
+      "description": "返回QQ邮箱收件箱首页。当需要执行多步骤操作（如批量下载附件）或当前页面状态不明确时，使用此工具返回初始状态。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "aliases": [
+        "navigate_to_inbox"
+      ]
+    },
+    {
+      "id": "search-emails",
+      "runtime": "extension",
+      "module": "extension/commands/search-emails.js",
+      "description": "在QQ邮箱中搜索邮件。未传关键词时默认搜索「发票」。",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "keyword": {
+            "type": "string",
+            "description": "搜索关键词，例如「合同」「会议」。不传或为空时默认为「发票」。"
+          }
+        },
+        "required": []
+      },
+      "aliases": [
+        "search_emails"
+      ]
+    },
+    {
+      "id": "get-unread-emails",
+      "runtime": "extension",
+      "module": "extension/commands/get-unread-emails.js",
+      "description": "获取QQ邮箱收件箱中的未读邮件列表",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "number",
+            "description": "最多返回的邮件数量，默认20"
+          }
+        },
+        "required": []
+      },
+      "aliases": [
+        "get_unread_emails"
+      ]
+    },
+    {
+      "id": "open-email",
+      "runtime": "extension",
+      "module": "extension/commands/open-email.js",
+      "description": "打开QQ邮箱中的指定邮件，查看完整内容。邮件ID可以从search_emails或get_unread_emails的返回结果中获取",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "emailId": {
+            "type": "string",
+            "description": "邮件的唯一ID或主题片段"
+          }
+        },
+        "required": [
+          "emailId"
+        ]
+      },
+      "aliases": [
+        "open_email"
+      ]
+    },
+    {
+      "id": "download-attachment",
+      "runtime": "extension",
+      "module": "extension/commands/download-attachment.js",
+      "description": "下载QQ邮箱中当前打开邮件的附件。使用前需要先调用open_email打开邮件。",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "attachmentName": {
+            "type": "string",
+            "description": "要下载的附件名称（例如：'发票.pdf'），或使用'all'打包下载所有附件"
+          }
+        },
+        "required": [
+          "attachmentName"
+        ]
+      },
+      "aliases": [
+        "download_attachment"
+      ]
+    },
+    {
+      "id": "get-current-page-info",
+      "runtime": "extension",
+      "module": "extension/commands/get-current-page-info.js",
+      "description": "获取当前QQ邮箱页面的状态信息，用于判断当前在哪个页面（收件箱、邮件详情等）",
+      "safety": "read",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "aliases": [
+        "get_current_page_info"
+      ]
+    },
+    {
+      "id": "cancel-download-invoices-by-invoice",
+      "runtime": "extension",
+      "module": "extension/commands/cancel-download-invoices-by-invoice.js",
+      "description": "取消当前正在执行的发票批量下载任务。若任务在执行中，会在下一检查点尽快停止。",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      },
+      "aliases": [
+        "cancel_download_invoices_by_invoice"
+      ]
+    },
+    {
+      "id": "download-invoices-by-invoice",
+      "runtime": "extension",
+      "module": "extension/commands/download-invoices-by-invoice.js",
+      "description": "按发票关键词批量下载 QQ 邮箱发票附件。时间条件由 AI 先解析后传入：可传 day（某日）或 month（某月），day 优先级高于 month。流程：按关键词搜索发票→按 day/month 过滤（可选）→逐封下载→返回结果。",
+      "safety": "write",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "invoiceKeyword": {
+            "type": "string",
+            "description": "发票关键词，如「发票」「移动发票」。为空时默认「发票」。"
+          },
+          "month": {
+            "type": "string",
+            "description": "明确月份（由 AI 解析后传入），如「4月」「04」「四月」。不传则不按月份筛选。"
+          },
+          "day": {
+            "type": "string",
+            "description": "明确日期（由 AI 解析后传入），如「2026-04-26」「4月26日」。传入后优先按该日筛选。"
+          }
+        },
+        "required": []
+      },
+      "aliases": [
+        "download_invoices_by_invoice"
+      ]
+    }
+  ],
+  "homepage_url": "https://mail.qq.com/",
+  "icon": "mail",
+  "scenarios": [
+    {
+      "id": "read-mail-list",
+      "title": "读取邮件列表",
+      "summary": "在QQ 邮箱中读取邮件列表"
+    },
+    {
+      "id": "search-mail",
+      "title": "搜索邮件",
+      "summary": "在QQ 邮箱中搜索邮件"
+    },
+    {
+      "id": "view-mail-detail",
+      "title": "查看邮件详情",
+      "summary": "在QQ 邮箱中查看邮件详情"
+    },
+    {
+      "id": "download-attachment",
+      "title": "下载附件",
+      "summary": "帮我下载QQ邮箱本月所有发票",
+      "prompts": [
+        {
+          "text": "打开QQ邮箱，下载我${本}月收到的${发票}"
+        }
+      ]
+    },
+    {
+      "id": "auto-download-invoice",
+      "title": "自动下载发票",
+      "summary": "帮我下载QQ邮箱本月所有发票",
+      "prompts": [
+        {
+          "text": "打开QQ邮箱，下载我${本}月收到的${发票}"
+        }
+      ]
+    }
+  ],
+  "test_prompts": [
+    "打开QQ邮箱，查看收件箱邮件列表，然后搜索关键词'发票'，打开搜索结果中的第一封邮件查看详情"
+  ],
+  "quick_prompts": [
+    "打开QQ邮箱，下载我${这个}月收到的${发票}"
+  ],
+  "i18n": {
+    "zh": {
+      "name": "QQ邮箱",
+      "description": "QQ邮箱：读取邮件列表、搜索邮件、查看邮件详情、下载附件、自动下载发票"
+    }
+  },
+  "verified_on": "2026-03-31",
+  "auth_check_tool": "mail.qq.com.check-login-status"
+}

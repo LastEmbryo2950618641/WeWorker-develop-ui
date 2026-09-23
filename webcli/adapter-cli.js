@@ -31,6 +31,8 @@ import {
 import { generateSkillContent } from "./skill-writer.js";
 import { resolveAdaptersDir, resolveUserAdaptersDir } from "./paths.js";
 import { findToolkitAdapter, loadToolkitAdapters } from "./adapter-registry.js";
+import { managedAdapterViews, managedAdapterView, managedAdapterSkill } from './adapter-views.js';
+import { runManagedAdapterCommand } from './managed-adapter-cli.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -38,6 +40,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const EXTENSION_ADAPTERS_DIR = resolveAdaptersDir();
 const USER_ADAPTERS_DIR = resolveUserAdaptersDir();
+function resolveManagedAdapterView(identifier) {
+  const direct = managedAdapterView(identifier);
+  if (direct) return direct;
+  return managedAdapterViews().adapters.find((adapter) =>
+    adapter.tools.some((tool) => tool.aliases?.includes(identifier))) || null;
+}
+
 
 // Hub URL 配置
 // - 默认使用官方 Hub: https://webmcphub.dev
@@ -54,8 +63,79 @@ const WS_PORT = 3711;
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
+/**
+ * adapter -help 的结构化数据（-f json）。
+ * 返回 namespace 层：命令列表 + 已安装站点。
+ */
+export async function adapterHelpJson() {
+  const adapters = await loadAdapterViews();
+  const sites = adapters
+    .map((a) => ({ id: a.id, name: a.name || a.id, source: a.source }))
+    .sort((x, y) => x.id.localeCompare(y.id));
+  return {
+    name: "adapter",
+    usage: "webcli adapter <command> [args] [options]",
+    description: "管理已安装的网站适配器（install / list / info / skill / knowledge / remove）",
+    commands: [
+      { name: "list", usage: "webcli adapter list [--json]", description: "列出已安装 adapter" },
+      { name: "info <id>", usage: "webcli adapter info <id>", description: "查看 adapter 的工具列表" },
+      { name: "install", usage: "webcli adapter install <id> | --url <url> | --file <path>", description: "安装 adapter（Hub/URL/本地文件）" },
+      { name: "remove <id>", usage: "webcli adapter remove <id>", description: "移除 adapter" },
+      { name: "skill <id>", usage: "webcli adapter skill <id> [--generated|--regenerate]", description: "输出/重新生成 SKILL.md" },
+      { name: "knowledge <id>", usage: "webcli adapter knowledge <id> [--json]", description: "输出 WEBCLI_KNOWLEDGE" },
+      { name: "skills-path", usage: "webcli adapter skills-path", description: "输出 adapters 目录路径" },
+      { name: "refresh", usage: "webcli adapter refresh", description: "强制刷新 Hub registry 缓存" },
+    ],
+    site_adapters: {
+      count: sites.length,
+      sites,
+    },
+    next: [
+      "webcli adapter <id> -help",
+      "webcli adapter <id> -help -f json",
+    ],
+  };
+}
+
+/**
+ * adapter <id> -help 的结构化数据（-f json）。
+ * 返回 site 层：工具列表（含参数）。
+ */
+export async function adapterSiteHelpJson(adapterId) {
+  const adapters = await loadAdapterViews();
+  const adapter = adapters.find((a) => a.id === adapterId)
+    || adapters.find((a) => (a.tools || []).some((tool) => tool.aliases?.includes(adapterId)));
+  if (!adapter) {
+    return { site: adapterId, error: `Adapter "${adapterId}" is not installed.` };
+  }
+  const tools = (adapter.tools || []).map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    directCapable: tool.directCapable === true,
+    executionMode: tool.executionMode,
+    execution: tool.execution ? { type: tool.execution.type, runtime: tool.execution.runtime } : undefined,
+    parameters: normalizeToolParamsForDisplay(tool),
+  }));
+  return {
+    site: adapterId,
+    name: adapter.name || adapterId,
+    source: adapter.source,
+    tool_count: tools.length,
+    tools,
+    next: [
+      `webcli call <tool> --key=value ...`,
+    ],
+  };
+}
+
 export async function runAdapterCli(args) {
+  const managed = runManagedAdapterCommand(args);
+  if (managed) {
+    console.log(JSON.stringify(managed, null, 2));
+    return;
+  }
   const subcommand = args[0];
+  const isHelpFlag = (a) => a === "-help" || a === "--help" || a === "-h";
 
   switch (subcommand) {
     case "install":
@@ -83,16 +163,58 @@ export async function runAdapterCli(args) {
     case "skills-path":
       cmdSkillsPath();
       break;
+    case "help":
+    case "-help":
+    case "--help":
+    case "-h":
+      // webcli adapter -help：显示 adapter 管理帮助（支持 -f json）
+      if (args.includes("-f") && args[args.indexOf("-f") + 1] === "json") {
+        const data = await adapterHelpJson();
+        console.log(JSON.stringify(data, null, 2));
+      } else {
+        await printHelp();
+      }
+      break;
+    case "validate":
+      await cmdValidate(args.slice(1));
+      break;
     default:
-      printHelp();
+      // webcli adapter <id> [-help]：显示该 adapter 提供的工具（支持 -f json）
+      if (subcommand) {
+        const idArg = args.find((a) => !a.startsWith("-"));
+        const isIdHelp = isHelpFlag(args[1]) || (args.length === 1 && !isHelpFlag(subcommand));
+        if (idArg && isIdHelp) {
+          if (args.includes("-f") && args[args.indexOf("-f") + 1] === "json") {
+            const data = await adapterSiteHelpJson(idArg);
+            console.log(JSON.stringify(data, null, 2));
+          } else {
+            await cmdInfo([idArg]);
+          }
+          break;
+        }
+      }
+      await printHelp();
   }
 }
 
-function printHelp() {
+async function printHelp() {
+  const adapters = await loadAdapterViews().catch(() => []);
+  const siteNames = adapters.map((a) => a.id).sort();
+  const siteText = siteNames.length
+    ? `Site adapters (${siteNames.length}): ${siteNames.join(", ")}`
+    : "Site adapters (0): 未安装 adapter";
   console.log(`
 WebCLI Adapter Manager
 
 Usage:
+  webcli adapter <command> [args] [options]
+
+${siteText}
+
+Commands:
+  webcli adapter install --directory <dir>   Install a validated v2 package
+  webcli adapter develop <dir>               Register a development package
+  webcli adapter use <id> <source>           Select builtin/user/development/disabled
   webcli adapter install --url <url>         Install from URL (https only)
   webcli adapter install --file <path>       Install from local file
   webcli adapter list                        List installed adapters
@@ -110,18 +232,26 @@ Usage:
   webcli adapter refresh                     Force-refresh Hub registry cache
 
 Options:
+  --allow-downgrade          Explicitly allow a local package downgrade.
+  --allow-permission-change Approve added permissions in a local package update.
+  --change-source           Approve replacing another recorded source with local.
+  --inactive                Install a local package without enabling it.
   --name <id>   Adapter id (used as directory name).
                 Auto-inferred from --file when possible.
                 Required for --url if hostname is not the desired id.
   --reload      Send reload signal to Chrome extension via the running service.
                 Falls back to a manual reminder if service is not running.
+  -f json       Structured help output (agent-friendly)
+
+Agent tip: use 'webcli adapter <id> -help' to inspect one site.
+           use 'webcli adapter <id> -help -f json' for structured tools.
 
 Examples:
   webcli adapter install --file ~/projects/my-adapter.js --name my.site.com
   webcli adapter install --url https://cdn.example.com/oa.js --name company.oa --reload
   webcli adapter list --json
   webcli adapter skill mail.163.com
-  webcli adapter knowledge mail.example.com
+  webcli adapter knowledge meeting.example.com
   webcli adapter info mail.163.com
   webcli adapter remove mail.163.com --reload
 `);
@@ -201,12 +331,15 @@ async function cmdInstall(args) {
   }
 }
 
-export async function loadExtensionAdapters() {
+async function loadLegacyExtensionAdapters(excluded = new Set()) {
   const result = [];
   for (const { id: directoryName, dir: adapterDir, source } of listAllAdapterDirs()) {
+    if (excluded.has(directoryName)) continue;
     const manifestPath = join(adapterDir, "manifest.json");
     try {
       const manifest = JSON.parse(await readFile(manifestPath, "utf-8"));
+      if (manifest.schema_version === 2) continue;
+      if (excluded.has(manifest.id)) continue;
       const tools = (await loadAdapterTools(directoryName, { adapterDir })).map((tool) => ({
         name: tool.name,
         description: tool.description,
@@ -239,11 +372,24 @@ export async function loadExtensionAdapters() {
   return result;
 }
 
+export async function loadAdapterViews({ extensionOnly = false, snapshot = managedAdapterViews() } = {}) {
+  const legacy = await loadLegacyExtensionAdapters(snapshot.managedNames);
+  const toolkit = extensionOnly ? [] : loadToolkitAdapters({ ignoreInvalid: true }).map((adapter) => adapter.manifest);
+  const managed = extensionOnly ? snapshot.adapters
+    .filter((adapter) => adapter.tools.some((tool) => tool.runtime === 'extension'))
+    .map((adapter) => ({ ...adapter, tools: adapter.tools.filter((tool) => tool.runtime === 'extension') })) : snapshot.adapters;
+  return [...legacy, ...toolkit, ...managed];
+}
+
+export async function loadExtensionAdapters() {
+  return loadAdapterViews({ extensionOnly: true });
+}
+
 export async function findExtensionTool(toolName) {
   const matches = [];
   for (const adapter of await loadExtensionAdapters()) {
     for (const tool of adapter.tools) {
-      if (tool.name === toolName) matches.push({ adapter, tool });
+      if (tool.name === toolName || tool.aliases?.includes(toolName)) matches.push({ adapter, tool });
     }
   }
   if (matches.length > 1) throw new Error(`Duplicate Extension tool registration: "${toolName}".`);
@@ -252,10 +398,7 @@ export async function findExtensionTool(toolName) {
 
 async function cmdList(args) {
   const jsonMode = args.includes("--json");
-  const extensionAdapters = await loadExtensionAdapters();
-  const toolkitAdapters = loadToolkitAdapters();
-  const toolkitManifests = toolkitAdapters.map((adapter) => adapter.manifest);
-  const result = [...extensionAdapters, ...toolkitManifests];
+  const result = await loadAdapterViews();
   const adapterIds = new Set();
   const toolNames = new Set();
   for (const adapter of result) {
@@ -282,12 +425,43 @@ async function cmdList(args) {
   }
 }
 
+async function cmdValidate(args) {
+  const dir = args.find((a) => !a.startsWith("--"));
+  if (!dir) {
+    die("Adapter directory required.\nUsage: webcli adapter validate <dir>\n规范：docs/adapter_package_spec.md");
+  }
+  const { validateV2AdapterDir } = await import("./adapter-package-v2.js");
+  const root = resolve(process.cwd(), dir);
+  if (!existsSync(root)) die(`Directory not found: ${root}`);
+  try {
+    const adapter = validateV2AdapterDir(root);
+    console.log(`✓ Valid v2 adapter: ${adapter.name} (${adapter.manifest.version}, ${adapter.commands.length} cmd, runtime=[${[...new Set(adapter.commands.map((c) => c.runtime))].join(",")}])`);
+  } catch (error) {
+    die(`Validation failed: ${error.message}`);
+  }
+}
+
 async function cmdInfo(args) {
   const adapterId = args.find((a) => !a.startsWith("--"));
   if (!adapterId) {
     die("Adapter id required.\nUsage: webcli adapter info <id>");
   }
 
+  const managed = resolveManagedAdapterView(adapterId);
+  if (managed) {
+    if (args.includes('--json')) console.log(JSON.stringify(managed, null, 2));
+    else {
+      console.log(`Adapter: ${managed.id}\nType: ${managed.adapter_type}\nVersion: ${managed.version}\nSource: ${managed.source}\nDigest: ${managed.digest}\n`);
+      console.log(`Tools (${managed.tools.length}):`);
+      for (const tool of managed.tools) {
+        console.log(`${tool.name} [${tool.runtime === 'wewright' ? 'Toolkit' : 'Extension'}] safety=${tool.safety}`);
+        console.log(`  ${tool.description}`);
+        if (tool.aliases.length) console.log('  Compatible names: ' + tool.aliases.join(', '));
+        for (const param of tool.params) console.log(`  - ${param.name}: ${param.type}${param.required ? ' (required)' : ''}`);
+      }
+    }
+    return;
+  }
   const toolkitAdapter = findToolkitAdapter(adapterId);
   const adapterDir = findAdapterDir(adapterId);
   if (toolkitAdapter) {
@@ -356,6 +530,11 @@ async function cmdSkill(args) {
     die("Adapter id required.\nUsage: webcli adapter skill <id> [--generated|--regenerate]");
   }
 
+  const managed = resolveManagedAdapterView(adapterId);
+  if (managed) {
+    process.stdout.write(managedAdapterSkill(managed));
+    return;
+  }
   const toolkitAdapter = findToolkitAdapter(adapterId);
   const adapterDir = findAdapterDir(adapterId);
   if (toolkitAdapter) {
@@ -420,6 +599,10 @@ async function cmdKnowledge(args) {
     die("Adapter id required.\nUsage: webcli adapter knowledge <id> [--json]");
   }
 
+  if (managedAdapterView(adapterId)) {
+    throw new Error('Managed package guidance is derived from its manifest. Use webcli adapter skill ' + adapterId + '.');
+  }
+
   const adapterDir = findAdapterDir(adapterId);
   if (!adapterDir) {
     die(`Adapter "${adapterId}" is not installed.`);
@@ -445,6 +628,10 @@ function isGeneratedAdapterManifest(manifest = {}) {
 }
 
 export async function loadAdapterTools(adapterId, options = {}) {
+  if (!options.adapterDir) {
+    const managed = resolveManagedAdapterView(adapterId);
+    if (managed) return managed.tools;
+  }
   const includeSupportFiles = options.includeSupportFiles !== false;
   const adapterDir = options.adapterDir || findAdapterDir(adapterId) || join(EXTENSION_ADAPTERS_DIR, adapterId);
   const indexPath = join(adapterDir, "index.js");
@@ -630,6 +817,7 @@ export function parseToolsFromSource(source, manifest = {}) {
       confirmationMessage: parseStringField(block, "confirmationMessage") || parseStringField(block, "x-webcli-confirmation-message"),
       description,
       params,
+      parameters: parseParameterSchemaFromBlock(block, params),
     });
   }
 
@@ -888,6 +1076,27 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function parseParameterSchemaFromBlock(block, params = []) {
+  const match = block.match(/parameters\s*:\s*\{/);
+  if (match) {
+    const start = match.index + match[0].length - 1;
+    const end = findMatchingDelimiter(block, start, "{", "}");
+    if (end >= start) {
+      try {
+        const parsed = vm.runInNewContext(`(${block.slice(start, end + 1)})`, Object.create(null), { timeout: 100, displayErrors: false });
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return sanitizeParametersSchema(parsed);
+      } catch {
+        // Fall back to the regex-derived schema below for dynamic/legacy definitions.
+      }
+    }
+  }
+  const properties = Object.fromEntries(params.map((parameter) => [parameter.name, {
+    type: parameter.type || "string",
+    description: parameter.description || "",
+  }]));
+  return { type: "object", properties, required: params.filter((parameter) => parameter.required).map((parameter) => parameter.name) };
+}
+
 function parseParams(block) {
   const params = [];
   const propsMatch = block.match(/properties\s*:\s*\{/);
@@ -1062,7 +1271,11 @@ async function installFromHub(adapterId) {
  * - 用户目录可写，应用更新不会覆盖用户安装的 adapter
  */
 async function writeAdapter(adapterId, code) {
+  if (managedAdapterViews().managedNames.has(adapterId)) {
+    throw new Error('This Adapter uses managed packages. Install its v2 package with --directory.');
+  }
   const actualId = await resolveInstallId(adapterId);
+  if (managedAdapterViews().managedNames.has(actualId)) throw new Error('Cannot overwrite a managed Adapter with a legacy file.');
   const adapterDir = join(USER_ADAPTERS_DIR, actualId);
   mkdirSync(adapterDir, { recursive: true });
   const destPath = join(adapterDir, "index.js");
@@ -1135,42 +1348,43 @@ async function cmdRefresh() {
  * Send a reload_extension message to the Chrome extension via the bridge.
  * Gracefully falls back to a manual reminder if service is not running.
  */
-async function reloadExtension() {
-  process.stdout.write("Sending reload signal to Chrome extension... ");
+export async function reloadExtension({ quiet = false } = {}) {
+  if (!quiet) process.stdout.write("Sending reload signal to Chrome extension... ");
 
   return new Promise((resolve) => {
     const ws = new WebSocket(`ws://localhost:${WS_PORT}`);
 
     const timeout = setTimeout(() => {
       ws.terminate();
-      console.log("");
+      if (!quiet) console.log("");
       console.warn(
         "Warning: WebCLI service is not running.\n" +
           "→ Please reload the extension manually at chrome://extensions"
       );
-      resolve();
+      resolve(false);
     }, 3000);
 
     ws.on("open", () => {
       ws.send(JSON.stringify({ type: "reload_extension" }));
-      // Give the message time to arrive, then close
       setTimeout(() => {
         clearTimeout(timeout);
         ws.close();
-        console.log("done");
-        console.log("✓ Extension reloading...");
-        resolve();
+        if (!quiet) {
+          console.log("done");
+          console.log("✓ Extension reloading...");
+        }
+        resolve(true);
       }, 500);
     });
 
     ws.on("error", () => {
       clearTimeout(timeout);
-      console.log("");
+      if (!quiet) console.log("");
       console.warn(
         "Warning: WebCLI service is not running.\n" +
           "→ Please reload the extension manually at chrome://extensions"
       );
-      resolve();
+      resolve(false);
     });
   });
 }

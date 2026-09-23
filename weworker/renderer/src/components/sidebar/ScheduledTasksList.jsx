@@ -1,6 +1,8 @@
 import React from 'react'
 import { useScheduledTasksStore } from '../../store/scheduled-tasks.js'
 import { useToolPackagePageStore } from '../../store/tool-package-page.js'
+import { useExplorationPageStore } from '../../store/exploration-page.js'
+import { leaveWebsiteExploration } from '../../store/website-exploration.js'
 
 /**
  * Simple frontend cron-to-summary conversion.
@@ -43,6 +45,7 @@ export default function ScheduledTasksList() {
   const activeTaskId = useScheduledTasksStore((s) => s.activeTaskId)
   const selectTask = useScheduledTasksStore((s) => s.selectTask)
   const closeToolPackagePage = useToolPackagePageStore((s) => s.closePage)
+  const closeExplorationPage = useExplorationPageStore((s) => s.closePage)
 
   if (!tasks.length) {
     return (
@@ -59,8 +62,10 @@ export default function ScheduledTasksList() {
           key={t.id}
           task={t}
           active={t.id === activeTaskId}
-          onSelect={() => {
+          onSelect={async () => {
+            if (!await leaveWebsiteExploration()) return
             closeToolPackagePage()
+            closeExplorationPage()
             selectTask(t.id)
           }}
         />

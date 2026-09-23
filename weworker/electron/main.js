@@ -16,6 +16,7 @@ import { UpdateManager } from './update-manager.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDev = !app.isPackaged
+const devRendererUrl = process.env.WEWORKER_RENDERER_DEV_URL || process.env.WEWORKER_DEV_SERVER_URL || 'http://localhost:5173'
 
 // ── Load metrics env (~/.webcli/metrics.env) ─────────────────────────────────
 // 从固定路径读取埋点上报配置（KEY=VALUE），注入 process.env。
@@ -203,8 +204,7 @@ async function createWindow() {
   })
 
   if (isDev) {
-    const rendererUrl = process.env.WEWORKER_DEV_SERVER_URL || 'http://localhost:5173'
-    mainWindow.loadURL(rendererUrl)
+    mainWindow.loadURL(devRendererUrl)
     // UI E2E attaches over CDP; auto DevTools steals the only page handle puppeteer sees.
     if (!process.env.WEWORKER_E2E) {
       mainWindow.webContents.openDevTools()

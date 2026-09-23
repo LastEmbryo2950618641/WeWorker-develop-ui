@@ -29,16 +29,17 @@ function loadStoredMemoryBuilder() {
 }
 
 describe('extension scaffold generation summary', () => {
-  it('dedupes generated file paths in sidepanel and popup summaries', () => {
+  it('uses tracked generation tasks in both sidepanel and popup', () => {
     const sidepanel = readText('extension/sidepanel/sidepanel.js');
     const popup = readText('extension/popup/popup.js');
 
     expect(sidepanel).toContain('function collectUniqueGeneratedFileLines');
-    expect(sidepanel).toContain('collectUniqueGeneratedFileLines(r.files)');
+    expect(sidepanel).toContain('return triggerGenerate({ quick: true });');
     expect(sidepanel).not.toContain('Object.values(r.files || {}).filter');
 
     expect(popup).toContain('function collectUniqueGeneratedFileLines');
-    expect(popup).toContain('collectUniqueGeneratedFileLines(response.files)');
+    expect(popup).toContain('generationRunsBySite');
+    expect(popup).toContain('response.run.id');
     expect(popup).not.toContain('Object.values(response.files || {}).filter');
   });
 
@@ -85,8 +86,8 @@ describe('extension scaffold generation summary', () => {
     expect(sidepanel).toContain('isBridgeConnected = Boolean(connected);');
     expect(sidepanel).toContain("type: 'popup_bridge_status'");
     expect(sidepanel).toContain('async function ensureBridgeConnected');
-    expect(sidepanel).toContain("await ensureBridgeConnected('Bridge 未连接，无法生成工具')");
-    expect(sidepanel).toContain('Bridge 未连接，无法写入生成工具');
+    expect(sidepanel).toContain("await ensureBridgeConnected('Bridge 未连接，无法启动智能生成')");
+    expect(sidepanel).toContain('return triggerGenerate({ quick: true });');
     expect(sidepanel).toContain('Bridge 未连接，无法保存配置');
     expect(sidepanel).toContain('Bridge 未连接，无法测试配置');
   });
@@ -103,12 +104,12 @@ describe('extension scaffold generation summary', () => {
     expect(sidepanel).toContain('已发现适配器，但注入当前页面失败');
   });
 
-  it('warns when scaffold files were written but runtime tools are not registered yet', () => {
+  it('shows installation review and refresh status instead of claiming an uninstalled draft is active', () => {
     const sidepanel = readText('extension/sidepanel/sidepanel.js');
 
-    expect(sidepanel).toContain('当前页面尚未注册到可用工具');
-    expect(sidepanel).toContain('若显示“适配器加载失败”，优先按错误信息检查生成文件');
-    expect(sidepanel).toContain('当前没有可刷新的匹配页面');
+    expect(sidepanel).toContain('本机安装评审');
+    expect(sidepanel).toContain('addedPermissions');
+    expect(sidepanel).toContain('页面刷新：');
   });
 
   it('keeps API candidate descriptions and blocks skip while capture is busy', () => {

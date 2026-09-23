@@ -1,0 +1,180 @@
+/** Shared Adapter help rendered from the effective catalog. */
+
+function schemaToParams(schema) {
+  const properties = schema?.properties || {};
+  const required = new Set(Array.isArray(schema?.required) ? schema.required : []);
+  return Object.entries(properties).map(([name, property]) => ({
+    name,
+    type: Array.isArray(property?.enum) ? "enum" : property?.type || "string",
+    description: property?.description || "",
+    required: required.has(name),
+    enum: Array.isArray(property?.enum) ? property.enum.map(String) : [],
+    default: property?.default,
+  }));
+}
+
+function sortParams(params) {
+  return [...params].sort((a, b) => Number(b.required) - Number(a.required) || a.name.localeCompare(b.name));
+}
+
+/** 统一 adapter 模型：{ id, display, version, description, runtimes, source, commands: [{id, name, description, params, runtime}] } */
+export function toAdapterHelpModel(adapter, source = "v1-extension") {
+  if (adapter.schema_version === 2 || (adapter.commands && adapter.manifest)) {
+    const m = adapter.manifest || adapter;
+    return {
+      id: adapter.name,
+      display: adapter.name,
+      version: m.version,
+      description: m.description || "",
+      match: m.match || [],
+      runtimes: [...new Set(adapter.commands.map((c) => c.runtime))],
+      source: adapter.source || source,
+      commands: adapter.commands.map((c) => ({
+        id: c.id,
+        name: `${adapter.name}.${c.id}`,
+        aliases: [...(c.aliases || []).map((alias) => adapter.name + '.' + alias), ...(c.legacyNames || [])],
+        description: c.description || "",
+        safety: c.safety || "read",
+        runtime: c.runtime,
+        execution: c.execution,
+        params: schemaToParams(c.schema),
+      })),
+    };
+  }
+  // v1 toolkit adapter（loadToolkitAdapters 产物，带 entryPath）
+  if (adapter.entryPath || adapter.adapter_type === 'toolkit') {
+    const m = adapter.manifest || adapter;
+    return {
+      id: adapter.id,
+      display: m.name || adapter.id,
+      version: m.version,
+      description: m.description || "",
+      match: m.allowed_domains || [],
+      runtimes: ["toolkit"],
+      source,
+      commands: (adapter.tools || m.tools || []).map((t) => ({
+        id: t.id,
+        name: t.name,
+        description: t.description || "",
+        safety: t.safety || "read",
+        runtime: "toolkit",
+        params: t.params?.length ? t.params : schemaToParams(t.parameters),
+      })),
+    };
+  }
+  // v1 extension adapter（loadExtensionAdapters 产物）
+  if (Array.isArray(adapter.tools)) {
+    return {
+      id: adapter.id,
+      display: adapter.name || adapter.id,
+      version: adapter.version,
+      description: adapter.description || "",
+      match: adapter.match || [],
+      runtimes: ["extension"],
+      source: adapter.source || source,
+      commands: adapter.tools.map((t) => ({
+        id: String(t.name || "").startsWith(`${adapter.id}.`) ? t.name.slice(adapter.id.length + 1) : t.name,
+        name: t.name,
+        description: t.description || "",
+        safety: t.safety || "read",
+        runtime: "extension",
+        params: t.params?.length ? t.params : schemaToParams(t.parameters),
+      })),
+    };
+  }
+  // v1 toolkit adapter（loadToolkitAdapters 产物）
+  const m = adapter.manifest || adapter;
+  return {
+    id: adapter.id,
+    display: m.name || adapter.id,
+    version: m.version,
+    description: m.description || "",
+    match: m.allowed_domains || [],
+    runtimes: ["toolkit"],
+    source,
+    commands: (adapter.tools || m.tools || []).map((t) => ({
+      id: t.id,
+      name: t.name,
+      description: t.description || "",
+      safety: t.safety || "read",
+      runtime: "toolkit",
+      params: t.params?.length ? t.params : schemaToParams(t.parameters),
+    })),
+  };
+}
+
+const RUNTIME_LABEL = { extension: "extension", wewright: "Toolkit", toolkit: "toolkit" };
+
+/** 第一级：全局 adapter 摘要 */
+export function renderGlobalHelp(models) {
+  if (!models.length) return "No adapters installed.";
+  const lines = ["Adapters:"];
+  for (const m of [...models].sort((a, b) => a.id.localeCompare(b.id))) {
+    const tag = m.source === "user" ? " [user]" : "";
+    const runtimes = m.runtimes.map((r) => RUNTIME_LABEL[r] || r).join("+");
+    const summary = m.description ? ` — ${m.description}` : "";
+    lines.push(`  ${m.id}${tag} (${runtimes}, ${m.commands.length} cmd)${summary}`);
+  }
+  lines.push("", 'Usage: webcli <adapter> help — 命令列表; webcli <adapter> <command> help — 参数说明');
+  return lines.join("\n");
+}
+
+/** 第二级：单个 adapter */
+export function renderAdapterHelp(model) {
+  const lines = [`Adapter: ${model.id}`];
+  if (model.display && model.display !== model.id) lines.push(`Name: ${model.display}`);
+  if (model.version) lines.push(`Version: ${model.version}`);
+  const runtimes = model.runtimes.map((r) => RUNTIME_LABEL[r] || r).join("+");
+  lines.push(`Runtime: ${runtimes}`);
+  if (model.match?.length) lines.push(`Match: ${model.match.join(", ")}`);
+  if (model.description) lines.push("", model.description);
+  lines.push("", `Commands (${model.commands.length}):`);
+  for (const c of model.commands) {
+    lines.push(`  ${c.id} — ${c.description || "(no description)"}`);
+  }
+  lines.push("", `Usage: webcli ${model.id} <command> [--key=value ...]`);
+  return lines.join("\n");
+}
+
+/** 第三级：单个命令（argument=必填，option=可选） */
+export function renderCommandHelp(adapterModel, command) {
+  const lines = [`Command: ${command.name}`, `Adapter: ${adapterModel.id}`, `Runtime: ${RUNTIME_LABEL[command.runtime] || command.runtime}`];
+  if (command.execution?.runtime === 'background') lines.push('Execution: background API');
+  if (command.description) lines.push("", command.description);
+  if (command.safety && command.safety !== "read") lines.push("", `Safety: ${command.safety}`);
+  const required = sortParams(command.params).filter((p) => p.required);
+  const optional = sortParams(command.params).filter((p) => !p.required);
+  lines.push("", `Arguments (required):`);
+  if (!required.length) lines.push("  (none)");
+  for (const p of required) lines.push(`  --${p.name}=<${p.type}>${p.enum?.length ? ` enum=${p.enum.join("|")}` : ""}${p.description ? ` — ${p.description}` : ""}`);
+  lines.push("", `Options:`);
+  if (!optional.length) lines.push("  (none)");
+  for (const p of optional) {
+    const def = p.default !== undefined ? ` [default=${JSON.stringify(p.default)}]` : "";
+    lines.push(`  --${p.name}=<${p.type}>${p.enum?.length ? ` enum=${p.enum.join("|")}` : ""}${def}${p.description ? ` — ${p.description}` : ""}`);
+  }
+  lines.push("", `Usage: webcli call ${command.name} --key=value`);
+  return lines.join("\n");
+}
+
+/** 模糊候选（不得自动执行，仅提示） */
+export function suggestAdapters(models, keyword) {
+  const lower = String(keyword || "").toLowerCase();
+  return models
+    .filter((m) => m.id.toLowerCase().includes(lower) || (m.match || []).some((d) => String(d).toLowerCase().includes(lower)))
+    .map((m) => m.id);
+}
+
+export async function runAdapterHelp(args) {
+  const { loadAdapterViews } = await import('./adapter-cli.js');
+  const models = (await loadAdapterViews()).map((adapter) => toAdapterHelpModel(adapter));
+  if (args.length === 1) return renderGlobalHelp(models);
+  const adapter = models.find((model) => model.id === args[0])
+    || models.find((model) => model.commands.some((command) => command.aliases?.includes(args[0])));
+  if (!adapter) throw new Error('Adapter unavailable: ' + args[0]);
+  if (args.length === 2) return renderAdapterHelp(adapter);
+  const command = adapter.commands.find((entry) => entry.id === args[1] || entry.name === args[1]
+    || entry.aliases?.includes(args[1]) || entry.aliases?.includes(adapter.id + '.' + args[1]));
+  if (!command) throw new Error('Adapter command unavailable: ' + args[1]);
+  return renderCommandHelp(adapter, command);
+}

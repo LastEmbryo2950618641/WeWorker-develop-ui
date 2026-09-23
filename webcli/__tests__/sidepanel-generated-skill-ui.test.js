@@ -21,11 +21,11 @@ describe('sidepanel generated skill UX', () => {
     expect(html).toContain('id="btnDevShowCode" hidden');
   });
 
-  it('surfaces preserved SKILL.md and generated skill draft after scaffold', () => {
+  it('keeps legacy skill editing available while generation waits for local installation', () => {
     const source = readText('extension/sidepanel/sidepanel.js');
 
-    expect(source).toContain('skillPreserved');
-    expect(source).toContain('SKILL.generated.md');
+    expect(source).toContain('安装并启用');
+    expect(source).toContain('installationReview');
     expect(source).toContain('open-skill');
     expect(source).toContain('open-generated-skill');
     expect(source).toContain("openDevEditorAtFile('skill')");

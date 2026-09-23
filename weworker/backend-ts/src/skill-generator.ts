@@ -154,15 +154,15 @@ export function generateSkillContent(adapter: ParsedAdapter): string {
   // How to Use
   lines.push('## How to Use')
   lines.push('')
-  lines.push('Call tools using `call_adapter_tool`:')
-  lines.push('- `tool_name`: The full tool name (e.g., `' + (adapter.tools[0]?.name ?? `${primaryDomain}.example_tool`) + '`)')
-  lines.push('- `args`: An object matching the parameter schema above')
+  lines.push('Call tools using `webcli call <tool_name> --args \'<json>\'`:')
+  lines.push('- `tool_name`: The exact public tool name (e.g., `' + (adapter.tools[0]?.name ?? `${primaryDomain}.example_tool`) + '`)')
+  lines.push('- `args`: A JSON object matching the parameter schema above')
   lines.push('')
 
   // Examples
   lines.push('### Examples')
   lines.push('')
-  lines.push('```json')
+  lines.push('```bash')
   for (const tool of adapter.tools) {
     lines.push(generateExample(tool))
   }
@@ -272,7 +272,7 @@ function extractParams(parameters: Record<string, unknown>): ParamInfo[] {
 }
 
 /**
- * Generate an example call_adapter_tool invocation for a tool.
+ * Generate an example webcli call invocation for a tool.
  */
 function generateExample(tool: StaticToolDef): string {
   const params = extractParams(tool.parameters)
@@ -283,7 +283,11 @@ function generateExample(tool: StaticToolDef): string {
     }
   }
   const argsStr = JSON.stringify(exampleArgs)
-  return `call_adapter_tool({ tool_name: "${tool.name}", args: ${argsStr} })`
+  return `webcli call ${shellQuote(tool.name)} --args ${shellQuote(argsStr)}`
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
 /**

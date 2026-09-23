@@ -7,6 +7,7 @@ import os from 'node:os'
 import { createLogger } from './logger.js'
 import { z } from 'zod'
 import { bridgeStatus } from './bridge-status.js'
+import { createAdapterStateRefreshHandler } from './adapter-state-refresh.js'
 import { bridgeRpcClient } from './bridge-rpc-client.js'
 import { explorationAgentCoordinator } from './exploration-agent.js'
 import {
@@ -58,8 +59,9 @@ import { parseContextLimit } from './context-window.js'
 import { isAuthorizedModelConfigRequest, resolveWebwrightModelConfig } from './webwright-model-config.js'
 import { assertAllowedWeixinBaseUrl, buildAllowedWeixinBaseUrls } from './channel-egress.js'
 import { normalizeOwnerPermissionLevel, validateOwnerUserId } from './channels/channel-permissions.js'
-import { getRegistryDefaultIcon, getRegistryIconById, parseAllAdapters } from './adapter-parser.js'
+import { clearAdapterCache, getRegistryDefaultIcon, getRegistryIconById, parseAllAdapters } from './adapter-parser.js'
 import type { StaticToolDef } from './adapter-parser.js'
+import { refreshDesktopAdapterSkills, toggleDesktopAdapter } from '../../../webcli/adapter-desktop.js'
 import { findAdaptersDirectory, resolveToolsForAdapter } from './adapter-tool-list.js'
 import { getOfficialScenarioDefs, resolveSiteScenarios } from './site-scenarios.js'
 import { createUserScenario, deleteUserScenario, getCustomScenariosForSite, hasOfficialScenario, resetUserScenario, saveUserScenario } from './user-scenarios.js'
@@ -75,7 +77,6 @@ import {
   saveSkillDirectoryResources,
   DuplicateSkillNameError,
 } from './custom-skills.js'
-import { writeScaffoldFromSiteMemory } from '../../../webcli/adapter-scaffold.js'
 import { resolveWebcliEntry } from './webcli-path.js'
 import { fileURLToPath } from 'node:url'
 import { execFile } from 'node:child_process'
@@ -217,6 +218,13 @@ bridgeStatus.onAdapterScaffoldGenerated(({ siteKey }) => {
     log.error(`Failed to hot-reload generated adapter ${siteKey}: ${e instanceof Error ? e.message : String(e)}`)
   })
 })
+const handleAdapterStateRefresh = createAdapterStateRefreshHandler({
+  clearCache: clearAdapterCache,
+  refreshSkills: () => refreshDesktopAdapterSkills(SKILLS_DIR),
+  broadcast: (event) => broadcastSSE(event),
+})
+
+bridgeStatus.onAdapterStateChanged(handleAdapterStateRefresh)
 
 const app = express()
 const HTTP_AUTH_TOKEN = process.env.WEWORKER_HTTP_TOKEN || ''
@@ -317,7 +325,7 @@ function hostToOpenBrowserOrigins(rawHost: string): string[] {
 function buildDefaultOpenBrowserAllowedOrigins(): string[] {
   const origins = new Set<string>()
   for (const [adapterId, adapter] of parseAllAdapters()) {
-    if (!getSiteEnabled(adapterId, adapter.defaultEnabled)) continue
+    if (!getSiteEnabled(adapterId, adapter.defaultEnabled, adapter.managed?.enabled)) continue
     const homepageOrigin = normalizeOpenBrowserAllowedOrigin(adapter.homepageUrl)
     if (homepageOrigin) origins.add(homepageOrigin)
     for (const match of adapter.match || []) {
@@ -1140,7 +1148,7 @@ app.get('/sites', (_req, res) => {
   const settings = getSettings()
   const customTP = settings.custom_test_prompts || {}
   const sites = [...allAdapters.values()].map(a => {
-    const enabled = getSiteEnabled(a.id, a.defaultEnabled)
+    const enabled = getSiteEnabled(a.id, a.defaultEnabled, a.managed?.enabled)
     // Visibility: user setting takes precedence; if no user setting, use registry default
     const userToggle = settings.site_toggles[a.id]
     const visible = userToggle === undefined
@@ -1169,8 +1177,9 @@ app.get('/sites', (_req, res) => {
     customSkillCount: customSkills.length,
     scenarioCount: scenarios.length,
     enabled,
-    visible,
+    visible: enabled && visible,
     hidden: a.hidden,
+    managed: a.managed,
     testPrompts: customTP[a.id] != null ? customTP[a.id] : a.testPrompts,
     customSkills,
     scenarios: scenarios.map((sc) => ({
@@ -1188,18 +1197,19 @@ app.get('/sites', (_req, res) => {
   res.json(sites)
 })
 
-app.post('/sites/:id/toggle', (req, res) => {
+app.post('/sites/:id/toggle', async (req, res) => {
   const adapterId = req.params.id
-  const allAdapters = parseAllAdapters()
-  if (!allAdapters.has(adapterId)) {
-    res.status(404).json({ detail: 'Site not found' })
+  let enabled: boolean
+  try {
+    if (!parseAllAdapters().has(adapterId)) {
+      res.status(404).json({ detail: 'Site not found' })
+      return
+    }
+    enabled = toggleDesktopAdapter(adapterId) ?? toggleSite(adapterId)
+    await scheduleAdapterRuntimeReload(adapterId)
+  } catch (error) {
+    res.status(409).json({ detail: error instanceof Error ? error.message : 'Adapter selection could not be refreshed' })
     return
-  }
-  const enabled = toggleSite(adapterId)
-  const adapter = allAdapters.get(adapterId)
-  if (adapter) {
-    // Re-install skills for this adapter via webcli
-    runWebcli(['install', '--skills', adapterId, '--target', SKILLS_DIR])
   }
   res.json({ id: adapterId, enabled })
 })
@@ -1210,7 +1220,8 @@ app.post('/sites/welcome-visibility', (req, res) => {
   const adapterIds = Array.isArray(ids)
     ? ids.filter((id) => allAdapters.has(id))
     : [...allAdapters.keys()]
-  setAllEnabledSitesWelcomeVisibility(adapterIds, visible === true)
+  const managedStates = new Map([...allAdapters.values()].filter(a => a.managed).map(a => [a.id, a.managed!.enabled]))
+  setAllEnabledSitesWelcomeVisibility(adapterIds, visible === true, managedStates)
   res.json({ ok: true, visible: visible === true, ids: adapterIds })
 })
 
@@ -1222,7 +1233,7 @@ app.post('/sites/:id/visibility', (req, res) => {
     res.status(404).json({ detail: 'Site not found' })
     return
   }
-  setSiteVisibility(adapterId, visible)
+  setSiteVisibility(adapterId, visible, allAdapters.get(adapterId)?.managed?.enabled)
   res.json({ id: adapterId, visible })
 })
 
@@ -1465,7 +1476,7 @@ app.get('/tools', (_req, res) => {
   const allAdapters = parseAllAdapters()
   const adaptersDir = findAdaptersDirectory()
   const tools = [...allAdapters.values()]
-    .filter(a => getSiteEnabled(a.id, a.defaultEnabled))
+    .filter(a => getSiteEnabled(a.id, a.defaultEnabled, a.managed?.enabled))
     .flatMap(a => resolveToolsForAdapter(a, adaptersDir))
   res.json({ tools })
 })
@@ -1578,20 +1589,8 @@ app.post('/exploration/runs/:taskId/save', (req, res) => {
 
 app.post('/exploration/runs/:taskId/scaffold', async (req, res) => {
   try {
-    const saved = explorationAgentCoordinator.saveMemory(req.params.taskId)
-    if (!saved.siteMemory) throw new Error('探索结果尚未保存')
-    const result = writeScaffoldFromSiteMemory(saved.siteMemory)
-    await scheduleAdapterRuntimeReload(saved.siteMemory.siteKey)
-    let browserRefresh: Record<string, unknown> | null = null
-    let browserRefreshError: string | null = null
-    try {
-      browserRefresh = await bridgeRpcClient.refreshAdapterTabs(saved.siteMemory.siteKey)
-    } catch (error) {
-      browserRefreshError = error instanceof Error ? error.message : String(error)
-    }
-    const scaffoldResult = { ...result, browserRefresh, browserRefreshError }
-    const run = explorationAgentCoordinator.recordScaffoldResult(req.params.taskId, scaffoldResult)
-    res.json({ run, result: scaffoldResult })
+    const run = await explorationAgentCoordinator.startGeneration(req.params.taskId, undefined, 'quick')
+    res.status(202).json({ run })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     res.status(message === 'EXPLORATION_RUN_NOT_FOUND' ? 404 : 409).json({ detail: message })
@@ -1600,7 +1599,7 @@ app.post('/exploration/runs/:taskId/scaffold', async (req, res) => {
 
 const explorationGenerationInputSchema = z.object({
   goal: z.string().trim().min(1).max(2_000).optional(),
-  mode: z.enum(['agent', 'classic']).optional(),
+  mode: z.enum(['agent', 'classic', 'quick']).optional(),
 })
 
 const explorationGenerationResumeInputSchema = z.object({
@@ -1730,9 +1729,10 @@ app.post('/exploration/runs/:taskId/generation/cancel', async (req, res) => {
 
 app.post('/exploration/runs/:taskId/generation/publish', async (req, res) => {
   try {
-    const run = await explorationAgentCoordinator.publishGeneration(req.params.taskId)
+    const approval = z.object({ reviewId: z.string().regex(/^[a-f0-9]{64}$/).optional(), acceptChanges: z.boolean().optional() }).strict().parse(req.body || {})
+    const run = await explorationAgentCoordinator.publishGeneration(req.params.taskId, approval)
     const siteKey = typeof run.generationRun?.siteKey === 'string' ? run.generationRun.siteKey : ''
-    if (siteKey) await scheduleAdapterRuntimeReload(siteKey)
+    if (siteKey && run.generationRun?.status === 'completed') await scheduleAdapterRuntimeReload(siteKey)
     res.json(run)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -1790,9 +1790,8 @@ app.post('/explore/scaffold', async (req, res) => {
       res.status(404).json({ detail: 'site memory not found' })
       return
     }
-    const result = writeScaffoldFromSiteMemory(memory)
-    await scheduleAdapterRuntimeReload(memory.siteKey || site)
-    res.json(result)
+    const run = await bridgeRpcClient.startGenerationRun({ siteKey: memory.siteKey, memory: memory as unknown as Record<string, unknown>, goal: '快速生成并验证查询工具', tabId: null, mode: 'quick' })
+    res.status(202).json({ run, pendingInstallation: true })
   } catch (e) {
     res.status(500).json({ detail: e instanceof Error ? e.message : String(e) })
   }
@@ -2104,7 +2103,7 @@ app.get('/health-check/test-prompts', (_req, res) => {
   const customTP = settings.custom_test_prompts || {}
   const prompts: Array<{ siteId: string; siteName: string; prompt: string; toolCount: number; toolNames: string[] }> = []
   for (const [id, adapter] of allAdapters) {
-    if (!getSiteEnabled(id, adapter.defaultEnabled)) continue
+    if (!getSiteEnabled(id, adapter.defaultEnabled, adapter.managed?.enabled)) continue
     const testPrompts = customTP[id] != null ? customTP[id]! : adapter.testPrompts
     if (testPrompts.length === 0) continue
     // Return all test prompts for each site
@@ -2595,7 +2594,7 @@ app.post('/works/:id/chat', async (req, res) => {
     // Build the set of enabled adapter IDs from config
     const allAdapters = parseAllAdapters()
     enabledAdapterIds = new Set(
-      [...allAdapters.entries()].filter(([id, a]) => getSiteEnabled(id, a.defaultEnabled)).map(([id]) => id)
+      [...allAdapters.entries()].filter(([id, a]) => getSiteEnabled(id, a.defaultEnabled, a.managed?.enabled)).map(([id]) => id)
     )
     memoryAdapters = [...allAdapters.values()].map((adapter) => ({
       id: adapter.id,

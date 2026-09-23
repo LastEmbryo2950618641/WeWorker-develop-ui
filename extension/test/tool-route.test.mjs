@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import vm from "node:vm";
-import { runServiceWorkerInContext } from "./helpers/adapter-test-loader.mjs";
+import { runServiceWorkerInContext } from "./helpers/service-worker-test-loader.mjs";
 
 const ROOT = process.cwd();
 
@@ -21,7 +21,7 @@ function makeEvent() {
   };
 }
 
-function loadServiceWorker({ tabs = [], tabResponse = null, staticAdapters = {} } = {}) {
+function loadServiceWorker({ tabs = [], tabResponse = null, staticAdapters = {}, managedCatalog = null } = {}) {
   const runtimeOnMessage = makeEvent();
   const sentToTabs = [];
   const nativeMessages = [];
@@ -171,6 +171,11 @@ function loadServiceWorker({ tabs = [], tabResponse = null, staticAdapters = {} 
 
   runServiceWorkerInContext(context, { repoRoot: ROOT });
   context.requestBridge = async () => null;
+  if (managedCatalog) {
+    vm.runInContext("bridgeCapabilities = ['adapter_catalog_v1']", context);
+    context.requestBridge = async () => ({ ok: true, result: managedCatalog });
+    context.getHostAdapterRuntime = () => ({ execute: async (_tab, _manifest, _url, call) => call() });
+  }
 
   const flushStaticRoutes = async () => {
     await context.loadStaticToolRoutes();
@@ -201,8 +206,48 @@ function loadServiceWorker({ tabs = [], tabResponse = null, staticAdapters = {} 
     return nativeMessages.at(-1);
   };
 
-  return { registerTools, callNativeTool, listNativeTools, sentToTabs, flushStaticRoutes };
+  return { registerTools, callNativeTool, listNativeTools, sentToTabs, flushStaticRoutes, context };
 }
+
+test("managed background calls select the offscreen runner without opening a site tab", async () => {
+  const manifest = { name: 'fixture', match: ['example.com'], runtime_allowed_hosts: ['api.example.org'],
+    _hostSnapshot: { name: 'fixture', profile: 'public', digest: 'fixture-digest' },
+    commands: [{ id: 'read-item', aliases: ['read_item'], runtime: 'extension', safety: 'read', execution: {type:'api',runtime:'background'} }] };
+  const worker = loadServiceWorker({ managedCatalog: { available: true, managedNames: ['fixture'], adapters: [manifest] } });
+  const calls = [];
+  worker.context.getManagedBackgroundRuntime = () => ({ execute: async (...args) => { calls.push(plain(args)); return 'fixture-result'; } });
+  const result = await worker.callNativeTool('fixture.read_item', {count:'007'});
+  assert.equal(result.result, 'fixture-result');
+  assert.equal(worker.sentToTabs.length, 0);
+  assert.equal(calls[0][1].id, 'read-item');
+  assert.deepEqual(calls[0][2], {count:'007'});
+  assert.deepEqual(calls[0][3].declaredHosts, ['example.com','api.example.org']);
+});
+
+test("managed helper targets must remain in the current package's declared hosts", () => {
+  const { context } = loadServiceWorker();
+  const call = {declaredHosts:['app.example.com','*.api.example.org']};
+  for (const payload of [{url:'https://app.example.com/path'}, {domain:'.api.example.org'}, {hostname:'one.api.example.org'}]) {
+    assert.doesNotThrow(() => context.assertManagedRuntimeRequest('backend_fetch',payload,call));
+  }
+  for (const payload of [{url:'https://example.com/'}, {hostname:'other.example.org'}, {domains:['app.example.com','other.example.org']}, {url:'file:///fixture'}, {url:'https://user:placeholder@app.example.com/'}]) {
+    assert.throws(() => context.assertManagedRuntimeRequest('backend_fetch',payload,call));
+  }
+});
+
+test("managed command aliases dispatch the canonical handler with the same write gate", async () => {
+  const manifest = { name: 'fixture', match: ['example.com'],
+    _hostSnapshot: { name: 'fixture', profile: 'public', digest: 'fixture-digest' },
+    commands: [{ id: 'write-item', aliases: ['write_item'], runtime: 'extension', safety: 'write' }] };
+  const worker = loadServiceWorker({ tabs: [{ id: 7, url: 'https://example.com/' }],
+    managedCatalog: { available: true, managedNames: ['fixture'], adapters: [manifest] } });
+  const blocked = await worker.callNativeTool('fixture.write_item');
+  assert.match(JSON.stringify(blocked), /confirmation/);
+  assert.equal(worker.sentToTabs.length, 0);
+  const result = await worker.callNativeTool('fixture.write_item', { __confirmed: true, count: '007' });
+  assert.equal(result.result.toolName, 'fixture.write-item');
+  assert.deepEqual(plain(worker.sentToTabs.at(-1).message.args), { __confirmed: true, count: '007' });
+});
 
 function loadInjector() {
   const runtimeMessages = [];

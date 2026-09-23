@@ -101,6 +101,34 @@ function createOrchestratorDeps(overrides = {}) {
 }
 
 describe('generation orchestrator (agent mode)', () => {
+  it('revalidates a repaired draft after runtime failure before allowing completion', async () => {
+    const store = new GenerationRunStore({ rootDir: makeTmpDir('webcli-runtime-repair-') });
+    const run = GenerationRun.create({ store, siteKey: MEMORY.siteKey, goal: 'query records' });
+    const runtimeValidator = vi.fn()
+      .mockResolvedValueOnce({ passed: false, errors: [{ code: 'OUTPUT_REQUIRED_PATH_MISSING' }] })
+      .mockResolvedValueOnce({ passed: true, errors: [] });
+    const call = (name, args = {}) => ({ type: 'tool_call', name, arguments: args });
+    const model = vi.fn()
+      .mockResolvedValueOnce(planToolCall())
+      .mockResolvedValueOnce(call('scaffold_adapter_draft'))
+      .mockResolvedValueOnce(call('validate_adapter_draft'))
+      .mockResolvedValueOnce(call('validate_adapter_runtime'))
+      .mockResolvedValueOnce(call('write_draft_file', {
+        path: 'webcli-generated/tools/search_records.generated.js', content: '// repaired output mapping', reason: 'repair output',
+      }))
+      .mockResolvedValueOnce(call('validate_adapter_runtime'))
+      .mockResolvedValueOnce(call('validate_adapter_draft'))
+      .mockResolvedValueOnce(call('validate_adapter_runtime'))
+      .mockResolvedValueOnce(call('finish_run', { summary: 'verified repair' }))
+      .mockResolvedValueOnce({ type: 'final', content: 'done' });
+    const result = await runGenerationOrchestrator(createOrchestratorDeps({ run, store, model, runtimeValidator }));
+    expect(result.status).toBe(GENERATION_STATUSES.AWAITING_APPROVAL);
+    expect(runtimeValidator).toHaveBeenCalledTimes(2);
+    const trace = JSON.stringify(store.readTrace(run.id));
+    expect(trace).toContain('STATIC_VALIDATION_REQUIRED');
+    expect(trace).not.toContain('INVALID_GENERATION_TRANSITION');
+  });
+
   it('does not reset the model-call budget when resuming an output-limit pause', async () => {
     const store = new GenerationRunStore({ rootDir: makeTmpDir('webcli-output-resume-budget-') });
     const run = GenerationRun.create({ store, siteKey: MEMORY.siteKey, goal: 'bounded resume', budget: { maxModelCalls: 1 } });

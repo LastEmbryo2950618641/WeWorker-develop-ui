@@ -3,12 +3,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
 
 from webwright.server.records import atomic_write_json
 from webwright.server.toolkit_store import ToolkitStore
+from webwright.server.publisher import read_distribution
 from webwright.runtime_launcher import RuntimeLauncher
 from webwright.tool_runtime.runner import ToolRunner
 from webwright.tool_runtime.state import FileRuntimeStore
@@ -28,8 +30,13 @@ async def run_debug(spec: dict[str, Any]) -> dict[str, Any]:
     if spec["channel"] == "formal":
         runtime_store = FileRuntimeStore(toolkit_dir / "runtime.json")
         before_runtime = runtime_store.read()
-        skill_scripts_dir = toolkit_dir / toolkit_id.replace("_", "-") / "scripts"
-        output = await _run_formal_cli(spec, skill_scripts_dir, toolkit_dir / "runtime.json")
+        adapter_root = Path(spec["adapter_root"])
+        package = read_distribution(adapter_root)
+        if package["distribution_hash"] != spec["distribution_hash"]:
+            raise ValueError("Adapter snapshot changed before validation.")
+        output = await _run_formal_cli(spec, adapter_root, toolkit_dir / "runtime.json")
+        if read_distribution(adapter_root)["distribution_hash"] != spec["distribution_hash"]:
+            raise ValueError("Adapter snapshot changed during validation.")
     else:
         store = ToolkitStore(toolkit_root)
         before_runtime = store.read_runtime(toolkit_id)
@@ -47,7 +54,10 @@ async def run_debug(spec: dict[str, Any]) -> dict[str, Any]:
     result = {
         "ok": bool(output.get("ok")),
         "result": output.get("data") if output.get("ok") else {},
-        "error": "" if output.get("ok") else str((output.get("error") or {}).get("message") or "Tool failed."),
+        "error": "" if output.get("ok") else str(
+            (output.get("error") or {}).get("message", "Tool failed.")
+            if isinstance(output.get("error"), dict) else output.get("error") or "Tool failed."
+        ),
         "before_page": before_page,
         "after_page": output.get("page") or {"url": "", "title": ""},
     }
@@ -56,15 +66,23 @@ async def run_debug(spec: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _run_formal_cli(
-    spec: dict[str, Any], toolkit_dir: Path, runtime_path: Path
+    spec: dict[str, Any], adapter_root: Path, runtime_path: Path
 ) -> dict[str, Any]:
     parameters = spec.get("parameters") or {}
     launcher = RuntimeLauncher()
-    command = launcher.script_command(
-        toolkit_dir / "toolkit.py",
-        [str(spec["tool_id"]).replace("_", "-")],
-    )
-    env = launcher.internal_worker_environment({
+    node = os.environ.get("WEWORKER_WEBCLI_NODE")
+    entry = os.environ.get("WEWORKER_WEBCLI_ENTRY")
+    if not node or not entry or not Path(node).is_file() or not Path(entry).is_file():
+        raise RuntimeError("宿主 WebCLI 不可用，请从 WeWorker 启动网站探索服务。")
+    command = [
+        node, entry, "call", f"{adapter_root.name}.{str(spec['tool_id']).replace('_', '-')}",
+        "--args", json.dumps(parameters, ensure_ascii=False), "--output-format=json",
+    ]
+    env = launcher.external_process_environment({
+        "ELECTRON_RUN_AS_NODE": "1",
+        "WEWORKER_ADAPTERS_DIR": str(adapter_root.parent),
+        "WEWORKER_TOOLKIT_RUNTIME": launcher.executable,
+        "WEWORKER_TOOLKIT_RUNTIME_MODE": "embedded" if launcher.frozen else "python",
         "PYTHONIOENCODING": "utf-8",
         "WEBWRIGHT_CDP_URL": str(spec["cdp_url"]),
         "WEBWRIGHT_PARAMETERS_STDIN": "1",
@@ -77,19 +95,20 @@ async def _run_formal_cli(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         env=env,
-        cwd=str(Path(spec["result_path"]).resolve().parent),
+        cwd=str(adapter_root),
     )
-    stdout, stderr = await process.communicate(
-        json.dumps(parameters, ensure_ascii=False).encode("utf-8")
-    )
+    stdout, stderr = await process.communicate()
     if stderr:
         print(stderr.decode("utf-8", errors="replace"), end="", file=sys.stderr)
-    lines = [line for line in stdout.decode("utf-8").splitlines() if line.strip()]
-    if not lines:
+    text = stdout.decode("utf-8").strip()
+    if not text:
         raise RuntimeError(f"Published CLI exited with code {process.returncode} without JSON output.")
-    output = json.loads(lines[-1])
+    output = json.loads(text)
     if not isinstance(output, dict):
         raise ValueError("Published CLI output must be a JSON object.")
+    if process.returncode != 0:
+        output["ok"] = False
+        output.setdefault("error", {"message": f"WebCLI exited with code {process.returncode}."})
     return output
 
 

@@ -938,6 +938,7 @@ export default function ToolPackageEditor({
   const [workspaceTab, setWorkspaceTab] = useState(WORKSPACE_TAB_SKILLS)
   const openSessionId = useToolPackagePageStore((s) => s.openSessionId)
   const requestedWorkspaceTab = useToolPackagePageStore((s) => s.workspaceTab)
+  const requestedPublicSkill = useToolPackagePageStore((s) => s.selectedPublicSkillName)
   const [selectedToolKey, setSelectedToolKey] = useState('')
 
   React.useEffect(() => {
@@ -1346,13 +1347,13 @@ export default function ToolPackageEditor({
   useEffect(() => {
     if (selectedToolKey) return
     const preferred = isPublicScope
-      ? (catalogPublicCustomSkills[0] || catalogPublicBuiltinSkills[0])
+      ? (catalogPublicCustomSkills.find((skill) => skill.id === requestedPublicSkill || skill.name === requestedPublicSkill) || catalogPublicCustomSkills[0] || catalogPublicBuiltinSkills[0])
       : (catalogCustomSkills.find((tool) => tool.siteId === site.id)
         || catalogOfficialSkills.find((tool) => tool.siteId === site.id)
         || catalogCustomSkills[0]
         || catalogOfficialSkills[0])
     if (preferred) setSelectedToolKey(toolKey(preferred))
-  }, [catalogCustomSkills, catalogOfficialSkills, catalogPublicBuiltinSkills, catalogPublicCustomSkills, isPublicScope, selectedToolKey, site.id])
+  }, [catalogCustomSkills, catalogOfficialSkills, catalogPublicBuiltinSkills, catalogPublicCustomSkills, isPublicScope, selectedToolKey, site.id, requestedPublicSkill])
 
   useEffect(() => {
     if (!selectedToolKey) return

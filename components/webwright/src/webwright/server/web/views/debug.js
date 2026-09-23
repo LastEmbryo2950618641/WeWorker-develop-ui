@@ -11,24 +11,14 @@ import { openLightbox } from "../components/lightbox.js";
 let debugStream = { debugRunId: null, close: null };
 
 export async function renderDebug(container) {
-  const tool = await api.getTool(state.toolkitId, state.toolId);
+  const exportStatus = await api.getExportStatus(state.toolkitId);
+  const tool = exportStatus.tools.find(item => item.tool_id === state.toolId);
   if (!tool) {
-    container.innerHTML = `<div class="ws-empty">请选择一个 Tool</div>`;
+    container.innerHTML = `<div class="ws-empty">请选择一个已有正式产物的 Tool。</div>`;
     return;
   }
-  const [slots, runs, exportStatus] = await Promise.all([
-    api.getSlots(state.toolkitId, tool.tool_id),
-    api.listDebugRuns(state.toolkitId, tool.tool_id),
-    api.getExportStatus(state.toolkitId),
-  ]);
-
-  if (!slots.formal) {
-    container.innerHTML = `
-      <div class="ws-empty">该 Tool 尚未发布正式版本，请先在开发工作区开发并应用到 Adapter。</div>`;
-    return;
-  }
-
-  const activeSlot = slots.formal;
+  const runs = await api.listDebugRuns(state.toolkitId, tool.tool_id);
+  const activeSlot = tool;
   const running = runs.find((run) => ["queued", "running"].includes(run.status));
   const blocked = isBusy() && !running;
 
@@ -58,7 +48,7 @@ export async function renderDebug(container) {
       <div class="debug-right">
         <div class="dev-card">
           <h3>Debug Run 历史</h3>
-          ${runs.length ? runs.map((r) => runRow(r, exportStatus.artifact_hash)).join("") : `<div class="slot-empty">暂无运行记录</div>`}
+          ${runs.length ? runs.map((r) => runRow(r, exportStatus.distribution_hash)).join("") : `<div class="slot-empty">暂无运行记录</div>`}
         </div>
       </div>
     </div>
@@ -68,7 +58,7 @@ export async function renderDebug(container) {
 
   container.querySelector("#runTool")?.addEventListener("click", async () => {
     const params = collectParams(container, activeSlot.parameters_schema);
-    const run = await api.runDebugTool(state.toolkitId, tool.tool_id, "formal", params);
+    const run = await api.runDebugTool(state.toolkitId, tool.tool_id, "formal", params, exportStatus.distribution_hash);
     await refreshActivity();
     watchDebugRun(run.debug_run_id, run.events_url);
     toast("已提交运行");
@@ -87,7 +77,7 @@ export async function renderDebug(container) {
     button.addEventListener("click", async () => {
       const previous = runs.find((run) => run.debug_run_id === button.dataset.repeatRun);
       if (!previous) return;
-      const run = await api.runDebugTool(state.toolkitId, tool.tool_id, previous.channel || "formal", previous.parameters);
+      const run = await api.runDebugTool(state.toolkitId, tool.tool_id, previous.channel || "formal", previous.parameters, exportStatus.distribution_hash);
       await refreshActivity();
       watchDebugRun(run.debug_run_id, run.events_url);
       toast("已按原参数重复运行");
@@ -105,7 +95,7 @@ export async function renderDebug(container) {
 }
 
 function runRow(r, currentArtifactHash) {
-  const artifactMatch = r.channel === "formal" && r.artifact_hash === currentArtifactHash;
+  const artifactMatch = r.channel === "formal" && r.distribution_hash === currentArtifactHash;
   return `
     <details class="run-item">
       <summary>

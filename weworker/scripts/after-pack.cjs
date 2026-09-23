@@ -1,5 +1,6 @@
 const { execFileSync } = require('child_process')
 const path = require('path')
+const { validatePackagedClaude } = require('./validate-claude-native.cjs')
 
 function buildAdHocSignCommands(appPath) {
   return [
@@ -8,7 +9,13 @@ function buildAdHocSignCommands(appPath) {
   ]
 }
 
-function afterPack(context, run = execFileSync) {
+function afterPack(context, run = execFileSync, validate = validatePackagedClaude) {
+  const arch = typeof context.arch === 'string'
+    ? context.arch : { 0: 'ia32', 1: 'x64', 2: 'armv7l', 3: 'arm64', 4: 'universal' }[context.arch]
+  const resourcesPath = context.electronPlatformName === 'darwin'
+    ? path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, 'Contents', 'Resources')
+    : path.join(context.appOutDir, 'resources')
+  validate(resourcesPath, context.electronPlatformName, arch)
   if (context.electronPlatformName !== 'darwin') return
 
   const appPath = path.join(

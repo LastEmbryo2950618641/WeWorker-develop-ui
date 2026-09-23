@@ -1,10 +1,11 @@
 import fs from 'node:fs'
+import { symlinkSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { syncPackageExtension } from '../scripts/prepare-package-extension.js'
+import { checkPackageResources, syncPackageExtension } from '../scripts/prepare-package-extension.js'
 
 const tempDirs = []
 
@@ -15,6 +16,27 @@ afterEach(() => {
 })
 
 describe('prepare package extension', () => {
+  it('copies exactly the prepared profile and detects stale package content before packaging', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'webcli-profile-pack-'))
+    tempDirs.push(root)
+    const webcliDir = path.join(root, 'webcli')
+    const sourceExtensionDir = path.join(root, 'prepared/extension')
+    const sourceBuiltinDir = path.join(root, 'prepared/adapters')
+    fs.mkdirSync(sourceExtensionDir, { recursive: true })
+    fs.mkdirSync(sourceBuiltinDir, { recursive: true })
+    fs.writeFileSync(path.join(sourceExtensionDir, 'manifest.json'), '{"version":"1"}')
+    fs.writeFileSync(path.join(sourceBuiltinDir, '.profile.json'), JSON.stringify({ schema_version: 1, profile: 'internal', adapters: [], legacy: [] }))
+    fs.mkdirSync(path.join(webcliDir, 'adapters/stale'), { recursive: true })
+    const options = { webcliDir, sourceExtensionDir, sourceBuiltinDir }
+    syncPackageExtension(options)
+    expect(fs.readdirSync(path.join(webcliDir, 'adapters'))).toEqual(['.profile.json'])
+    expect(() => checkPackageResources(options)).not.toThrow()
+    fs.writeFileSync(path.join(webcliDir, 'extension/manifest.json'), '{"version":"2"}')
+    expect(() => checkPackageResources(options)).toThrow(/content is stale/)
+    fs.writeFileSync(path.join(sourceBuiltinDir, '.profile.json'), '{}')
+    expect(() => syncPackageExtension(options)).toThrow(/metadata/)
+    expect(fs.readFileSync(path.join(webcliDir, 'extension/manifest.json'), 'utf8')).toBe('{"version":"2"}')
+  })
   it('copies the sibling extension into the webcli package without dependencies or scaffold artifacts', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'webcli-pack-'))
     tempDirs.push(root)
@@ -46,3 +68,18 @@ describe('prepare package extension', () => {
     expect(fs.existsSync(path.join(webcliDir, 'extension', 'stale'))).toBe(false)
   })
 })
+  it('rejects linked package resources instead of silently omitting or following them', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'webcli-package-link-'))
+    tempDirs.push(root)
+    const webcliDir = path.join(root, 'webcli')
+    const sourceExtensionDir = path.join(root, 'prepared/extension')
+    const sourceBuiltinDir = path.join(root, 'prepared/adapters')
+    const linkedTarget = path.join(root, 'linked-target')
+    fs.mkdirSync(path.join(sourceExtensionDir, 'regular'), { recursive: true })
+    fs.mkdirSync(sourceBuiltinDir, { recursive: true })
+    fs.mkdirSync(linkedTarget, { recursive: true })
+    fs.writeFileSync(path.join(linkedTarget, 'manifest.json'), '{"version":"1"}')
+    fs.writeFileSync(path.join(sourceBuiltinDir, '.profile.json'), JSON.stringify({ schema_version: 1, profile: 'public', adapters: [], legacy: [] }))
+    symlinkSync(linkedTarget, path.join(sourceExtensionDir, 'linked'), process.platform === 'win32' ? 'junction' : 'dir')
+    expect(() => syncPackageExtension({ webcliDir, sourceExtensionDir, sourceBuiltinDir })).toThrow(/symbolic link/)
+  })

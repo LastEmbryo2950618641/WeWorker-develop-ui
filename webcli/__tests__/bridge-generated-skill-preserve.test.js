@@ -9,13 +9,13 @@ function readText(relPath) {
 }
 
 describe('bridge AI adapter generation compatibility', () => {
-  it('preserves existing adapter-local SKILL.md in legacy AI generation path', () => {
+  it('routes legacy AI generation to a task without rewriting package-local Skills', () => {
     const source = readText('webcli/bridge.js');
-
-    expect(source).toContain("const skillPath = path.join(adapterDir, 'SKILL.md')");
-    expect(source).toContain('fs.existsSync(skillPath)');
-    expect(source).toContain('preserving adapter-local file');
-    expect(source).toContain('generateSkillMd({ siteKey, adapterCode, toolNames })');
+    const start = source.indexOf('  async _handleGenerateAdapterWithAI(');
+    const handler = source.slice(start, source.indexOf('  _send(', start));
+    expect(handler).toContain('this._handleStartGenerationRun');
+    expect(handler).not.toContain('writeFileSync');
+    expect(handler).not.toContain('generateSkillMd');
   });
 
   it('restricts extension adapter writes to generated adapter artifacts', () => {
