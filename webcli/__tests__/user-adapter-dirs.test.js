@@ -7,7 +7,7 @@ import { join } from 'path'
 // Mock os + fs before importing paths
 vi.mock('os', async (importOriginal) => {
   const actual = await importOriginal()
-  return { ...actual, homedir: vi.fn(() => 'C:/Users/mock') }
+  return { ...actual, homedir: vi.fn(() => process.platform === 'win32' ? 'C:/Users/weworker-test' : '/home/weworker-test') }
 })
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal()
@@ -35,22 +35,22 @@ async function resolveInstallId(adapterId) {
 
 describe('resolveUserAdaptersDir', () => {
   it('defaults to ~/.weworker/adapters when no existing dir', () => {
-    expect(norm(resolveUserAdaptersDir())).toBe('C:/Users/mock/.weworker/adapters')
+    expect(norm(resolveUserAdaptersDir())).toBe((process.platform === 'win32' ? 'C:/Users/weworker-test/.weworker/adapters' : '/home/weworker-test/.weworker/adapters'))
   })
 
   it('prefers ~/.weworker/adapters when it exists', () => {
     vi.mocked(existsSync).mockImplementation((p) => norm(p).includes('.weworker/adapters'))
-    expect(norm(resolveUserAdaptersDir())).toBe('C:/Users/mock/.weworker/adapters')
+    expect(norm(resolveUserAdaptersDir())).toBe((process.platform === 'win32' ? 'C:/Users/weworker-test/.weworker/adapters' : '/home/weworker-test/.weworker/adapters'))
   })
 
   it('keeps the stable write root when only the legacy directory exists', () => {
     vi.mocked(existsSync).mockImplementation((p) => norm(p).includes('.webcli/adapters'))
-    expect(norm(resolveUserAdaptersDir())).toBe('C:/Users/mock/.weworker/adapters')
+    expect(norm(resolveUserAdaptersDir())).toBe((process.platform === 'win32' ? 'C:/Users/weworker-test/.weworker/adapters' : '/home/weworker-test/.weworker/adapters'))
   })
 
   it('uses weworker path as default even when neither exists', () => {
     vi.mocked(existsSync).mockReturnValue(false)
-    expect(norm(resolveUserAdaptersDir())).toBe('C:/Users/mock/.weworker/adapters')
+    expect(norm(resolveUserAdaptersDir())).toBe((process.platform === 'win32' ? 'C:/Users/weworker-test/.weworker/adapters' : '/home/weworker-test/.weworker/adapters'))
   })
 })
 
