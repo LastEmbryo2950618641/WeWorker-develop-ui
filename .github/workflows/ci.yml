@@ -65,6 +65,13 @@ jobs:
         working-directory: webcli
         run: npm ci
 
+      - name: Install Electron dependencies
+        working-directory: weworker
+        run: npm ci
+
+      - name: Prepare public Adapter resources
+        run: node weworker/scripts/prepare-build.cjs
+
       - name: Run WebCLI tests
         working-directory: webcli
         run: npm run test:ci
@@ -80,10 +87,6 @@ jobs:
       - name: Run Backend tests
         working-directory: weworker/backend-ts
         run: npm run test:ci
-
-      - name: Install Electron dependencies
-        working-directory: weworker
-        run: npm ci
 
       - name: Run Electron and website exploration agent integration tests
         working-directory: weworker
