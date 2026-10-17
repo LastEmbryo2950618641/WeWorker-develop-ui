@@ -2,6 +2,8 @@
 
 - 2026-10-17（PR #91 分支同步）：将含 #106 修复的最新 develop 合入 `chore/remove-legacy-extension-adapters`（无冲突），check-public-config 台账 fixture 随 legacy 目录移除精简（去掉 `extension/adapters/index.json` 桩）。worktree 聚焦复验：真实仓库校验通过、scripts 测试 4 项、webcli 两文件 37 项（即 #106 所修用例）、扩展 tool-route 与 wecli-runtime-helper 33 项全部通过。
 
+- 2026-10-17（API 探索 CLI 规划）：新增 `docs/api_exploration_cli_handoff.md`，记录 develop/dev-1.1.0 与未合入 PR #106/#91 的基线快照、拟建集成/功能分支、上游同步与冲突处理流程、验收清单及交接日志。当前仅完成分支核对和文档建立，尚未建分支、合并或实现 CLI；#91 是否纳入及最终发布目标待明确。
+
 - 2026-10-17：修复 PR 上「配置一致性检查」存量失败：webcli 自 10-15 起由发布脚本按 npm 独立发版节奏升至 1.0.4，check-public-config 不再要求 webcli/package.json 等于桌面应用版本，改为校验 webcli 自身发布台账（package.json、version.json、.claude-plugin/plugin.json 与 SKILL.md frontmatter 四处一致）。新增临时目录 fixture 聚焦测试 2 项（版本独立不报错、台账漂移逐文件报错），真实仓库校验与 scripts 测试 4 项通过；未改动发布脚本与 workflow 本身，Release Latest 在 develop 上的历史失败未在本轮排查。
 
 - 2026-10-16：为网站探索agent的 Windows PyInstaller 可执行文件补充 WeWorker 版本资源。构建时动态生成 VERSIONINFO，文件属性包含 ProductName/CompanyName「WeWorker」、描述、产品版本、原始文件名等关键字，保留现有 Webwright.exe 文件名和 embedded onedir 结构；补充分发契约测试。验证：distribution 契约测试 10 项通过、Python 语法检查通过；未在本次变更中构建完整 Windows 安装包或进行安全软件白名单实机验收。
