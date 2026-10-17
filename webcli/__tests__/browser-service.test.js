@@ -137,3 +137,17 @@ it('requires the native frame pointer capability and forwards drag document iden
   expect((await native.execute('drag',args)).ok).toBe(true);
   expect(requestExtension.mock.calls.at(-1)[0]).toMatchObject({command:'drag',args:{frameId:12,documentId:'example-child',toSelector:'#to'}});
 });
+
+it('event polling bypasses a busy page action without releasing its lock, and guards old plugins', async () => {
+  const { service, requestExtension, options } = setup();await service.execute('bind',{session:'work',tabId:7});
+  expect((await service.execute('events',{session:'work',channel:'console'})).error.code).toBe('EXTENSION_UPGRADE_REQUIRED');
+  expect((await service.execute('network',{session:'work',since:'2m'})).error.code).toBe('EXTENSION_UPGRADE_REQUIRED');
+  const native=new BrowserService({...options,capabilities:()=>({connected:true,capabilities:['browser_commands_v1','browser_events_v1']})});
+  let finish;const original=requestExtension.getMockImplementation();
+  requestExtension.mockImplementation(msg=>msg.command==='click'?new Promise(resolve=>{finish=resolve}):original(msg));
+  const click=native.execute('click',{session:'work',selector:'#example'});await vi.waitFor(()=>expect(finish).toBeTypeOf('function'));
+  expect((await native.execute('events',{session:'work',channel:'network'})).ok).toBe(true);
+  expect((await native.execute('fill',{session:'work',selector:'#example',value:'Example'})).error.code).toBe('SESSION_BUSY');
+  expect((await native.execute('console',{session:'work',follow:true})).error.code).toBe('INVALID_ARGUMENT');
+  finish({ok:true,data:{completed:true}});await click;
+});

@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { callExploration } from '../exploration-client.js';
+import { callExploration, callLocalCommand } from '../exploration-client.js';
 import { WebSocketBridge } from '../bridge.js';
 
 const servers = [];
@@ -30,6 +30,14 @@ it('returns structured timeout and disconnect errors without replaying commands'
   expect(calls).toBe(1);
   const closeUrl = await server(ws => ws.close());
   expect((await callExploration('get', {}, { url: closeUrl })).error.code).toBe('BRIDGE_DISCONNECTED');
+});
+
+it('cancels an in-flight browser poll, closes its socket and never replays it', async () => {
+  let calls=0;let received;const started=new Promise(resolve=>{received=resolve});
+  const url=await server(()=>{calls++;received()});const controller=new AbortController();
+  const pending=callLocalCommand('browser','events',{session:'example'},{url,timeoutMs:10000,signal:controller.signal});
+  await started;controller.abort();expect((await pending).error.code).toBe('ABORTED');expect(calls).toBe(1);
+  expect((await callLocalCommand('browser','events',{}, {url,signal:controller.signal})).error.code).toBe('ABORTED');expect(calls).toBe(1);
 });
 
 it('Bridge replies only to the requesting local client and rejects extension-origin peers', async () => {

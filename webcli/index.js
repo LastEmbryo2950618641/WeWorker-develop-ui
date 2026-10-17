@@ -253,14 +253,14 @@ function getServiceNodeArgs() {
 
 // ─── Command: service start ──────────────────────────────────────────────────
 
-async function cmdServiceStart(daemon) {
+async function cmdServiceStart(daemon, report = console.log) {
   if (daemon) {
     await mkdir(WEBCLI_DIR, { recursive: true });
 
     // Check if already running
     const existing = await readPid();
     if (existing && isPidRunning(existing)) {
-      console.log(`WebCLI service is already running (PID: ${existing})`);
+      report(`WebCLI service is already running (PID: ${existing})`);
       return;
     }
 
@@ -272,10 +272,10 @@ async function cmdServiceStart(daemon) {
     child.unref();
     await writeFile(PID_FILE, String(child.pid));
 
-    console.log(`✓ WebCLI service started in background (PID: ${child.pid})`);
-    console.log(`  Logs:   ${LOG_FILE}`);
-    console.log(`  Stop:   webcli service stop`);
-    console.log(`  Status: webcli service status`);
+    report(`✓ WebCLI service started in background (PID: ${child.pid})`);
+    report(`  Logs:   ${LOG_FILE}`);
+    report(`  Stop:   webcli service stop`);
+    report(`  Status: webcli service status`);
   } else {
     // Foreground — hand off to service mode
     await runServiceMode();
@@ -370,7 +370,7 @@ async function ensureBridgeRunning() {
   if (isRunning) return;
 
   process.stderr.write("Bridge not running, starting...\n");
-  await cmdServiceStart(true);
+  await cmdServiceStart(true, message => process.stderr.write(message + '\n'));
 
   // Wait for Bridge to be ready (max 5s)
   for (let i = 0; i < 10; i++) {
@@ -416,6 +416,11 @@ async function cmdCall(toolName, argsStr, options = {}) {
       process.exitCode = 1; return;
     }
     await ensureBridgeRunning();
+    if (['console', 'network'].includes(command) && (args.follow === true || args.follow === 'true')) {
+      const { runBrowserFollow } = await import('./browser-follow.js');
+      process.exitCode = await runBrowserFollow(command, args); return;
+    }
+    if (['console', 'network'].includes(command) && (args.follow === false || args.follow === 'false')) delete args.follow;
     const { callLocalCommand } = await import('./exploration-client.js');
     const result = await callLocalCommand('browser', command, args, { timeoutMs: 50000 });
     console.log(JSON.stringify(result, null, 2));
@@ -830,6 +835,7 @@ function extractFlagArgs(argv, startIndex = 0) {
 function resolveCliInvocation(args) {
   const cmd = args[0];
   if (cmd === "call") {
+    if (['browser.console', 'browser.network'].includes(args[1])) args = args.map(arg => arg === '--follow' ? '--follow=true' : arg);
     const { args: flagArgs, rest } = extractFlagArgs(args, 2);
     const argsIdx = args.indexOf("--args");
     return {
@@ -968,15 +974,12 @@ async function main() {
 
   // call <tool_name> [--key=value ...] [--args '{}']
   if (cmd === "call") {
-    const { args: flagArgs, rest } = extractFlagArgs(args, 2);
-    const toolName = rest[0] || args[1];
+    const { toolName, argsJson, flagArgs } = resolveCliInvocation(args);
     if (!toolName) {
       console.error("Error: 请指定工具名称");
       console.error("Usage: webcli call <tool_name> [--key=value ...]");
       process.exit(1);
     }
-    const argsIdx = args.indexOf("--args");
-    const argsJson = argsIdx !== -1 ? args[argsIdx + 1] : undefined;
     await cmdCall(toolName, argsJson, { verbose, flagArgs, outputFormat });
     return;
   }

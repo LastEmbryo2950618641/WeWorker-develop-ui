@@ -23,6 +23,7 @@
     "exploration-revisions.js",
     "browser-commands.js",
     "browser-service.js",
+    "browser-follow.js",
     "tab-operation-locks.js",
     "bridge.js",
     "metrics.js",

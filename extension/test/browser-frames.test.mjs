@@ -67,9 +67,9 @@ test('navigation during evaluation produces an explicit error without replaying 
 test('attaching a child enables runtime, download events and recursive iframe attachment without pausing the page', async () => {
   const f = fixture();
   await recordBrowserFrameEvent(f.chrome, { tabId: 7, sessionId: 'example-parent' }, 'Target.attachedToTarget', { sessionId: 'example-nested', targetInfo: { type: 'iframe' } });
-  assert.deepEqual(f.calls.map(call => call.method), ['Runtime.enable', 'Page.enable', 'Target.setAutoAttach']);
+  assert.deepEqual(f.calls.map(call => call.method), ['Runtime.enable', 'Page.enable', 'Network.enable', 'Target.setAutoAttach']);
   assert.deepEqual(f.calls[0].source, { tabId: 7, sessionId: 'example-nested' });
-  assert.equal(f.calls[2].params.waitForDebuggerOnStart, false);
+  assert.equal(f.calls[3].params.waitForDebuggerOnStart, false);
 });
 
 test('detaching nested targets invalidates their contexts but preserves main-target contexts with reused IDs', async () => {

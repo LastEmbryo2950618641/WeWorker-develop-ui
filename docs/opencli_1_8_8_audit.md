@@ -6,7 +6,7 @@
 
 - cli-manifest.json 包含 1366 个命令条目、179 个 site 分组（包括桌面应用，不能全部称为网站）。策略字段计数：cookie 778、public 345、ui 195、local 26、intercept 22。这个枚举比作者技能中的六种策略更粗；不能只按标签数宣称能力相等。
 - 作者技能仍按 PUBLIC_API / COOKIE_API / PAGE_FETCH / INTERCEPT / DOM_STATE / UI_SELECTOR 选择，要求来源证据、契约与替代策略理由。analyze 对实际响应做业务数据、噪声、权限阻塞判别；页面请求多不等于接口可复用。WebCLI 本轮加入结构分析与保留失败 revision 后显式重做计划，未实现自动运行时静默回退。
-- 浏览器接口除既有基本操作外，仍包含 state 的 AX 对比选项、截图标注与临时视口尺寸、console/network since/until/follow、跨源 frame eval、download 等待。WebCLI 已补显式 frameId/documentId 的嵌套跨源 eval，并经真实 Chromium 和日常 Chrome 验证；download 等待也已补齐并通过真实 Chromium/日常 Chrome 检查；AX、截图高级选项和持续输出仍待补，不能由普通截图通过推断已具备。
+- 浏览器接口除既有基本操作外，仍包含 state 的 AX 对比选项、截图标注与临时视口尺寸、console/network since/until/follow、跨源 frame eval、download 等待。WebCLI 已补嵌套跨源 eval、download 等待和 console/network 持续输出，并经真实 Chromium 与日常 Chrome 检查；AX、截图高级选项仍待补，不能由普通截图通过推断已具备。
 - profile list/rename/use 与全局 --profile、环境 OPENCLI_PROFILE 支持多个扩展连接，不明确时选择 profile；另有 OPENCLI_CDP_ENDPOINT / OPENCLI_CDP_TARGET 和 Electron 应用适配。WebCLI 当前只验收一个 Chrome 插件连接和命名标签会话，不应把 session 当作多 profile 实现。
 - 其他接口包括 skills list/read、validate/verify、convention-audit、adapter status/eject/reset、plugin create/install/update/uninstall、daemon status/stop/restart、external register/install/list 和 shell completion。WebCLI 部分已有相近的 Adapter 管理/服务/Skill 分发能力，仍需逐命令核对输出、错误、覆盖和差异；不能直接按名字视为完成。
 - PUBLIC_API 可在没有浏览器时通过 host HTTP 执行；COOKIE_API 使用明确的运行时鉴权。WebCLI 当前自动生成的 API 命令仍是 Extension PAGE_FETCH，独立 host HTTP/通用鉴权能力待设计，同时必须遵守本项目 Extension 与 Toolkit Runner 边界。
@@ -17,3 +17,5 @@
 下载对照增量：核对发布包 cli.js 的 wait download、browser/page.js 与类型声明。本项目使用同一 call 入口，显式区分未见/进行中/中断/歧义；匹配为字面子串，downloadId 为 CDP GUID，Chrome 数字 ID 只是可选元数据。每次等待最长 30 秒，可按同一 ID 续等；不保证总能取得路径，不改浏览器下载策略。子 frame DOM 点击在日常 Chrome 未形成下载，focus + 原生 Enter 的跨源示例完成；这是仍待补原生子 frame 指针的实际边界。
 
 原生 frame 输入增量：通用 click/dblclick/hover/drag 已补齐嵌套同源/跨源 frame 的原生指针，新增能力守卫避免旧插件退回 DOM 事件。日常 Chrome 上一阶段的跨源下载限制已由原生 click 解决。保留 Chrome frameId/documentId 选择契约与同 frame 拖拽范围；不据此声明所有复杂控件或 HTML5 拖放协议已等同。
+
+持续观察对照增量：核对发布包 cli.js 中 console/network 的 since/until/follow（console 约 1216 行，network 约 2376/2480 行）。本项目继续使用统一 call 命令，CLI 输出 JSONL，其他调用方使用 browser.events 非锁定轮询；主/子 target 分开记录，不按时间戳去重，过期游标或容量缺口明确失败。时间裸数沿用本项目历史秒单位，OpenCLI 默认为毫秒，故推荐显式 ms/s/m/h；本项目轮询默认 500ms，可调 100–5000ms。真实验证包括两个独立订阅者、原生输入、子 frame、详情脱敏、信号、管道关闭和 Bridge 重启续接。一次性旧 console/network 保持主 target 缓存形态，流式正文、持久流量回放和 Worker target 订阅未实现。

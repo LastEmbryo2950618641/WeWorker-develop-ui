@@ -117,9 +117,9 @@ manifest 增加可选 pageRoute `{origin, pathname}`，仅允许已声明页面�
 
 ## 通用浏览器层
 
-`webcli call browser.help` 列出 35 个命令，覆盖命名会话、页面定位/输入、原生主/子 frame 指针与同 frame 拖拽、文件输入、网络、eval、截图、控制台、弹窗和下载观察。session 的 tabId 与 Chrome storage.session 身份共同校验，浏览器重启后必须重新绑定，避免 ID 复用。用户绑定页面 close 只释放绑定；独立 open 页面才会被关闭。
+`webcli call browser.help` 列出 36 个命令，覆盖命名会话、页面定位/输入、原生主/子 frame 指针与同 frame 拖拽、文件输入、网络、eval、截图、控制台、弹窗、下载和持续观察。session 的 tabId 与 Chrome storage.session 身份共同校验，浏览器重启后必须重新绑定，避免 ID 复用。用户绑定页面 close 只释放绑定；独立 open 页面才会被关闭。
 
-browser 命令返回任务需要的页面数据，不保存到探索记录；网络详情只返回有界 JSON 并按凭据字段脱敏，非 JSON/截断正文省略。Bridge 不记录浏览器参数、脚本或输入值。完整页面截图上限 4000 万像素。Shadow DOM、多连接/profile、持续网络流待补。
+browser 命令返回任务需要的页面数据，不保存到探索记录；网络详情只返回有界 JSON 并按凭据字段脱敏，非 JSON/截断正文省略。Bridge 不记录浏览器参数、脚本或输入值。完整页面截图上限 4000 万像素。Shadow DOM、多连接/profile、AX 与截图高级选项待补。
 
 frames 返回可访问页面的 frameId/documentId。eval 支持显式 frame/document，在 MAIN world 执行并等待 Promise；定位、读取、填写和等待也可绑定 documentId。需要 browser_frames_v1，旧插件会被 Bridge 拒绝，避免忽略参数后执行到主页面。frameId 是 Chrome ID，不是 frame 数组索引；同 URL 页面不被合并。指定 documentId 时先校验它与 frameId 配对，再向该文档注入，导航或移除后明确失败。
 
@@ -139,6 +139,12 @@ Agent 可以为最终命令输出声明 requiredPaths、types、notEmpty、patte
 
 原生子 frame 指针复用文档身份解析，在隔离环境保留选中 DOM 节点和远程对象。DOM.getContentQuads 的坐标属于当前调试目标根视口：同进程子 frame 先逆变换到其本地视口，跨进程边界再通过 iframe 内容四边形逐层投影到主视口，处理边框、滚动、缩放、旋转和透视。逐层使用隔离环境 elementFromPoint 检查目标和 iframe owner，不能越过父层遮挡；不按 URL 或 frame 数组位置选择页面。悬停后重新测量，移动超过半个 CSS 像素、文档改变、遮挡等情况停止，不自动点击重试。30 秒准备截止防止延迟派发，异常拖拽尝试在最后已发送位置释放按钮，finally 清理隔离标记与远程对象。返回 trusted 与 frame/document 身份只表示原生输入已发送，不保证业务动作完成。拖拽限同 frame 的可见元素，不构造 HTML5 DataTransfer。
 
+console/network 的 CLI follow 通过同一 browser.events 轮询接口输出 JSON Lines，不另建 Agent 或 UI 专用服务。events 不占 Bridge 会话/tab 锁或扩展页面队列；扩展每 tab/channel 保留 200 条内存记录，epoch/channel/sequence 游标区分同毫秒事件与不同观察。筛选后也推进 checkpoint，until 年轻事件保留至未来轮询；过期/淘汰游标明确失败，多订阅者互不消费对方数据。
+
+捕获主/子调试会话的 console 与网络终态，pending 以 sessionId/requestId 区分，最多 1000 条，超限明确 gap；子 target 启用 Network。流式网络仅输出有界元数据，详情才请求对应 target 的 JSON 正文并脱敏。redirect、重用 request ID、详情读取期间变化及 pending 淘汰均不能读到后继请求正文。一次性 console/network 保留旧主 target 输出；新 events/follow 覆盖已订阅子 target，不声称捕获绑定前流量或 Worker 流量。
+
+follow 处理 ready/entry/checkpoint/end/error、输出背压、durationMs/maxEvents、SIGINT/SIGTERM 和关闭管道；断线不自动重试。Bridge 重启可显式按 cursor 续接，插件/调试状态失效则重新选择页面并开始新观察。Chrome 主动 detach 不保证触发 onDetach，因此观察轮询用不执行页面代码的 Runtime.getIsolateId 检查所属调试连接，失败清理状态且不自动重附；自有临时调试连接释放也统一清理。since/until 支持 ms/s/m/h，裸数字沿用本项目秒数，区别于 OpenCLI 的毫秒。能力标记 browser_events_v1 阻止旧插件静默忽略新参数。
+
 ## 已安装命令修复
 
 已安装命令维护使用 repair-info/repair：先读取当前包摘要并采集新证据，再将已有只读命令复制到隔离草稿，绑定当前任务的修复范围。只允许改所选模块、schema 和 description，其他文件/命令、身份、路由、权限不变，禁止新增共享代码。静态检查、运行验证及发布三处均核对当前包摘要和服务保存的修复范围；草稿文件内的声明不能扩大范围。历史 cases 会带入并标记过期信息，每个目标至少一组，全部重新运行通过才能安装。当前支持 Extension-only 包；写命令、共享文件重构仍待后续。
@@ -149,7 +155,7 @@ Agent 可以为最终命令输出声明 requiredPaths、types、notEmpty、patte
 
 ## 验证与未完成范围
 
-具体命令和数量见交接日志。当前 WebCLI 全量 105 文件、1119 项通过。真实 Chromium + 未打包插件 + 独立 CLI/Bridge + loopback 示例站点 29 项通过，包含浏览器操作、下载生命周期与续等、同 URL/嵌套跨源 frame、POST/GraphQL 工具、六组精确断言、知识持久化、API/DOM 定向修复、三个页面来源、动态 GET/POST 路径参数、跨域 INTERCEPT、跨文档页面查询，以及 API 503 后保留历史并切换 DOM 的闭环。最终版本完整复验包含 frame 的 Promise 超时、输出身份及页面重写内置函数时的隔离匹配。用户指定的真实公共视频搜索页已完成采集、生成、修复、验证、增量安装和普通 CLI 搜索/分页，DOM 命令也与当前页面逐项核对；原始页面/响应未进入仓库。动态路径本轮使用公开占位 loopback 示例站点验收，不代表已在该外部搜索站点验证动态详情接口。
+具体命令和数量见交接日志。WebCLI 全量 106 文件、1128 项通过；扩展聚焦 76 项通过。真实 Chromium + 未打包插件 + 独立 CLI/Bridge + loopback 示例站点完整 32 项通过，包含持续观察/游标/信号/断线续接、浏览器操作、下载生命周期与续等、同 URL/嵌套跨源 frame、POST/GraphQL 工具、六组精确断言、知识持久化、API/DOM 定向修复、三个页面来源、动态 GET/POST 路径参数、跨域 INTERCEPT、跨文档页面查询，以及 API 503 后保留历史并切换 DOM 的闭环。frame 的 Promise 超时、输出身份及页面重写内置函数时的隔离匹配仍通过。用户指定的真实公共视频搜索页已完成采集、生成、修复、验证、增量安装和普通 CLI 搜索/分页，DOM 命令也与当前页面逐项核对；原始页面/响应未进入仓库。动态路径使用公开占位 loopback 示例站点验收，不代表已在该外部搜索站点验证动态详情接口。
 
 验收脚本为 `webcli/scripts/verify-exploration-browser.mjs`；使用临时副本改变连接端口及 CLI 配置目录，生产协议和默认端口未改。只启动/停止脚本自己创建的服务和浏览器，Adapter 安装、任务和浏览器配置均隔离。Playwright 用于测试浏览器启动、示例导航及下载取消刺激/诊断；下载观察、探索/生成/验证/安装和业务调用均经过真实 CLI 与插件，不 mock 扩展传输、fetch 或验证器。隔离浏览器显式允许下载并使用临时目录；日常 Chrome 另行验收，不把该测试设置当成用户浏览器的默认策略。
 

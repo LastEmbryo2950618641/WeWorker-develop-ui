@@ -12,6 +12,7 @@ import { executePageQuery } from './page-query.js';
 import { recordBrowserObservation, clearBrowserObservations } from './browser-observations.js';
 import { recordBrowserFrameEvent, clearBrowserFrames } from './browser-frames.js';
 import { recordBrowserDownload, clearBrowserDownloads } from './browser-downloads.js';
+import { recordBrowserEvent, clearBrowserEvents } from './browser-events.js';
 
 /**
  * Background Service Worker
@@ -45,6 +46,7 @@ const EXTENSION_CAPABILITIES = [
   'browser_frames_v1',
   'browser_downloads_v1',
   'browser_frame_pointer_v1',
+  'browser_events_v1',
   'strict_output_contract_v1',
   'page_sources_v1',
   'intercept_read_v1',
@@ -516,7 +518,7 @@ async function finishAdapterNetworkCapture(tabId, session) {
   try {
     await chrome.debugger.detach({ tabId });
   } catch { }
-  cdpAttachedTabs.delete(tabId);
+  clearBrowserDebuggerState(tabId, 'Adapter capture attachment released.');
 }
 
 async function readAdapterNetworkCapture(tab, payload) {
@@ -2227,6 +2229,7 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
   if (!tabId || !cdpAttachedTabs.has(tabId)) return;
   void recordBrowserFrameEvent(chrome, source, method, params);
   recordBrowserDownload(tabId, method, params);
+  recordBrowserEvent(tabId, source, method, params);
   // Child target context/request IDs are scoped to their debugger session.
   // Existing preview and network caches belong to the main target only.
   if (source.sessionId) return;
@@ -2414,17 +2417,19 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
   }
 });
 
-chrome.debugger.onDetach.addListener((source, reason) => {
-  const tabId = source?.tabId;
-  if (!tabId || source.sessionId) return;
+function clearBrowserDebuggerState(tabId, reason) {
   clearBrowserFrames(tabId);
   clearBrowserDownloads(tabId);
+  clearBrowserEvents(tabId);
   cdpAttachedTabs.delete(tabId);
   clearBrowserObservations(tabId);
   cdpExecutionContexts.delete(tabId);
   adapterNetworkCaptureSessions.delete(tabId);
   const state = cdpNetworkState.get(tabId);
   if (state) state.lastError = reason || 'detached';
+}
+chrome.debugger.onDetach.addListener((source, reason) => {
+  if (source?.tabId && !source.sessionId) clearBrowserDebuggerState(source.tabId, reason);
 });
 
 // ─── WebSocket 连接 ──────────────────────────────────────────────────────────
@@ -3315,9 +3320,9 @@ async function handleNativeMessage(msg) {
       sendToNative({ type: "call_tool_error", id: msg.id, error: err.message });
     }
   } else if (msg.type === 'browser_execute') {
-    const operation = () => executeBrowserCommand(msg, { chrome, ensureCdpAttached, cdpEvaluate, getCdpNetworkSnapshot });
+    const operation = () => executeBrowserCommand(msg, { chrome, ensureCdpAttached, cdpEvaluate, getCdpNetworkSnapshot, onBrowserDetach: clearBrowserDebuggerState });
     // Read-only download observers must not block the click they are observing.
-    const observer = msg.command === 'dialog' || msg.command === 'downloads' || (msg.command === 'wait' && msg.args?.kind === 'download');
+    const observer = ['dialog', 'downloads', 'events'].includes(msg.command) || (msg.command === 'wait' && msg.args?.kind === 'download');
     const result = Number.isInteger(msg.tabId) && !observer
       ? await getHostAdapterRuntime().exclusive(msg.tabId, operation) : await operation();
     sendToNative({ type: 'call_tool_result', id: msg.id, result });
@@ -4559,7 +4564,7 @@ async function getDirectRuntimeCookiesViaDebugger(payload = {}, traceID = null) 
       try {
         await chrome.debugger.detach({ tabId: activeTab.id });
       } catch { }
-      cdpAttachedTabs.delete(activeTab.id);
+      clearBrowserDebuggerState(activeTab.id, 'Temporary cookie attachment released.');
     }
   }
 }
@@ -6941,6 +6946,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  clearBrowserEvents(tabId);
   clearBrowserObservations(tabId);
   clearBrowserDownloads(tabId);
   clearBrowserFrames(tabId);
@@ -8615,7 +8621,7 @@ async function runRuntimeNativeInput(tabId, payload = {}) {
   } finally {
     if (owned) {
       try { await chrome.debugger.detach({ tabId }); } catch { }
-      cdpAttachedTabs.delete(tabId);
+      clearBrowserDebuggerState(tabId, 'Temporary input attachment released.');
     }
   }
 }

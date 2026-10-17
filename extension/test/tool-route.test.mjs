@@ -35,8 +35,8 @@ test('exploration and browser operations share the refresh queue; dialogs can un
     await new Promise(resolve => setImmediate(resolve)); assert.deepEqual(order, ['query']);
     if (type === 'browser_execute') {
       worker.context.executeBrowserCommand = async msg => { order.push(msg.command); return { ok: true }; };
-      for (const command of ['dialog', 'downloads', 'wait']) await worker.context.handleNativeMessage({ type, tabId: 7, command, args: { kind: 'download' }, id: 'example-observer-' + command });
-      assert.deepEqual(order, ['query', 'dialog', 'downloads', 'wait']);
+      for (const command of ['dialog', 'downloads', 'events', 'wait']) await worker.context.handleNativeMessage({ type, tabId: 7, command, args: { kind: 'download' }, id: 'example-observer-' + command });
+      assert.deepEqual(order, ['query', 'dialog', 'downloads', 'events', 'wait']);
     }
     finish(); await operation; await refresh; assert.equal(order.at(-1), 'refresh');
   }

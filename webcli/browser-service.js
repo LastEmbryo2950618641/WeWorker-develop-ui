@@ -27,6 +27,7 @@ export class BrowserService {
       for (const key of Object.keys(args)) if (!spec.params.some(param => param.replace(/\?$/, '') === key)) throw fail('INVALID_ARGUMENT', `Unknown argument: ${key}`);
       for (const param of spec.params.filter(param => !param.endsWith('?'))) if (args[param] === undefined) throw fail('INVALID_ARGUMENT', `Missing argument: ${param}`);
       if (command === 'wait' && args.kind !== 'download' && args.value === undefined) throw fail('INVALID_ARGUMENT', 'value is required for this wait kind.');
+      if (['console', 'network'].includes(command) && ['follow', 'cursor', 'durationMs', 'maxEvents', 'intervalMs'].some(key => args[key] !== undefined)) throw fail('INVALID_ARGUMENT', 'Streaming flags belong to the CLI. Direct Bridge clients should poll browser.events with its cursor.');
       if (spec.params.includes('session')) {
         session = textArg(args.session, 'session', 80);
         if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(session) || ['__proto__', 'constructor', 'prototype'].includes(session)) throw fail('INVALID_ARGUMENT', 'Use an alphanumeric session name.');
@@ -53,6 +54,7 @@ export class BrowserService {
     if ((args.documentId !== undefined || (command === 'eval' && args.frameId !== undefined)) && !this.capabilities().capabilities.includes('browser_frames_v1')) throw fail('EXTENSION_UPGRADE_REQUIRED', 'Reload the extension to select a frame/document; an older extension may evaluate in the main page.');
     if (Number(args.frameId) && ['click', 'dblclick', 'hover', 'drag'].includes(command) && !this.capabilities().capabilities.includes('browser_frame_pointer_v1')) throw fail('EXTENSION_UPGRADE_REQUIRED', 'Reload the extension to execute native pointers in child frames. Older extensions use synthetic DOM events.');
     if ((command === 'downloads' || (command === 'wait' && args.kind === 'download')) && !this.capabilities().capabilities.includes('browser_downloads_v1')) throw fail('EXTENSION_UPGRADE_REQUIRED', 'Reload the extension to observe tab download lifecycles.');
+    if ((command === 'events' || args.until !== undefined || (command === 'console' && (args.since !== undefined || args.match !== undefined)) || (command === 'network' && typeof args.since === 'string' && /[a-z]/i.test(args.since)) || String(args.detail || '').startsWith('event:')) && !this.capabilities().capabilities.includes('browser_events_v1')) throw fail('EXTENSION_UPGRADE_REQUIRED', 'Reload the extension to use cursor-based browser events and time filters.');
     const release = isBrowserObserver(command, args) ? () => {} : this.tabLocks.acquire(tabId);
     try {
       const result = await this.request({ type: 'browser_execute', command, args, tabId, identity }, 45000);

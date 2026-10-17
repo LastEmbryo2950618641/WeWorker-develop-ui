@@ -1,6 +1,6 @@
 # API 自动探索 CLI 改造跟进与交接
 
-> 更新日期：2026-10-17。当前阶段：子 frame 原生 click/dblclick/hover/同 frame drag 已实现；WebCLI 1119 项、扩展聚焦 69 项、隔离真实浏览器完整 29 项及最终浏览器聚焦通过。日常 Chrome 六个同源/跨源嵌套 frame 原生事件、缩放/旋转/透视、父层遮挡和原生点击下载通过，B 站 Excel 第一页 24 卡片回归通过。完整 OpenCLI 对齐继续进行；独立 Agent 对话、UI 统一与平台安装包验收尚未完成。
+> 更新日期：2026-10-17。当前阶段：console/network 持续 JSONL 观察、browser.events 序列游标与时间窗口已实现；WebCLI 1128 项、扩展聚焦 76 项及 Adapter helper 回归 15 项通过，隔离真实浏览器完整 32 项通过。日常 Chrome 多订阅者、子 frame、信号/关闭管道与 Bridge 重启续接通过，B 站 Excel 第一页 24 卡片回归通过。完整 OpenCLI 对齐继续进行；独立 Agent 对话、UI 统一与平台安装包验收尚未完成。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
 
 ## 最新状态
@@ -10,8 +10,8 @@
 - 本次使用原工作目录，无新 worktree。切换时 ROADMAP.md 阻止 checkout，具名 stash 保存两份文档后切换并 apply，保留双方路线图。stash 仍保留作备份。
 - 功能分支在集成提交后创建为 `codex/api-exploration-cli`，最终操作结果见文末。未推送或创建 PR，最终发布目标仍待明确。
 - [开发设计](api_exploration_cli_design.md) 为本次审阅入口。
-- [OpenCLI 能力对齐台账](opencli_parity.md) 为最新范围与缺口清单；用户要求尽力对齐完整能力，不能把当前 35 个 browser 命令或单站点验收视为目标完成。
-- 首版功能实现提交为 `821a7df`，本轮从下载检查点 `948795b` 继续；后续实现、真实验收与本地检查点见文末和 Git 日志。集成基线仍为 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`。这些是已纳入快照，后续同步前应重新 fetch，不能据此推断远端未变化。
+- [OpenCLI 能力对齐台账](opencli_parity.md) 为最新范围与缺口清单；用户要求尽力对齐完整能力，不能把当前 36 个 browser 命令或单站点验收视为目标完成。
+- 首版功能实现提交为 `821a7df`，本轮从原生 frame 指针检查点 `3ea604c` 继续；后续实现、真实验收与本地检查点见文末和 Git 日志。集成基线仍为 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`。这些是已纳入快照，后续同步前应重新 fetch，不能据此推断远端未变化。
 > 后续每次建分支、同步上游、解决冲突、实现功能或验证后，都应更新本文和 ROADMAP.md。未验证事项不得标为完成。
 
 ## 1. 目标与范围
@@ -430,3 +430,22 @@ npm run test:exploration:browser --prefix webcli -- \
 - 接手下一步：console/network 持续观察、AX 与截图标注/尺寸、Shadow DOM/复杂控件，以及 profile/多连接、PUBLIC_API/COOKIE_API 执行和显式凭据契约；多步 UI/动态页面/写命令、知识修订/共享修复、UI/内置聊天复用、独立 Codex/Claude 对话、平台分发与 Adapter 业务覆盖仍在台账。拖拽当前限同 frame 的指针流程，不构造 DataTransfer 或跨 frame 拖拽；exploration 页面来源仍限主 frame。不能将本轮浏览器进展视作完整 OpenCLI 对齐。
 
 - 最终检查：CLI/Bridge 构建、公开配置、10 个 JS 文件语法、Git 差异格式与新增内容凭据/私网地址检查通过；npm pack dry-run 593 文件，包含 browser-pointer.js 和最新 Skill，构建 CLI 的 drag 帮助包含 frameId/documentId。原有可选列映射资源警告保留，无新依赖。最终插件重载后再次跑日常 Chrome 六 frame/遮挡/直接点击下载，报告 `weworker-pointer-live-1bOX7q/report.json` 通过；B 站重新绑定并再次核对 24 卡片成功。所有自建服务/标签已清理，用户页面保留。检查点 SHA 以 Git 日志为准，全能力目标保持进行中。
+
+### 2026-10-17：console/network 持续观察、游标与真实验收
+
+- 从干净检查点 `3ea604c` 继续；分支 `codex/api-exploration-cli`，集成基线与已纳入上游快照未变，本轮未 fetch/合并/推送。完整 OpenCLI 对齐目标保持 active。更新已有跟进文档，不新建用户会话或子 Agent。
+- 新增 extension/background/browser-events.js、webcli/browser-follow.js 与能力 browser_events_v1。console/network 的 CLI --follow 输出 JSONL，browser.events 供任意 Agent 和未来 UI 非锁定轮询；绕过 Bridge session/tab 锁和扩展 managed 页面队列，观察可与触发操作并行。命令帮助为 36 个 browser 命令，包文件清单已包含新模块。
+- 每 tab/channel 保留 200 条内存事件，epoch/channel/sequence 游标区分同毫秒日志、标签、通道与新一轮观察。ready/entry/checkpoint/end/error 保存可续接位置；筛选时推进 checkpoint，until 以内的年轻事件延后消费，maxEvents 精确终止，stdout 写回调提供背压。SIGINT/SIGTERM 为 130/143，EPIPE 安静退出；断线停止，不重试或自动换游标。
+- console/网络覆盖根与已订阅的递归子 target；子 target 新增 Network.enable，requestId 按 source session 区分。网络仅输出完成/失败/重定向元数据，pending 超过 1000 条输出 gap；按 key 读取详情才返回有界脱敏 JSON。redirect、重用 ID、详情读取期间变化及 pending 淘汰不能让旧 key 读取后继请求正文。source 描述调试 target，同进程子 frame 可能标为 main-target。一次性 console/network 保持旧主 target 缓存，不把 Worker 或绑定前流量纳入承诺。
+- since/until 支持 ms/s/m/h、0–24h，裸数字沿用秒，与 OpenCLI 毫秒不同，Skill 建议显式单位；旧插件遇到新时间单位/参数明确拒绝。JSONL 专用于 follow；直接 Bridge 客户端不得传 follow 等 CLI 标志，应调用 events。follow=false 保持一次性结果。没有新增依赖或 manifest 权限，Extension/Toolkit Runner 边界未变。
+- 首次真实验收发现主 CLI call 分支没有使用已单测的参数解析辅助函数，导致裸 --follow 不生效；已统一入口并真实子进程回归。第二个实际失败是扩展直接 chrome.debugger.detach 不保证触发 onDetach，旧内存仍可读；已用无页面执行的 Runtime.getIsolateId 在观察前核对所属连接，失败清理状态且不自动重附，已有自有临时调试连接也统一清理。重连新观察拒绝旧 cursor。测试 loader 同步导入事件/frame/download 清理，Adapter helper 15 项回归通过。
+- 自动化最终：WebCLI 全量 106 文件/1128 项；扩展事件、原生指针、下载、frame、输入、网络、路由、消息安全和探索协议聚焦 76 项通过；Adapter 注册/常见失败/写确认/helper 额外 15 项通过。单测含同时间戳、分页/过滤/丢失、root/child 重名 requestId、详情读取竞态、pending 容量、输出背压、信号与 WebSocket 取消。
+- 隔离真实 Chromium 完整 32 项通过，系统临时报告 `webcli-browser-acceptance-1MctRg/report.json`。新增双 console 订阅和 network 订阅同时运行，主/子 frame 原生点击、redirect/失败、详情脱敏、精确条数、信号/管道关闭、Bridge 断线→显式原 cursor 续接、until 延后、200 条淘汰以及调试 detach 失效；旧 frame 30 秒 Promise、下载、API/DOM/INTERCEPT/跨文档查询、修复、安装、知识与历史全通过。新增 --events-only 和共享 browser-events-acceptance.mjs，默认仍跑完整流程。
+- 完整通过后收尾加固重用 ID 在 pending 淘汰后的正文阻断，新增单测并重跑全量；最终隔离 events 聚焦通过 `webcli-browser-acceptance-3rtvaa/report.json`，另覆盖一次性 follow=false 和新时间单位。其后核对初次启动输出，发现自动启动 Bridge 的诊断会污染 stdout，已移至 stderr，服务显式 start 输出不变；增加真实无 Bridge 起始的 CLI 验收，最终结果追加于后。
+- 日常 Chrome：核实本任务 source Bridge 完整命令后重启、重载已安装工作区 extension-dist，无需用户再次安装。首轮 `weworker-events-live-a8cWfY/report.json` 中最后一条标签误带“debug detach”，实际 detachTested=false；最终复测标签已修正，报告 `weworker-events-live-JwMgxZ/report.json`。该环境验证双订阅、主/子 target console/network、脱敏详情、信号/关闭管道、Bridge 重启续接、时间窗口与淘汰；主动 detach 在隔离 Chromium 验收，不把日常报告误记为也覆盖它。所有自建页面/临时服务器正常关闭。
+- B 站重新从 tabs 选择并绑定 bilibili-maintenance，excel 第一页、原 current-video-links 24 张可见视频卡片标题/规范化绝对 URL 逐项一致，下载观察未混入其他标签。此次不持续观察真实站点的无关账号流量；压力/断线/溢出使用自建公开 loopback fixture。真实页面结果只留本机，没有提交到仓库。
+- 当前 source Bridge 快照 PID 23777，日志 `/tmp/weworker-events-live-bridge.log`；下次操作前必须重新核对完整命令，不复用历史 PID/tab/document。用户安装目录仍为工作区 extension-dist，B 站页面保留。最终 npm pack dry-run 595 文件含 events/follow/最新 Skill；CLI/Bridge 构建与公开配置通过，原有可选列映射资源警告保留。
+- Python 网站探索agent相对功能起点 `af8e082` 差异为零，源码/环境/测试/生命周期/数据全程排除。无发布、CI、数据库或 .env 改动；未推送、未开 PR。保存本地检查点，SHA 以 Git 日志为准。
+- 下一步：AX/state 对比、截图标注/尺寸、Shadow DOM/复杂控件、profile/多连接；随后按 Runner 边界实现 PUBLIC_API/COOKIE_API 与显式鉴权契约。多步 UI/动态页面/写命令、知识修订/共享修复、UI/内置聊天共用、独立 Codex/Claude 新对话、平台分发和业务覆盖继续保留在能力台账，不能将本阶段完成当作全目标完成。
+
+- 最终分发复验：首用自动启动 Bridge 的真实 CLI 子进程只输出一行 JSONL error，启动诊断均在 stderr；隔离浏览器最终 5 项聚焦通过，报告 `webcli-browser-acceptance-TRWQmK/report.json`，包含一次性 follow=false、时间单位、双订阅、重启、溢出与主动 detach。WebCLI 106 文件/1128 项在该启动修正后再次通过；CLI/Bridge 构建、595 文件 npm pack dry-run、20 个 JS/MJS 语法、公开配置、Git 差异格式与增量凭据/私网地址检查通过。构建后的 browser.help 正确包含 36 个命令及 follow 参数。完整 32 项报告在启动诊断修正之前，最终聚焦不冒充又一次完整探索验收。用户插件生产源码与最后日常 Chrome 验收版本一致，后来仅 CLI 启动诊断和测试/文档更新；源 Bridge 与用户页保留，本轮检查点 SHA 见 Git 日志。

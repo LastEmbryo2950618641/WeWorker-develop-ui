@@ -10,6 +10,7 @@ import net from 'node:net';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { verifyBrowserEvents } from './browser-events-acceptance.mjs';
 
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'webcli-browser-acceptance-'));
@@ -64,6 +65,25 @@ try {
       await delay(100);
     }
     throw new Error('Bridge did not listen');
+  }
+  // A first-use CLI must keep daemon startup messages out of its JSONL stdout.
+  // This temp config is new and owns the daemon PID written by this invocation.
+  try {
+    let firstUse;
+    try { firstUse = await exec(process.execPath, [cliEntry, 'call', 'browser.console', '--session=example-first-use', '--follow', '--durationMs=1000'], {env,timeout:15000}); }
+    catch (error) { firstUse = error; }
+    const lines = firstUse.stdout.trim().split('\n').map(line => JSON.parse(line));
+    assert.equal(lines.length,1); assert.equal(lines[0].event,'error');
+    assert.ok(firstUse.stderr.includes('Bridge not running'));
+    passed('first-use daemon startup preserves JSONL stdout');
+  } finally {
+    const pid = Number(await fs.readFile(path.join(root, 'cli-config-root/.webcli/service.pid'), 'utf8'));
+    assert.ok(Number.isSafeInteger(pid) && pid > 0);
+    process.kill(pid,'SIGTERM');
+    for(let i=0;i<50;i++) {
+      try { process.kill(pid,0); } catch { break; }
+      await delay(100);
+    }
   }
   await startBridge();
   async function cli(command, args = {}, expectedOk = true) {
@@ -227,6 +247,14 @@ try {
   assert.equal((await cli('browser.doctor')).data.ready, true);
   await cli('browser.bind', { session: 'acceptance', tabId });
   const browserCall = (command, args = {}, expectedOk = true) => cli(`browser.${command}`, { session: 'acceptance', ...args }, expectedOk);
+  if (!process.argv.includes('--downloads-only')) {
+    await verifyBrowserEvents({cli,cliEntry,env,record,passed,
+      stopBridge:async()=>{const closed=new Promise(resolve=>bridge.once('exit',resolve));bridge.kill('SIGTERM');await closed;},
+      startBridge:async()=>{await startBridge();await connected();},
+      detach:async tabId=>{await browser.serviceWorkers()[0].evaluate(tabId=>chrome.debugger.detach({tabId}),tabId);await delay(100);},
+    });
+  }
+  if (process.argv.includes('--events-only')) return;
   if (!process.argv.includes('--downloads-only')) {
   await browserCall('network');
   const state = (await browserCall('state')).data;

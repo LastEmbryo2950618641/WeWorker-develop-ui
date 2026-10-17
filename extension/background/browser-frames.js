@@ -34,6 +34,7 @@ export async function recordBrowserFrameEvent(chrome, source, method, params) {
     try {
       await chrome.debugger.sendCommand(child, 'Runtime.enable');
       await chrome.debugger.sendCommand(child, 'Page.enable');
+      await chrome.debugger.sendCommand(child, 'Network.enable', { maxTotalBufferSize: 10485760, maxResourceBufferSize: 524288, maxPostDataSize: 2000 });
       // Auto-attach is not recursive; an OOPIF can itself contain another OOPIF.
       await chrome.debugger.sendCommand(child, 'Target.setAutoAttach', autoAttach);
     } catch { /* Context discovery reports FRAME_CONTEXT_UNAVAILABLE; never use another frame. */ }

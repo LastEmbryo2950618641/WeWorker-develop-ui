@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-17（持续浏览器观察）：新增 browser.events、console/network --follow JSONL、时间窗口与序列游标；主/子调试 target 分离，独立订阅、输出背压、信号退出、断线续接和丢失错误，扩展主动调试断开明确清理。WebCLI 106 文件/1128 项、扩展聚焦 76 项及 Adapter helper 回归 15 项通过；隔离 Chromium 完整 32 项与日常 Chrome 持续观察通过，B 站 Excel 第一页 24 卡片逐项回归通过。裸时间单位沿用秒，观察历史有界；AX/截图高级选项、profile/多连接及其他 OpenCLI 差距继续推进，Python 网站探索agent零改动。最终分发与交接结果见跟进文档。
+
 - 2026-10-17（子 frame 原生指针）：click/dblclick/hover 与同 frame drag 支持嵌套同源/跨源文档，复用身份守卫，按内容四边形投影/逆变换并逐层检查遮挡；悬停后移动、文档导航或准备超时拒绝继续，异常释放按钮。WebCLI 1119 项、扩展聚焦 69 项、隔离 Chromium 完整 29 项与最终浏览器聚焦通过；日常 Chrome 六 frame 的原生事件、缩放/旋转/透视、父层遮挡和跨源点击下载通过，B 站 24 卡片回归通过。Shadow DOM、跨 frame/DataTransfer 拖拽、持续观测与其他 OpenCLI 差距继续推进；Python 网站探索agent零改动。
 
 - 2026-10-17（下载生命周期）：新增 browser.downloads / wait kind=download，按标签与跨源子页面事件观察、游标/ID 续等、进度超时、中断与歧义错误；观察不占点击锁，Bridge 重启可继续，落盘路径只返回限定 URL/时间的唯一匹配。WebCLI 105 文件/1118 项、扩展聚焦 64 项、隔离 Chromium 完整 28 项通过；日常 Chrome 主页面/慢速/跨源 frame 原生键盘触发及文件内容通过，B 站 Excel 第一页 24 卡片回归通过。子 frame DOM 点击仍可能无法触发下载，原生指针及其他 OpenCLI 差距继续开发；Python 网站探索agent零改动。详细失败诊断和边界见跟进文档。

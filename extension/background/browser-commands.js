@@ -4,18 +4,19 @@ import { beginBrowserObservations, readBrowserObservations, clearBrowserObservat
 import { beginBrowserFrames, executeFrameScript, evaluateBrowserFrame } from './browser-frames.js';
 import { beginBrowserDownloads, clearBrowserDownloads, markBrowserDownloadAction, readBrowserDownloads, waitBrowserDownload } from './browser-downloads.js';
 import { executeFramePointer } from './browser-pointer.js';
+import { beginBrowserEvents, clearBrowserEvents, readBrowserEvents, readNetworkEventDetail, browserTimeWindow } from './browser-events.js';
 
 const pageCommands = new Set(['state', 'find', 'get', 'extract', 'click', 'dblclick', 'fill', 'type', 'select', 'check', 'uncheck', 'focus', 'hover', 'scroll']);
 const fail = (code, message) => Object.assign(new Error(message), { code });
 
 /** Browser operations are explicit local CLI requests, independent of models. */
-export async function executeBrowserCommand({ command, tabId, args = {}, identity }, { chrome, ensureCdpAttached, cdpEvaluate, getCdpNetworkSnapshot }) {
+export async function executeBrowserCommand({ command, tabId, args = {}, identity }, { chrome, ensureCdpAttached, cdpEvaluate, getCdpNetworkSnapshot, onBrowserDetach = () => {} }) {
   try {
     const identityKey = id => `webcli-browser-tab-${id}`;
     const bind = async id => {
       const key = identityKey(id); const prior = (await chrome.storage.session.get(key))[key];
       const token = prior || crypto.randomUUID(); if (!prior) await chrome.storage.session.set({ [key]: token });
-      await ensureCdpAttached(id); beginBrowserObservations(id); beginBrowserDownloads(id);
+      await ensureCdpAttached(id); beginBrowserObservations(id); beginBrowserDownloads(id); beginBrowserEvents(id);
       markBrowserDownloadAction(id);
       await chrome.debugger.sendCommand({ tabId: id }, 'Runtime.enable');
       await chrome.debugger.sendCommand({ tabId: id }, 'Page.enable');
@@ -127,7 +128,10 @@ export async function executeBrowserCommand({ command, tabId, args = {}, identit
       const state = readBrowserObservations(tabId);
       const after = Number(args.after || 0);
       if (!Number.isSafeInteger(after) || after < 0) throw fail('INVALID_ARGUMENT', 'after must be a non-negative cursor.');
-      const entries = state.console.filter(entry => entry.cursor > after && (!args.level || entry.level === args.level));
+      const { lower, upper } = browserTimeWindow(args);
+      const level = args.level === 'warn' ? 'warning' : args.level;
+      const entries = state.console.filter(entry => entry.cursor > after && (!level || level === 'all' || entry.level === level)
+        && entry.timestamp >= lower && entry.timestamp <= upper && (!args.match || entry.text.includes(String(args.match))));
       const limit = Math.max(1, Math.min(Number(args.limit) || 60, 200));
       const batch = entries.slice(0, limit);
       data = { entries: batch, cursor: batch.at(-1)?.cursor ?? state.sequence, truncated: after < (state.console[0]?.cursor || 1) - 1 };
@@ -144,15 +148,23 @@ export async function executeBrowserCommand({ command, tabId, args = {}, identit
         await chrome.debugger.sendCommand({ tabId }, 'Page.handleJavaScriptDialog', { accept: action === 'accept', ...(args.text !== undefined ? { promptText: String(args.text) } : {}) });
         data = { handled: true, action };
       }
-    } else if (command === 'network') {
+    } else if (command === 'events') {
+      // An explicit chrome.debugger.detach does not emit onDetach. Validate the
+      // attachment without reattaching or evaluating any page code.
+      try { await chrome.debugger.sendCommand({ tabId }, 'Runtime.getIsolateId'); }
+      catch {
+        clearBrowserEvents(tabId); onBrowserDetach(tabId, 'Observation debugger disconnected.');
+        throw fail('OBSERVATION_CONTEXT_EXPIRED', 'Browser observation disconnected. Bind the intended tab again; do not reuse the old cursor.');
+      }
+      data = readBrowserEvents(tabId, args);
+    }
+    else if (command === 'network') {
+      if (typeof args.detail === 'string' && args.detail.startsWith('event:')) return { ok: true, data: await readNetworkEventDetail(chrome, tabId, args.detail) };
       const snapshot = await getCdpNetworkSnapshot(tabId, { businessOnly: !(args.all === true || args.all === 'true'), limit: 200 });
       let entries = snapshot.entries.map(entry => ({ ...entry, key: String(entry.requestId || `${entry.timestamp}:${entry.method}:${entry.url}`) }));
       if (args.match !== undefined) entries = entries.filter(entry => entry.url.includes(String(args.match)));
-      if (args.since !== undefined) {
-        const seconds = Number(String(args.since).replace(/s$/, ''));
-        if (!Number.isFinite(seconds) || seconds < 0) throw fail('INVALID_ARGUMENT', 'since must be a non-negative duration in seconds.');
-        entries = entries.filter(entry => entry.timestamp >= Date.now() - seconds * 1000);
-      }
+      const { lower, upper } = browserTimeWindow(args);
+      entries = entries.filter(entry => entry.timestamp >= lower && entry.timestamp <= upper);
       if (args.failed === true || args.failed === 'true') entries = entries.filter(entry => !entry.status || entry.status >= 400);
       if (args.detail) {
         const entry = entries.find(item => item.key === String(args.detail));
