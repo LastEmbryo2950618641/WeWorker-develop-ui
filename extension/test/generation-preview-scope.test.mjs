@@ -72,8 +72,9 @@ for (const fail of [false, true]) {
     const context = vm.createContext({
       generationPreviewGrants: new Map(), normalizeRouteHosts: value => value || [], crypto: { randomUUID: () => token }, SAFE_ADAPTER_ID_RE: /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/,
       findGenerationPreviewTab: async () => ({ id: 7, url: 'https://example.com/' }),
+      getHostAdapterRuntime: () => ({ exclusive: async (_id, operation) => operation() }),
       normalizeGenerationPreviewBundle: value => value, normalizeAdapterSupportFiles: () => [], scopedGenerationPreviewScripts,
-      chrome: { scripting: { executeScript: async () => [] }, tabs: { sendMessage: async (_id, message) => { messages.push(message); return f.message(message); } } },
+      chrome: { scripting: { executeScript: async () => [] }, tabs: { get: async () => ({ id: 7, url: 'https://example.com/' }), sendMessage: async (_id, message) => { messages.push(message); return f.message(message); } } },
       injectGenerationPreviewSourcesWithCdp: async (_id, scripts) => { for (const script of scripts) await vm.runInContext(script.source, f.context); if (fail) throw new Error('Fixture injection failure'); },
       sendTabMessage: async (_id, message) => { messages.push(message); return f.message(message); },
       callGenerationPreviewTool: async (_id, sessionToken, toolName, args) => (await f.message({ type: 'call_generation_preview', token: sessionToken, toolName, args })).result,

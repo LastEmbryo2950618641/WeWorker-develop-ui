@@ -73,6 +73,20 @@ webcli call exploration.intercept --args '{"taskId":"example-task","source":{"so
 - 有参数的每条命令至少写两组不同参数 cases，并以返回关键词、字段或行值的 equals 等断言验证参数确实生效。不要只验证非空。validate 在临时预览授权下真实执行，通过后审阅/安装，普通 `webcli call` 使用同一 helper。
 - 插件需要 intercept_read_v1。只支持当前主 frame、同一 document 的单步读查询；页面 origin/pathname 变化或整页导航、多个匹配响应、超时、HTTP/非 JSON、目标不唯一或无查询语义均报错。静默窗口 300ms，捕获超时 500–20000ms，JSON 上限 100 万字符；凭据字段脱敏，业务行不静默截断。更复杂流程继续明确报告未支持。
 
+### 跨页面查询（UI_SELECTOR query）
+
+搜索会整页导航，或结果来自 DOM/公开状态时，用 `exploration.query`。先观察实际查询控件、结果路径与数据来源；此命令只执行一次查询，不是任意步骤脚本。插件需要 page_query_v1。
+
+```bash
+webcli call exploration.query --args '{"taskId":"example-task","source":{"trigger":{"kind":"search","selector":"#search","submitSelector":"#search-submit","parameter":"keyword","description":"公开查询关键词"},"result":{"strategy":"UI_SELECTOR","selector":".item","fields":{"title":{"selector":"h3"}}},"resultPathname":"/results","matchQuery":{"q":"keyword"},"timeoutMs":20000},"values":{"keyword":"Example"},"reason":"搜索表单跳转到结果页，读取新列表"}'
+```
+
+- trigger 与 INTERCEPT 相同。result 使用 observe 的 UI_SELECTOR 或 DOM_STATE 格式。resultPathname 必须为同源固定路径；带参数的查询必须以 matchQuery 关联结果 URL 中的公开参数，不支持跨源跳转、动态路径或无 URL 关联的筛选。
+- 观察只存结构，不存 values。取得 evidence.pageSources 的 ID 后，用 strategy=UI_SELECTOR、sourcePageId 生成。必须编写至少两组不同参数的 cases，核对返回数据确实对应查询；不得仅检查非空。
+- 后台在主 frame 上触发一次查询，等待结果路径、URL 参数、加载状态和数据稳定。整页导航允许结果相同；SPA 必须观察到结果变化，旧列表不算成功。没有新导航或新数据时超时报错，不重放。
+- 生成命令分两阶段：首次返回声明式查询请求；后台查询后重新注入，以 handler 的第二个参数传回结果。Agent 如需修改字段映射，只在续接结果上转换，不重复触发控件，不把续接数据放进 CLI 业务参数。
+- manifest.pageWorkflow=true，pageRoute.additionalPaths 声明固定结果路径，因此安装后的普通 call 可从起始页或结果页重复查询。每次只触发一次；一个查询失败后，不把错误当成空列表。多步业务工作流仍未支持。
+
 ### 输出断言示例
 
 路径从**命令最终 JSON 输出的根**开始，用点分隔、`*` 匹配数组每一行，不做响应包装层或相似字段回退：
@@ -101,7 +115,7 @@ webcli call exploration.repair --args '{"taskId":"example-task","site":"example.
 - Bridge 重启中的任务标记 interrupted，明确选择重新 collect 或 validate；不自动重放探测或安装。
 - `cancel` 停止后续阶段并丢弃迟到结果；已派发浏览器请求可能完成。安装开始后不能取消。
 - start 可传 allowedOrigins 数组，显式授权额外 API origin，如 `https://api.example.com`；只允许精确 origin，无路径、凭据或通配符。流量不会自动扩大权限，安装 review 会列出新域名。
-- 默认 GET、Agent 计划下的只读 POST JSON/form/GraphQL query、API 动态路径、声明式 UI_SELECTOR/DOM_STATE 与单步 INTERCEPT 已支持。写命令、动态页面路由、自动多步 UI 工作流仍未支持；报告限制，不伪装成功。
+- 默认 GET、Agent 计划下的只读 POST JSON/form/GraphQL query、API 动态路径、声明式 UI_SELECTOR/DOM_STATE、单步 INTERCEPT 与跨文档页面查询已支持。写命令、动态页面路由、自动多步 UI 工作流仍未支持；报告限制，不伪装成功。
 - 使用 webcli-browser Skill 的 browser.* 触发搜索、翻页或检查页面状态，再 collect。采集/验证进行中不要操作同一页；TAB_BUSY 时等待。
 - trace 输出结构诊断、事件、文件清单与计划，便于交接修复；不含捕获正文或代码。verification-read 与 knowledge-read 可恢复作者测试用例；安装后修复使用 repair-info/repair，再走相同的验证、审阅与安装流程。
 - 证据的 URL 参数值被省略；不要把 `<value>` 作为实际查询值。业务参数来自用户输入，登录信息由既有浏览器运行时取得。

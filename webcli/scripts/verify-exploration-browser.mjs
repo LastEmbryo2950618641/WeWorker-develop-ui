@@ -16,6 +16,7 @@ const root = await fs.mkdtemp(path.join(os.tmpdir(), 'webcli-browser-acceptance-
 const copy = path.join(root, 'webcli');
 const extension = path.join(root, 'extension');
 const checks = [];
+const browserEvents = [];
 let browser, bridge, server;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const exec = promisify(execFile);
@@ -98,7 +99,13 @@ try {
   let renamedPageField = false;
   server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
-    if (url.pathname === '/intercept-only') {
+    if (['/query-start', '/query-results'].includes(url.pathname)) {
+      const keyword = url.searchParams.get('q') || 'Initial example';
+      const escaped = keyword.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+      res.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' });
+      res.end(`<!doctype html><title>Example document query</title><form action="/query-results" method="get"><input id="page-query" type="search" name="q" aria-label="Search public items" value="${escaped}"><button id="page-submit">Search</button></form><article class="query-row"><h3>${escaped}</h3></article>
+        <script>document.querySelector('form').onsubmit=()=>{const queries=JSON.parse(sessionStorage.getItem('exampleQuerySubmissions')||'[]');queries.push(document.querySelector('#page-query').value);sessionStorage.setItem('exampleQuerySubmissions',JSON.stringify(queries))};</script>`);
+    } else if (url.pathname === '/intercept-only') {
       const seed = crypto.randomUUID();
       for (let i = 1; i <= 100; i++) queryProofs.add(seed + ':' + i);
       const apiOrigin = `http://localhost:${server.address().port}`;
@@ -165,6 +172,10 @@ try {
   const origin = `http://127.0.0.1:${server.address().port}`;
   browser = await chromium.launchPersistentContext(path.join(root, 'browser-profile'), { channel: 'chromium', executablePath, headless: true,
     args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+  browser.on('page', current => {
+    current.on('framenavigated', frame => { if (frame === current.mainFrame()) browserEvents.push({ at: Date.now(), type: 'navigation', url: frame.url() }); });
+    current.on('pageerror', error => browserEvents.push({ type: 'error', message: error.message }));
+  });
   const page = await browser.newPage();
   page.on('dialog', () => {}); // The extension handles dialogs; disable Playwright's automatic dismissal.
   await page.goto(origin);
@@ -578,7 +589,8 @@ try {
       trigger: { kind: 'search', selector: method === 'GET' ? '#signed-query' : '#signed-post-query', submitSelector: method === 'GET' ? '#signed-submit' : '#signed-post-submit', parameter: 'keyword', description: 'Public search term' },
       ...(method === 'GET' ? { matchQuery: { q: 'keyword' } } : { matchBody: { keyword: 'keyword' } }), timeoutMs: 2000 },
       values: { keyword: 'Example observation ' + method }, reason: 'Public search only; the page generates an ephemeral request proof.' });
-    assert.equal((await settle(interceptTask)).status, 'evidence_ready');
+    const observedIntercept = await settle(interceptTask);
+    assert.equal(observedIntercept.status, 'evidence_ready', JSON.stringify(observedIntercept));
   }
   const interceptEvidence = (await cli('exploration.evidence', { taskId: interceptTask })).data;
   assert.equal(interceptEvidence.pageSources.length, 2);
@@ -618,6 +630,37 @@ try {
   await record('intercept-validation', interceptValidation);
   passed('cross-origin page-signed GET/POST INTERCEPT: direct replay fails, two changing queries each pass preview and installed calls, timeout/duplicate/HTTP errors are explicit');
 
+  const queryTab = (await cli('browser.open', { session: 'page-query', url: origin + '/query-start' })).data.tabId;
+  const queryTask = (await cli('exploration.start', { tabId: queryTab, goal: 'Search across full document navigation', requestId: 'example-page-query' })).data.taskId;
+  await settle(queryTask);
+  const querySource = { trigger: { kind: 'search', selector: '#page-query', submitSelector: '#page-submit', parameter: 'keyword', description: 'Public item query' },
+    result: { strategy: 'UI_SELECTOR', selector: '.query-row', fields: { title: { selector: 'h3' } } }, resultPathname: '/query-results', matchQuery: { q: 'keyword' } };
+  await cli('exploration.query', { taskId: queryTask, source: querySource, values: { keyword: 'Example observation only' }, reason: 'Search form navigates to a new result document.' });
+  const queryObserved = await settle(queryTask);
+  assert.equal(queryObserved.status, 'evidence_ready', JSON.stringify(queryObserved));
+  const queryEvidence = (await cli('exploration.evidence', { taskId: queryTask })).data;
+  assert.ok(!JSON.stringify(queryEvidence).includes('Example observation only'));
+  const queryDraft = (await cli('exploration.generate', { taskId: queryTask, plan: { tools: [{ name: 'page_search', strategy: 'UI_SELECTOR', sourcePageId: queryEvidence.pageSources[0].id, risk: 'read', readReason: 'Read-only form query', purpose: 'Search and read the new document' }] } })).data;
+  const queryTool = queryDraft.toolNames[0];
+  const queryCases = (await cli('exploration.verification-read', { taskId: queryTask, tool: queryTool })).data;
+  await cli('exploration.verification-write', { taskId: queryTask, tool: queryTool, expectedHash: queryCases.hash, cases: ['Example query first', 'Example query second'].map((keyword, i) => ({ id: 'document-' + i, args: { keyword }, expect: { equals: { 'data.items.0.title': keyword }, rowCount: { path: 'data.items', min: 1, max: 1 } } })) });
+  await cli('exploration.validate', { taskId: queryTask });
+  const queryValidation = await settle(queryTask);
+  assert.equal(queryValidation.status, 'review_ready', JSON.stringify(queryValidation));
+  assert.deepEqual(queryValidation.runtimeValidation.executionSummary, { attempted: 2, passed: 2, failed: 0, skipped: 0 });
+  const queryReview = (await cli('exploration.review', { taskId: queryTask })).data;
+  await cli('exploration.install', { taskId: queryTask, reviewId: queryReview.reviewId, confirmed: true });
+  assert.equal((await settle(queryTask)).status, 'installed');
+  for (const keyword of ['Example installed first', 'Example installed second']) {
+    const result = await cli(queryTool, { keyword }); assert.equal(result.ok, true, JSON.stringify(result)); assert.equal(result.data.items[0].title, keyword);
+  }
+  assert.deepEqual((await cli('browser.eval', { session: 'page-query', expression: "JSON.parse(sessionStorage.getItem('exampleQuerySubmissions'))" })).data.value,
+    ['Example observation only', 'Example query first', 'Example query second', 'Example installed first', 'Example installed second']);
+  const queryKnowledge = (await cli('exploration.knowledge-read', { site: queryReview.name })).data;
+  await cli('exploration.knowledge-save', { taskId: queryTask, expectedHash: queryKnowledge.hash });
+  await record('page-query-validation', queryValidation);
+  passed('full-document search survives navigation in observation, two strict preview cases, installation and repeated ordinary calls on the result route');
+
   const cancelledId = (await cli('exploration.start', { ...args, requestId: 'example-cancel' })).data.taskId;
   await cli('exploration.cancel', { taskId: cancelledId });
   await delay(5000);
@@ -635,7 +678,7 @@ try {
   const restoredKnowledge = (await cli('exploration.knowledge-read', { site: review.name })).data;
   assert.equal(restoredKnowledge.knowledge.commands[verificationTool].cases.length, 6);
   assert.equal(restoredKnowledge.stale, false);
-  assert.equal(restoredKnowledge.knowledge.pages.length, 6);
+  assert.equal(restoredKnowledge.knowledge.pages.length, 7);
   // Allow the extension's already-dispatched capture to finish before explicit resumption.
   await delay(5000);
   await cli('exploration.collect', { taskId: interruptedId });
@@ -643,7 +686,7 @@ try {
   assert.equal((await cli(generated.data.toolNames[0], { page: 2 })).ok, true);
   passed('Bridge restart restores tasks, marks interruption and permits explicit resumption');
 } catch (error) {
-  await record('failure', { message: error.message, stack: error.stack });
+  await record('failure', { message: error.message, stack: error.stack, browserEvents });
   console.error(error); process.exitCode = 1;
 } finally {
   await browser?.close();

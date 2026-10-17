@@ -55,23 +55,25 @@ export function pageSourceEvidence(observation) {
   return { version: 'page-source-v1', fingerprint: observation.id, strategy: observation.source.strategy,
     ...(observation.source.strategy === 'INTERCEPT' ? { endpoint: observation.source.endpoint } : {}),
     source: observation.source, expectedOrigin: observation.expectedOrigin, expectedPath: observation.expectedPath, reason: observation.reason,
-    risk: { level: 'read', confidence: 0.95, evidence: [observation.source.strategy === 'INTERCEPT' ? 'observed_correlated_ui_query' : 'observed_declarative_page_read'] } };
+    risk: { level: 'read', confidence: 0.95, evidence: [observation.source.strategy === 'INTERCEPT' || observation.source.mode === 'query' ? 'observed_correlated_ui_query' : 'observed_declarative_page_read'] } };
 }
 
 export function buildPageTool(site, tool, observation) {
   const name = `${site}.${tool.name}`, id = draftCommandId(tool.name);
   const payload = { source: observation.source, expectedOrigin: observation.expectedOrigin, expectedPath: observation.expectedPath };
-  const intercept = observation.source.strategy === 'INTERCEPT';
-  const parameter = intercept && observation.source.trigger.parameter;
+  const intercept = observation.source.strategy === 'INTERCEPT', query = observation.source.mode === 'query';
+  const parameter = (intercept || query) && observation.source.trigger.parameter;
   const parameters = { type: 'object', properties: parameter ? { [parameter]: { type: 'string', minLength: 1, maxLength: 1000, description: observation.source.trigger.description } } : {}, required: parameter ? [parameter] : [], additionalProperties: false };
   return { toolDefinition: { name, access: 'read', description: tool.purpose || `Read the observed ${observation.source.strategy} source on the current page.`,
-    pageRoute: { origin: observation.expectedOrigin, pathname: observation.expectedPath },
+    pageRoute: { origin: observation.expectedOrigin, pathname: observation.expectedPath, ...(query && observation.source.resultPathname !== observation.expectedPath ? { additionalPaths: [observation.source.resultPathname] } : {}) },
+    ...(query ? { pageWorkflow: true } : {}),
     pageStrategy: observation.source.strategy,
     parameters, generationSource: pageSourceEvidence(observation) },
     v2Content: `(function () {
-  window.__webcliRegisterCommand(${JSON.stringify(id)}, async function (args = {}) {
+  window.__webcliRegisterCommand(${JSON.stringify(id)}, async function (args = {}, continuation) {
     if (Object.keys(args).some(key => !${JSON.stringify(parameter ? [parameter] : [])}.includes(key))) return { ok: false, error: 'Unexpected page query parameters.' };
-    const reply = await chrome.runtime.sendMessage({ type: 'wecli_runtime_request', action: ${JSON.stringify(intercept ? 'intercept_read' : 'page_read')}, payload: { ...${JSON.stringify(payload)}, values: args } });
+    ${query ? `if (continuation?.kind !== 'page_query_result') return { __webcli_page_query: { version: 1, ...${JSON.stringify(payload)}, values: args } };
+    const reply = { ok: true, result: continuation.result };` : `const reply = await chrome.runtime.sendMessage({ type: 'wecli_runtime_request', action: ${JSON.stringify(intercept ? 'intercept_read' : 'page_read')}, payload: { ...${JSON.stringify(payload)}, values: args } });`}
     if (!reply?.ok) throw new Error(reply?.error?.message || 'Page query helper unavailable; update the browser extension.');
     return reply.result;
   });

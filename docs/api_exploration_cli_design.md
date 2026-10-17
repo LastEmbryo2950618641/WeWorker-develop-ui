@@ -37,6 +37,7 @@ Codex / Claude / 其他 CLI Agent + Skill
 | actions / probe | 复用插件安全搜索、筛选和分页候选，每任务最多三次探测 |
 | intercept | 触发已观察的搜索/筛选/下一页控件，按参数关联本次 JSON 响应；结构证据与页面路由绑定 |
 | observe | 观察声明式 UI_SELECTOR / DOM_STATE 来源，只保存路由、字段类型结构和选择理由 |
+| query | 单次只读控件触发后跨文档等待，以同源结果路径和 URL 参数关联 DOM/状态；观察仅存结构 |
 | cancel | 停止后续阶段，丢弃迟到结果；已经派发的浏览器操作可能完成 |
 | generate | 默认最多两个 GET；Agent plan 支持 1–50 个读取工具、JSON/form POST、GraphQL query、动态路径绑定与页面来源；POST/动态路径必须有 readReason |
 | repair-info / repair | 查看当前安装包摘要/历史 cases，从新证据建立所选已有只读命令的修复草稿；其他文件与命令保留 |
@@ -84,7 +85,13 @@ API 动态路径由显式 plan.pathParameters 绑定，包含 segmentIndex/name/
 
 INTERCEPT 由显式只读 API 候选、单步搜索/原生筛选/下一页控件及请求字段关联组成。背景监听器在触发前注册，仅接收开始后的 Fetch/XHR，准确匹配 origin/pathname/method 与传入的 query/body 参数；旧响应、不相关参数不算证据。复用已有 CDP，会话结束移除本监听器，不断开其他调试用户。返回完整 JSON，限制大小/复杂度并脱敏凭据字段；超时、多响应、HTTP、非 JSON、目标/路由变化明确失败，不回退旧结果。
 
-观察不保存参数值，页面来源绑定 plan 和生成包 pageStrategy=INTERCEPT；参数命令至少两组不同值与作者输出断言。临时预览令牌绑定 tab/route/有效期和草稿 manifest 的主机授权，只用于 intercept_read，finally 清理；普通调用从匹配页面主机的唯一安装包解析授权，拒绝合并多个包的权限。页面可在同一 document 内更新查询串，整页导航触发 INTERCEPT_DOCUMENT_CHANGED；路径变化和多步导航不在本阶段范围。原生输入前将明确选择的页面带到前台，避免后台标签页吞掉 CDP 点击。
+观察不保存参数值，页面来源绑定 plan 和生成包 pageStrategy=INTERCEPT；参数命令至少两组不同值与作者输出断言。临时预览令牌绑定 tab/route/有效期和草稿 manifest 的主机授权，只用于 intercept_read，finally 清理；普通调用从匹配页面主机的唯一安装包解析授权，拒绝合并多个包的权限。页面可在同一 document 内更新查询串，整页导航触发 INTERCEPT_DOCUMENT_CHANGED。原生输入前将明确选择的页面带到前台，避免后台标签页吞掉 CDP 点击。
+
+整页导航使用独立 exploration.query：来源仍为 UI_SELECTOR，mode=query，声明一个读控件、result（UI_SELECTOR/DOM_STATE）、同源固定 resultPathname 和公开 URL 参数关联。后台执行一次，跟踪主 frame 导航，等待路径/参数/加载完成与数据稳定；SPA 必须有不同于操作前的数据，不把旧 DOM 当新结果。观察只保存结构，参数命令至少两组不同作者 cases。
+
+生成 handler 首次返回声明式 __webcli_page_query，后台执行后重新注入包，再以独立第二参数传入 page_query_result。只允许一次续接，错误/写操作/重复请求不重放；CLI 业务参数不能伪造续接。pageWorkflow 和 pageRoute.additionalPaths 允许普通调用从固定起始/结果页执行。预览使用同样流程，重建临时 registry/grant，结束清理。协议能力 page_query_v1 防止旧插件忽略。动态路径、跨源导航、无 URL 关联的筛选和多步流程仍未支持。
+
+Adapter 目录刷新、普通调用、探索读取/捕获/探测、预览验证及已有标签页的 browser 操作共用扩展页面执行队列，避免异步刷新重载打断查询；dialog 独立执行以解除等待。不依赖固定延时解决竞争，也不重试业务动作。
 
 这允许页面自行生成签名/临时请求头，未提供通用签名算法、凭据提取或自动策略回退。当前不支持多步 UI、复杂自定义筛选、子 frame 或动态 API pathname。
 
@@ -122,8 +129,10 @@ Agent 可以为最终命令输出声明 requiredPaths、types、notEmpty、patte
 
 ## 验证与未完成范围
 
-具体命令和数量见交接日志。当前 WebCLI 全量 103 文件、1094 项通过。真实 Chromium + 未打包插件 + 独立 CLI/Bridge + loopback 示例站点 24 项通过，包含浏览器操作、POST/GraphQL 工具、六组精确断言、知识持久化、API/DOM 定向修复、三个页面来源、动态 GET/POST 路径参数及跨域 INTERCEPT 闭环。用户指定的真实公共视频搜索页已完成采集、生成、修复、验证、增量安装和普通 CLI 搜索/分页，DOM 命令也与当前页面逐项核对；原始页面/响应未进入仓库。动态路径本轮使用公开占位 loopback 示例站点验收，不代表已在该外部搜索站点验证动态详情接口。
+具体命令和数量见交接日志。当前 WebCLI 全量 104 文件、1100 项通过。真实 Chromium + 未打包插件 + 独立 CLI/Bridge + loopback 示例站点 25 项通过，包含浏览器操作、POST/GraphQL 工具、六组精确断言、知识持久化、API/DOM 定向修复、三个页面来源、动态 GET/POST 路径参数、跨域 INTERCEPT 及跨文档页面查询闭环。用户指定的真实公共视频搜索页已完成采集、生成、修复、验证、增量安装和普通 CLI 搜索/分页，DOM 命令也与当前页面逐项核对；原始页面/响应未进入仓库。动态路径本轮使用公开占位 loopback 示例站点验收，不代表已在该外部搜索站点验证动态详情接口。
 
 验收脚本为 `webcli/scripts/verify-exploration-browser.mjs`；使用临时副本改变连接端口及 CLI 配置目录，生产协议和默认端口未改。只启动/停止脚本自己创建的服务和浏览器，Adapter 安装、任务和浏览器配置均隔离。Playwright 只用于测试浏览器启动与示例页面导航，探索/生成/验证/安装和业务调用均经过真实 CLI 与插件，不 mock 扩展传输、fetch 或验证器。
 
-待做：自动策略选择/回退、动态页面路由/整页导航/多步 UI、通用 CSRF/签名、写命令、知识冲突修订与共享文件/写命令修复；Codex/Claude 各一次全新独立对话验收、各平台安装包；API 探索 UI/旧聊天入口统一，以及能力台账中的其他差距。当前证据不代表任意 Agent 在任意站点上的生成质量已验证。
+待做：自动策略选择/回退、动态页面路由/多步 UI、通用 CSRF/签名、写命令、知识冲突修订与共享文件/写命令修复；Codex/Claude 各一次全新独立对话验收、各平台安装包；API 探索 UI/旧聊天入口统一，以及能力台账中的其他差距。当前证据不代表任意 Agent 在任意站点上的生成质量已验证。
+
+跨文档查询真实增量：用户 Chrome 的新页面搜索命令以 excel/spreadsheet 两组严格预览通过；安装后普通调用分别读取 24/27 张视频卡片，标题与链接逐项等于当前页面，结果随关键词变化。旧 API 三组返回 17/20/20 视频、DOM 24 张、INTERCEPT 下一页返回 38 视频，均通过。B 站相同关键词不会触发新查询，命令明确 PAGE_QUERY_TIMEOUT，不能用同词搜索重置页码；已通过切换词恢复 excel 第一页。该限制写入本地知识，不作通用多步流程完成结论。

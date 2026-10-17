@@ -3,9 +3,31 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import vm from "node:vm";
+import { createHostAdapterRuntime } from '../background/host-adapter-runtime.js';
 import { runServiceWorkerInContext } from "./helpers/service-worker-test-loader.mjs";
 
 const ROOT = process.cwd();
+
+test('exploration and browser operations share the refresh queue; dialogs can unblock it', async () => {
+  const worker = loadServiceWorker({ tabs: [{ id: 7, url: 'https://example.com/', status: 'complete' }] });
+  const runtime = createHostAdapterRuntime({});
+  worker.context.getHostAdapterRuntime = () => runtime;
+  for (const [type, implementation] of [['exploration_intercept_read', 'executeInterceptRead'], ['exploration_page_query', 'executePageQuery'],
+    ['exploration_observe_page', 'executePageSource'], ['exploration_capture_passive', 'runExploreWorkflow'], ['browser_execute', 'executeBrowserCommand']]) {
+    let finish; const order = [];
+    worker.context[implementation] = async () => { order.push('query'); await new Promise(resolve => finish = resolve); return { ok: true }; };
+    const operation = worker.context.handleNativeMessage({ type, tabId: 7, command: 'click', id: 'example-query' });
+    while (!finish) await new Promise(resolve => setImmediate(resolve));
+    const refresh = runtime.exclusive(7, async () => order.push('refresh'));
+    await new Promise(resolve => setImmediate(resolve)); assert.deepEqual(order, ['query']);
+    if (type === 'browser_execute') {
+      worker.context.executeBrowserCommand = async () => { order.push('dialog'); return { ok: true }; };
+      await worker.context.handleNativeMessage({ type, tabId: 7, command: 'dialog', id: 'example-dialog' });
+      assert.deepEqual(order, ['query', 'dialog']);
+    }
+    finish(); await operation; await refresh; assert.equal(order.at(-1), 'refresh');
+  }
+});
 
 function plain(value) {
   return JSON.parse(JSON.stringify(value));
@@ -294,6 +316,10 @@ test('page source commands select exact origin/path, reject ambiguity, and never
   assert.equal((await worker.callNativeTool('fixture.read-page')).result.error.code, 'PAGE_SOURCE_ROUTE_MISSING');
   assert.equal(tabs.length, 4);
   assert.deepEqual(executed, [3, 4]);
+  manifest.commands[0].pageRoute.additionalPaths = ['/results'];
+  tabs[2].url = 'https://example.com/results?q=example';
+  assert.equal((await worker.callNativeTool('fixture.read-page')).result, 'fixture-result');
+  assert.deepEqual(executed, [3, 4, 3]);
 });
 
 test("managed background calls select the offscreen runner without opening a site tab", async () => {

@@ -167,7 +167,7 @@ export function validateV2Manifest(manifest, directoryName = "?") {
       let url;
       try { url = new URL(route?.origin + route?.pathname); } catch { /* Rejected below. */ }
       if (!route || typeof route !== 'object' || Array.isArray(route)
-        || Object.keys(route).some(key => !['origin', 'pathname'].includes(key))
+        || Object.keys(route).some(key => !['origin', 'pathname', 'additionalPaths'].includes(key))
         || typeof route.pathname !== 'string' || !/^\/(?!\/)/.test(route.pathname)
         || command.runtime !== 'extension' || command.execution || command.safety === 'write'
         || !url || !['http:', 'https:'].includes(url.protocol) || url.username || url.password
@@ -177,6 +177,13 @@ export function validateV2Manifest(manifest, directoryName = "?") {
         fail(adapterName, `Command "${id}" pageRoute must be an exact declared HTTP(S) origin and pathname for a foreground read command.`);
       }
     }
+    if (command.pageRoute?.additionalPaths !== undefined) {
+      const paths = command.pageRoute.additionalPaths;
+      if (command.pageWorkflow !== true || !Array.isArray(paths) || paths.length > 4 || paths.some(value => {
+        try { const url = new URL(value, command.pageRoute.origin); return typeof value !== 'string' || !value.startsWith('/') || url.origin !== command.pageRoute.origin || url.pathname !== value || url.search || url.hash; } catch { return true; }
+      })) fail(adapterName, 'additionalPaths must be up to four exact same-origin workflow pathnames.');
+    }
+    if (command.pageWorkflow !== undefined && (command.pageWorkflow !== true || command.pageStrategy !== 'UI_SELECTOR' || !command.pageRoute)) fail(adapterName, 'pageWorkflow requires a UI_SELECTOR pageRoute.');
     if (command.pageStrategy !== undefined && (!command.pageRoute || !['UI_SELECTOR', 'DOM_STATE', 'INTERCEPT'].includes(command.pageStrategy))) fail(adapterName, 'pageStrategy must name a supported strategy with pageRoute.');
     runtimesPresent.add(command.runtime);
     const ext = command.runtime === "extension" ? "js" : "py";

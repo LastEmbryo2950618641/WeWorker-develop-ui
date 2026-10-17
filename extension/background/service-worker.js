@@ -8,6 +8,7 @@ import { executeBrowserCommand } from './browser-commands.js';
 import { browserResponseEvidence } from './browser-network.js';
 import { executePageSource } from './page-source.js';
 import { executeInterceptRead } from './intercept-read.js';
+import { executePageQuery } from './page-query.js';
 import { recordBrowserObservation, clearBrowserObservations } from './browser-observations.js';
 
 /**
@@ -42,6 +43,7 @@ const EXTENSION_CAPABILITIES = [
   'strict_output_contract_v1',
   'page_sources_v1',
   'intercept_read_v1',
+  'page_query_v1',
 ];
 
 function buildExtensionHello(extra = {}) {
@@ -2691,7 +2693,7 @@ async function handleNativeMessage(msg) {
           const { origin, pathname } = selected.command.pageRoute;
           assertAdapterNavigationUrl(selected.manifest, origin + pathname);
           const matches = tabs.filter(entry => {
-            try { const url = new URL(entry.url); return url.origin === origin && url.pathname === pathname; }
+            try { const url = new URL(entry.url); return url.origin === origin && [pathname, ...(selected.command.pageRoute.additionalPaths || [])].includes(url.pathname); }
             catch { return false; }
           });
           const activeMatches = matches.filter(entry => entry.active);
@@ -2725,7 +2727,7 @@ async function handleNativeMessage(msg) {
           tab = await chrome.tabs.create({ url: startUrl, active: false });
         }
         const result = await getHostAdapterRuntime().execute(tab.id, selected.manifest, tab.url,
-          (remainingMs) => callToolInTab(tab.id, selected.manifest.name + '.' + selected.command.id, args || {}, traceID, false, remainingMs), selected.command, traceID);
+          (remainingMs, continuation) => callToolInTab(tab.id, selected.manifest.name + '.' + selected.command.id, args || {}, traceID, false, remainingMs, continuation), selected.command, traceID);
         sendToNative({ type: 'call_tool_result', id: msg.id, result, traceID });
         return;
       }
@@ -2846,12 +2848,15 @@ async function handleNativeMessage(msg) {
       sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
     }
 
+  } else if (msg.type === 'exploration_page_query') {
+    const result = await getHostAdapterRuntime().exclusive(Number(msg.tabId), () => executePageQuery({ chrome, ensureCdpAttached, tabId: Number(msg.tabId), payload: { ...msg.payload, metadataOnly: true } }));
+    sendToNative({ type: 'call_tool_result', id: msg.id, result });
   } else if (msg.type === 'exploration_intercept_read') {
-    const result = await executeInterceptRead({ chrome, ensureCdpAttached, tabId: Number(msg.tabId), payload: { ...msg.payload, metadataOnly: true } });
+    const result = await getHostAdapterRuntime().exclusive(Number(msg.tabId), () => executeInterceptRead({ chrome, ensureCdpAttached, tabId: Number(msg.tabId), payload: { ...msg.payload, metadataOnly: true } }));
     sendToNative({ type: 'call_tool_result', id: msg.id, result });
   } else if (msg.type === 'exploration_observe_page') {
     try {
-      const result = await executePageSource(chrome, Number(msg.tabId), { ...msg.payload, metadataOnly: true });
+      const result = await getHostAdapterRuntime().exclusive(Number(msg.tabId), () => executePageSource(chrome, Number(msg.tabId), { ...msg.payload, metadataOnly: true }));
       sendToNative({ type: 'call_tool_result', id: msg.id, result });
     } catch {
       sendToNative({ type: 'call_tool_error', id: msg.id, error: 'Unable to observe the selected page.' });
@@ -2859,7 +2864,9 @@ async function handleNativeMessage(msg) {
 
   } else if (msg.type === 'exploration_capture_passive') {
     try {
-      const result = await runExploreWorkflow({ tabId: msg.tabId ?? null });
+      const tabId = await getExplorationTabId(msg.tabId);
+      if (!tabId) throw new Error('未找到可用于探索的标签页');
+      const result = await getHostAdapterRuntime().exclusive(tabId, () => runExploreWorkflow({ tabId }));
       sendToNative({ type: 'call_tool_result', id: msg.id, result });
     } catch (err) {
       sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
@@ -2867,7 +2874,7 @@ async function handleNativeMessage(msg) {
 
   } else if (msg.type === 'exploration_safe_actions_inspect') {
     try {
-      const result = await inspectSafeApiActions(Number(msg.tabId));
+      const result = await getHostAdapterRuntime().exclusive(Number(msg.tabId), () => inspectSafeApiActions(Number(msg.tabId)));
       sendToNative({ type: 'call_tool_result', id: msg.id, result });
     } catch (err) {
       sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
@@ -2875,11 +2882,11 @@ async function handleNativeMessage(msg) {
 
   } else if (msg.type === 'exploration_safe_probe_run') {
     try {
-      const result = await runSafeApiProbe({
+      const result = await getHostAdapterRuntime().exclusive(Number(msg.tabId), () => runSafeApiProbe({
         tabId: Number(msg.tabId),
         candidateId: String(msg.candidateId || ''),
         value: String(msg.value || ''),
-      });
+      }));
       sendToNative({ type: 'call_tool_result', id: msg.id, result });
     } catch (err) {
       sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
@@ -2887,13 +2894,13 @@ async function handleNativeMessage(msg) {
 
   } else if (msg.type === 'exploration_replay_candidate') {
     try {
-      const result = await runExplorationCandidateReplay({
+      const result = await getHostAdapterRuntime().exclusive(Number(msg.tabId), () => runExplorationCandidateReplay({
         tabId: Number(msg.tabId),
         url: String(msg.url || ''),
         method: String(msg.method || 'GET'),
         headers: msg.headers && typeof msg.headers === 'object' ? msg.headers : {},
         body: String(msg.body || ''),
-      });
+      }));
       sendToNative({ type: 'call_tool_result', id: msg.id, result });
     } catch (err) {
       sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
@@ -3295,7 +3302,10 @@ async function handleNativeMessage(msg) {
       sendToNative({ type: "call_tool_error", id: msg.id, error: err.message });
     }
   } else if (msg.type === 'browser_execute') {
-    const result = await executeBrowserCommand(msg, { chrome, ensureCdpAttached, cdpEvaluate, getCdpNetworkSnapshot });
+    const operation = () => executeBrowserCommand(msg, { chrome, ensureCdpAttached, cdpEvaluate, getCdpNetworkSnapshot });
+    // Dialog handling must remain available to release an operation waiting for it.
+    const result = Number.isInteger(msg.tabId) && msg.command !== 'dialog'
+      ? await getHostAdapterRuntime().exclusive(msg.tabId, operation) : await operation();
     sendToNative({ type: 'call_tool_result', id: msg.id, result });
   } else if (msg.type === 'browser_state') {
     try {
@@ -4950,11 +4960,11 @@ async function refreshDirectStorageContext({ routeDomain, tabDomain, excludeTabD
  * 当 sendMessage 因 bfcache 失败时，我们主动激活标签页将其从 bfcache 中唤醒，
  * 等待页面恢复后重试。
  */
-async function callToolInTab(tabId, toolName, args, traceID = null, allowTransportRetry = true, timeoutMs = null) {
+async function callToolInTab(tabId, toolName, args, traceID = null, allowTransportRetry = true, timeoutMs = null, continuation = null) {
   const tracePrefix = traceID ? `[${traceID}] ` : '';
   traceLog(traceID, `[ServiceWorker] 发送到 Content Script: tab=${tabId} tool=${toolName}`);
 
-  const message = { type: "call_tool", toolName, args };
+  const message = { type: "call_tool", toolName, args, ...(continuation ? { continuation } : {}) };
   if (traceID) message.traceID = traceID;
 
   const createAdapterError = (message) => {
@@ -7045,6 +7055,12 @@ function getHostAdapterRuntime() {
     },
     inject: injectV2AdapterWithCode,
     ready: (tabId, manifest, timeoutMs, traceID) => waitForManagedPageReady(tabId, manifest, true, timeoutMs, traceID),
+    query: (tabId, payload, manifest, command) => {
+      if (payload.expectedOrigin !== command.pageRoute.origin || payload.expectedPath !== command.pageRoute.pathname
+        || ![command.pageRoute.pathname, ...(command.pageRoute.additionalPaths || [])].includes(payload.source?.resultPathname)) throw new Error('Page query route differs from the selected command.');
+      assertAdapterNavigationUrl(manifest, payload.expectedOrigin + payload.source.resultPathname);
+      return executePageQuery({ chrome, ensureCdpAttached, tabId, payload: { ...payload, metadataOnly: false } });
+    },
     navigate: (tabId, url, manifest, resume, timeoutMs) => navigateAdapterTab(chrome, tabId, url, manifest, resume, timeoutMs),
   });
 }
@@ -7716,9 +7732,9 @@ function describeGenerationOutputShape(value) {
   };
 }
 
-async function callGenerationPreviewTool(tabId, token, toolName, args, timeoutMs = 30000) {
+async function callGenerationPreviewTool(tabId, token, toolName, args, timeoutMs = 30000, continuation = null) {
   const response = await Promise.race([
-    chrome.tabs.sendMessage(tabId, { type: 'call_generation_preview', token, toolName, args }),
+    chrome.tabs.sendMessage(tabId, { type: 'call_generation_preview', token, toolName, args, ...(continuation ? { continuation } : {}) }),
     new Promise((_, reject) => setTimeout(() => reject(new Error(`tool timed out after ${timeoutMs}ms`)), timeoutMs)),
   ]);
   if (response?.error) throw new Error(response.error);
@@ -7751,6 +7767,12 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
     };
   }
 
+  return getHostAdapterRuntime().exclusive(targetTab.id, async () => validateGenerationPreviewOnTab({
+    previewAdapterId, previewBundle, siteKey, expectedToolNames, testCases,
+  }, await chrome.tabs.get(targetTab.id)));
+}
+
+async function validateGenerationPreviewOnTab({ previewAdapterId, previewBundle, siteKey, expectedToolNames, testCases }, targetTab) {
   const inlinePreview = normalizeGenerationPreviewBundle(previewBundle);
   const manifest = inlinePreview?.manifest || await loadAdapterManifest(previewAdapterId);
   if (!manifest) throw new Error(`preview manifest not found: ${previewAdapterId}`);
@@ -7830,7 +7852,26 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
             }
             runtimeArguments = buildCaptureBoundArguments(capturedEntry, tool, testCase);
           }
-          const output = await callGenerationPreviewTool(targetTab.id, token, toolName, runtimeArguments);
+          let output = await callGenerationPreviewTool(targetTab.id, token, toolName, runtimeArguments);
+          if (output?.__webcli_page_query) {
+            const command = manifest.commands?.find(entry => `${manifest.name}.${entry.id}` === toolName);
+            const payload = output.__webcli_page_query;
+            if (command?.pageWorkflow !== true || command.safety !== 'read' || payload.version !== 1
+              || payload.expectedOrigin !== command.pageRoute?.origin || payload.expectedPath !== command.pageRoute?.pathname
+              || ![command.pageRoute.pathname, ...(command.pageRoute.additionalPaths || [])].includes(payload.source?.resultPathname)) throw new Error('Invalid preview page query continuation.');
+            const result = await executePageQuery({ chrome, ensureCdpAttached, tabId: targetTab.id, payload: { ...payload, metadataOnly: false } });
+            if (!result.ok) output = result;
+            else {
+              await sendTabMessage(targetTab.id, { type: 'end_generation_preview', token });
+              await chrome.scripting.executeScript({ target: { tabId: targetTab.id }, world: 'ISOLATED', files: ['content/preview-registry.js'] });
+              const restored = await chrome.tabs.sendMessage(targetTab.id, { type: 'begin_generation_preview', token, siteKey, previewAdapterId, packageDigest: inlinePreview?.packageDigest || null, allowQueryChanges: manifest.commands?.some(command => command.pageStrategy === 'INTERCEPT') === true });
+              if (!restored?.ok) throw new Error('Unable to resume preview after query.');
+              generationPreviewGrants.get(token).url = (await chrome.tabs.get(targetTab.id)).url;
+              await injectGenerationPreviewSourcesWithCdp(targetTab.id, scopedGenerationPreviewScripts(scripts, token));
+              output = await callGenerationPreviewTool(targetTab.id, token, toolName, runtimeArguments, 30000, { kind: 'page_query_result', result });
+              if (output?.__webcli_page_query || output?.__webcli_navigation) throw new Error('Preview query must return a final result after resuming.');
+            }
+          }
           const contractResult = validateGenerationPreviewOutput(output, testCase.contract || {});
           toolResults.push({
             toolName,

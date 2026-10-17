@@ -338,3 +338,20 @@ npm run test:exploration:browser --prefix webcli -- \
 - 下一步：策略选择/回退与支持整页导航的 UI 查询，多步 UI、动态页面路径、写命令、知识冲突修订、复杂 frame/Shadow、多连接/下载、UI 共用服务、独立 Agent 对话和 OpenCLI 最新版本对照。当前只完成单步 INTERCEPT，不应将这批测试通过标为完整目标完成。
 
 - 最终验证：新增整页导航（pathname 相同）真实 fixture，任务必须返回 INTERCEPT_DOCUMENT_CHANGED；最终隔离 Chromium 24 项全部通过，报告位于系统临时目录 `webcli-browser-acceptance-mDwIZ7/report.json`（不提交）。最终 Extension 核心 13 项再次通过；完整聚焦集合此前 63 项通过。用户插件重载最新代码后，普通下一页调用再次验证第 1→2 页，返回 38 视频/排除 4 非视频，随后恢复 excel 第一页。WebCLI 全量 1094 项结果仍对应当前 WebCLI 逻辑；最终变更仅扩展导航守卫及文档/测试，相关测试已覆盖。19 个修改/新增 JS 文件语法、git diff --check 通过；最终 npm pack dry-run 586 文件。此阶段将提交为一个本地检查点，未推送、未开 PR。
+
+### 2026-10-17：跨文档页面查询与探索刷新竞争修复
+
+- 从已提交检查点 `123cd43` 接续，仍在 `codex/api-exploration-cli`。develop `4c3d5bd`、dev-1.1.0 `dae8932` 和集成基线 `baf9f98` 未变，本轮没有同步上游；后续仍按本文“上游→集成基线→功能分支”处理，不重复合并已纳入 #106/#91。完整 OpenCLI 对齐目标继续 active。
+- 新增 exploration.query，独立模块 exploration-query.js / extension/background/page-query.js，能力 page_query_v1。来源为 UI_SELECTOR mode=query，复用搜索/原生筛选/下一页触发语义，声明 result UI_SELECTOR/DOM_STATE、同源固定 resultPathname 和公开 URL 参数关联；观察只保存结构，不保存输入值。参数命令必须有两组不同值作者 cases。
+- 后台监听主 frame 导航，单次触发后等待 URL、加载完成、数据稳定。整页导航允许同样结果；SPA 必须有数据变化，不能把旧列表当新证据。子 frame history 不算主页面变化；输入/select 同步导航导致上下文消失时仅在已观察到导航后继续，不重放动作。超时/跨源/缺字段明确失败。
+- 生成 handler 首次返回声明式 __webcli_page_query，后台执行后重新注入，再经独立第二参数续接 page_query_result；不把续接放进业务参数。普通调用和预览都限定读命令及一次续接，写命令/重复标记拒绝。manifest pageWorkflow=true、pageRoute.additionalPaths 允许起始页和固定结果页；临时预览 registry/grant 在导航后重建并更新路由，finally 清理。
+- 整体真实回归最初在原 INTERCEPT 首次观察失败，单独抽取却通过。初始 loaderId 假设不足以解释，保留失败记录继续定位。为隔离副本临时记录 chrome.tabs.reload 调用栈与导航时间，确认 refreshAdapterTabs 在查询响应返回后、静默完成前重载该页；源自异步 Adapter 目录刷新。最终修复将探索观察/INTERCEPT/query/采集/探测/回放、预览验证、已有页 browser 操作纳入 managed runtime 页面队列；dialog 绕过等待以解除弹窗。没有降低文档变化守卫、重试业务动作或增加固定延时掩盖问题。临时 reload 插桩已从验收脚本移除，只保留失败时的隔离 fixture 导航诊断。
+- 自动化：WebCLI 全量 104 文件/1100 项；Extension page-query/intercept/page-source/refresh/preview/route/helper/browser 聚焦 58 项通过。涵盖路由拒绝、续接不重放、两个不同 cases、参数不落持久记录、旧插件拒绝、SPA 旧数据/子 frame 导航拒绝，以及探索/刷新队列与弹窗解锁。
+- 隔离真实 Chromium 25 项通过。新增无 JSON API 的 GET 表单从 /query-start 跳转 /query-results：观察、两组精确标题 cases、安装与两次普通调用通过；fixture 的 sessionStorage 提交记录精确等于五个作者关键词，证明没有重复执行查询。其余 API/路径参数/DOM/INTERCEPT/修复/知识/取消/重启恢复继续通过。第一轮成功报告为系统临时目录 webcli-browser-acceptance-hGKtGS/report.json；去掉诊断插桩后的复验结果追加于本节末尾。
+- 用户 Chrome：核实本任务 source Bridge 进程完整命令后更新为当前源码；重载已经安装的工作区 extension-dist，doctor 确认 page_query_v1。重新选择并绑定用户指定搜索页；没有关闭用户标签页。当前 source Bridge/插件已包含本轮功能，下次先 doctor/tabs/list 查询，不能假定历史 PID/tabId。
+- B 站生成本地 bilibili.com.explored-ui-search-videos：观察实际 input.search-input-el、button.search-button 和普通视频卡片来源；新增实际 URL/输入框关键词校验与规范化链接。excel/spreadsheet 两组真实预览通过，审阅无新增权限后增量安装。普通调用分别返回 24/27 张卡片，标题/链接与当前页面逐项完全一致，结果随关键词变化。它仅返回当前已渲染普通视频卡片，不代表站点总量。
+- 真实回归：原 API 三组返回 17/20/20 个视频，DOM 24 张，下一页从 1→2 返回 38 视频；新旧命令均能使用。发现 B 站点击相同关键词搜索不会发起新导航，第 2 页同词调用返回 PAGE_QUERY_TIMEOUT，未误报成功；这是本次查询对新导航/数据的明确要求，不能把同词调用解释为重置页码。随后切换 spreadsheet 再 excel，核实已恢复 excel 第 1 页。新来源、cases、字段与该限制存入本地知识，stale=false；未提交真实返回内容或本地生成包。
+- CLI/Bridge 构建、公开配置和 npm pack dry-run 588 文件通过，含两个 query 模块和更新 Skill；无依赖/lockfile 变化。构建/prepare/pack 与依赖资产的测试顺序执行。已有可选列映射资源缺失警告未改。Python 相对 af8e082 无差异，未触碰其环境、测试、生命周期或持久数据；未推送、未开 PR。
+- 接手下一步：策略选择/失败后明确回退；通用 CSRF/签名、动态页面路由和多步 UI；写命令语义与验证；知识冲突修订和共享文件修复；复杂 frame/Shadow/profile/连接/下载；UI 和内部聊天共享服务；独立 Codex/Claude 对话及平台分发验收；OpenCLI 1.8.8 实际差异审计。不要把当前单次查询闭环当成全部 OpenCLI 能力完成。
+
+- 最终复验：去掉 reload 诊断插桩后，隔离 Chromium 25 项再次全部通过，报告在系统临时目录 webcli-browser-acceptance-fQAFMd/report.json。最终 WebCLI 104 文件/1100 项、Extension 聚焦 58 项通过；23 个修改/新增 JS 文件语法与 git diff --check 通过。当前代码和交接记录将作为本地检查点提交，完整对齐目标仍进行中。

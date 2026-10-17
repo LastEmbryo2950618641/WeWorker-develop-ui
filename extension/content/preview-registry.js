@@ -53,7 +53,7 @@
       if (msg.type === 'get_generation_preview') { respond({ ok: true, tools: session.tools, previewAdapterId: session.previewAdapterId, packageDigest: session.packageDigest }); return true; }
       const handler = session.handlers.get(msg.toolName);
       if (!handler) throw new Error('Preview command is not registered');
-      Promise.resolve().then(() => handler(msg.args || {})).then(result => {
+      Promise.resolve().then(() => handler(msg.args || {}, msg.continuation)).then(result => {
         requireSession(msg.token);
         respond({ result });
       }).catch(error => respond({ error: error.message || String(error) }));

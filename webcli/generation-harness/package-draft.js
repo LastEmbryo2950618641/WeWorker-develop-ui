@@ -55,6 +55,7 @@ export function writePackageDraft({ memory, adapterDir, supportBundle, paths }) 
       description: tool.description, schema: tool.parameters, safety: tool.access === 'write' ? 'write' : 'read',
       ...(tool.pageRoute ? { pageRoute: tool.pageRoute } : {}),
       ...(tool.pageStrategy ? { pageStrategy: tool.pageStrategy } : {}),
+      ...(tool.pageWorkflow ? { pageWorkflow: true } : {}),
       ...(retained ? { routeDomain: memory.siteHost || name, tabDomain: memory.siteHost || name } : {}),
     };
   });

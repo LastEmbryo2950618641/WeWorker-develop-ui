@@ -4,13 +4,7 @@ const sensitive = /password|passwd|secret|cookie|authorization|credential|api.?k
 const safe = value => typeof value === 'string' && /^[a-zA-Z][a-zA-Z0-9_]{0,63}$/.test(value) && !sensitive.test(value) && !['constructor', 'prototype'].includes(value);
 const reject = message => { throw fail('INVALID_INTERCEPT_SOURCE', message); };
 const keys = (value, names) => { if (!object(value) || Object.keys(value).some(key => !names.includes(key))) reject('Unsupported intercept source fields.'); };
-export function normalizeInterceptSource(input, candidates) {
-  keys(input, ['sourceApiIndex', 'trigger', 'matchQuery', 'matchBody', 'timeoutMs']);
-  const candidate = Number.isSafeInteger(input.sourceApiIndex) && candidates[input.sourceApiIndex];
-  if (!candidate || candidate.risk?.level !== 'read' || candidate.status < 200 || candidate.status >= 300 || !['GET', 'POST'].includes(candidate.method) || candidate.responseEvidence?.bodyKind !== 'json') reject('Select a successful observed read-only JSON API by sourceApiIndex.');
-  const url = new URL(candidate.url);
-  if (url.pathname.includes(':id')) reject('Intercept currently requires an exact observed endpoint pathname.');
-  const trigger = input.trigger;
+export function normalizeReadTrigger(trigger) {
   keys(trigger, ['kind', 'selector', 'submitSelector', 'parameter', 'description', 'pressEnter']);
   if (!['search', 'filter', 'pagination'].includes(trigger.kind)) reject('trigger.kind must be search, filter or pagination.');
   for (const selector of [trigger.selector, trigger.submitSelector]) if (selector !== undefined && (typeof selector !== 'string' || !selector.trim() || selector.length > 1000)) reject('Use a CSS selector of at most 1000 characters.');
@@ -21,6 +15,15 @@ export function normalizeInterceptSource(input, candidates) {
   if (trigger.kind !== 'pagination') {
     if (!safe(trigger.parameter) || typeof trigger.description !== 'string' || !trigger.description.trim() || trigger.description.length > 500) reject('Search/filter needs a public parameter name and description.');
   } else if (trigger.parameter || trigger.description) reject('Pagination triggers take no value parameter.');
+  return { ...trigger };
+}
+export function normalizeInterceptSource(input, candidates) {
+  keys(input, ['sourceApiIndex', 'trigger', 'matchQuery', 'matchBody', 'timeoutMs']);
+  const candidate = Number.isSafeInteger(input.sourceApiIndex) && candidates[input.sourceApiIndex];
+  if (!candidate || candidate.risk?.level !== 'read' || candidate.status < 200 || candidate.status >= 300 || !['GET', 'POST'].includes(candidate.method) || candidate.responseEvidence?.bodyKind !== 'json') reject('Select a successful observed read-only JSON API by sourceApiIndex.');
+  const url = new URL(candidate.url);
+  if (url.pathname.includes(':id')) reject('Intercept currently requires an exact observed endpoint pathname.');
+  const trigger = normalizeReadTrigger(input.trigger);
   const correlation = (value = {}, query) => {
     if (!object(value) || Object.keys(value).length > 10) reject('Correlation must map at most 10 request fields to parameters.');
     for (const [field, parameter] of Object.entries(value)) {

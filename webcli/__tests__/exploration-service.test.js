@@ -484,19 +484,20 @@ it('binds dynamic endpoint segments to required string arguments and requires va
   expect(saved.data.knowledge.commands[toolName].pathParameters).toEqual(tool.pathParameters);
 });
 
-it('observes INTERCEPT without persisting supplied values, requires distinct cases and generates a permissioned page command', async () => {
-  const f = setup({ capabilities: () => ({ connected: true, capabilities: ['passive_exploration_v1', 'page_sources_v1', 'intercept_read_v1', 'strict_output_contract_v1'] }) });
+it.each(['intercept', 'query'])('observes %s without persisting supplied values, requires distinct cases and generates a permissioned page command', async command => {
+  const f = setup({ capabilities: () => ({ connected: true, capabilities: ['passive_exploration_v1', 'page_sources_v1', 'intercept_read_v1', 'page_query_v1', 'strict_output_contract_v1'] }) });
   const taskId = await start(f.service);
   const original = f.requestExtension.getMockImplementation();
-  f.requestExtension.mockImplementation(async message => message.type === 'exploration_intercept_read'
+  f.requestExtension.mockImplementation(async message => message.type === (command === 'intercept' ? 'exploration_intercept_read' : 'exploration_page_query')
     ? { ok: true, shape: { type: 'object', properties: { items: { type: 'array', items: { type: 'string' } } } } } : original(message));
-  const source = { sourceApiIndex: 0, trigger: { kind: 'search', selector: '#search', parameter: 'keyword', description: 'Public query' }, matchQuery: { page: 'keyword' } };
-  expect((await f.service.execute('intercept', { taskId, source, values: { keyword: 'example-observation-only' }, reason: 'Public query result' })).ok).toBe(true);
+  const source = { ...(command === 'intercept' ? { sourceApiIndex: 0 } : { result: { strategy: 'DOM_STATE', path: ['publicRows'] }, resultPathname: '/list' }), trigger: { kind: 'search', selector: '#search', parameter: 'keyword', description: 'Public query' }, matchQuery: { page: 'keyword' } };
+  expect((await f.service.execute(command, { taskId, source, values: { keyword: 'example-observation-only' }, reason: 'Public query result' })).ok).toBe(true);
   await f.service.jobs.get(taskId);
   const evidence = (await f.service.execute('evidence', { taskId })).data;
-  expect(evidence.pageSources[0].source.strategy).toBe('INTERCEPT');
+  const strategy = command === 'intercept' ? 'INTERCEPT' : 'UI_SELECTOR';
+  expect(evidence.pageSources[0].source.strategy).toBe(strategy);
   expect(fs.readFileSync(path.join(f.options.rootDir, `${taskId}.json`), 'utf8')).not.toContain('example-observation-only');
-  expect((await f.service.execute('generate', { taskId, plan: { tools: [{ name: 'query_intercept', risk: 'read', strategy: 'INTERCEPT', sourcePageId: evidence.pageSources[0].id, readReason: 'Public read query', purpose: 'Search public items' }] } })).ok).toBe(true);
+  expect((await f.service.execute('generate', { taskId, plan: { tools: [{ name: 'query_intercept', risk: 'read', strategy, sourcePageId: evidence.pageSources[0].id, readReason: 'Public read query', purpose: 'Search public items' }] } })).ok).toBe(true);
   expect((await f.service.execute('validate', { taskId })).error.code).toBe('VERIFICATION_REQUIRED');
   const tool = 'example.com.query-intercept';
   const writeCases = async values => {
@@ -511,5 +512,5 @@ it('observes INTERCEPT without persisting supplied values, requires distinct cas
   await f.service.jobs.get(taskId);
   expect((await f.service.execute('get', { taskId })).data.status).toBe('review_ready');
   const old = setup(); const oldId = await start(old.service);
-  expect((await old.service.execute('intercept', { taskId: oldId, source, reason: 'Query', values: { keyword: 'Example' } })).error.code).toBe('CAPABILITY_UNAVAILABLE');
+  expect((await old.service.execute(command, { taskId: oldId, source, reason: 'Query', values: { keyword: 'Example' } })).error.code).toBe('CAPABILITY_UNAVAILABLE');
 });

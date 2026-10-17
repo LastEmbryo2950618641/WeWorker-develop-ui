@@ -13,14 +13,15 @@ function harness({ route = 'https://example.com/search', status = 200, mimeType 
   };
   const chrome = { tabs: { get: async () => ({ url: route }) }, debugger: {
     onEvent: { addListener: fn => listeners.add(fn), removeListener: fn => listeners.delete(fn) },
-    sendCommand: async (_tab, method, params) => { commands.push(method); if (method === 'Network.getResponseBody') { retrieved.push(params.requestId); return { body }; } return {}; },
+    sendCommand: async (_tab, method, params) => { commands.push(method); if (method === 'Page.getFrameTree') return { frameTree: { frame: { loaderId: 'initial' } } }; if (method === 'Network.getResponseBody') { retrieved.push(params.requestId); return { body }; } return {}; },
   }, scripting: { executeScript: async () => {
+    await emit('Page.frameNavigated', { frame: { id: 'main', loaderId: 'initial' } });
     await emit('Network.responseReceived', { requestId: 'old', response: { status, mimeType } });
     await emit('Network.loadingFinished', { requestId: 'old' });
     await request('unrelated', 'https://example.com/api/search?q=Other');
     if (mode !== 'timeout') await request('new');
     if (mode === 'duplicate') await request('duplicate');
-    if (mode === 'navigation') await emit('Page.frameNavigated', { frame: { id: 'main' } });
+    if (mode === 'navigation') await emit('Page.frameNavigated', { frame: { id: 'main', loaderId: 'replaced' } });
     if (mode === 'route') route = 'https://example.com/other';
     if (mode === 'action-error') return [{ result: { ok: false, error: { code: 'INTERCEPT_UNSAFE_TRIGGER', message: 'No read semantics' } } }];
     return [{ result: { ok: true } }];

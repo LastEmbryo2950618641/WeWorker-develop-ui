@@ -1,3 +1,4 @@
+import { normalizePageQuery, pageQueryValues } from './exploration-query.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -72,7 +73,7 @@ export class ExplorationService {
   }
 
   summary(run) {
-    const next = { collecting: ['get', 'cancel'], evidence_ready: ['evidence', 'actions', 'probe', 'observe', 'intercept', 'generate', 'repair-info', 'repair', 'collect'], draft: ['draft-read', 'draft-write', 'verification-read', 'verification-write', 'validate'],
+    const next = { collecting: ['get', 'cancel'], evidence_ready: ['evidence', 'actions', 'probe', 'observe', 'intercept', 'query', 'generate', 'repair-info', 'repair', 'collect'], draft: ['draft-read', 'draft-write', 'verification-read', 'verification-write', 'validate'],
       validating: ['get', 'cancel'], installing: ['get'], review_ready: ['review', 'install'], failed: ['evidence', 'collect', 'draft-read', 'validate'], interrupted: ['get', 'collect', 'validate'] };
     return { taskId: run.taskId, status: run.status, goal: run.goal, tabId: run.tabId, site: run.origin, adapter: run.siteKey,
       createdAt: run.createdAt, updatedAt: run.updatedAt, candidateCount: run.candidates.length,
@@ -208,26 +209,27 @@ export class ExplorationService {
     if (command === 'install' && run.status === 'installed') return this.summary(run);
     if (active.has(run.status)) throw fail('TASK_BUSY', 'Wait for the current operation or cancel the task.');
     if (terminal.has(run.status) && !['draft-read', 'verification-read'].includes(command)) throw fail('INVALID_STATE', 'This task is terminal. Start a new task.');
-    if (['collect', 'actions', 'probe', 'observe', 'intercept'].includes(command)) {
+    if (['collect', 'actions', 'probe', 'observe', 'intercept', 'query'].includes(command)) {
       if (run.draft) throw fail('INVALID_STATE', 'Start a new task to change source evidence after drafting.');
     }
-    if (command === 'observe' || command === 'intercept') {
+    if (command === 'observe' || command === 'intercept' || command === 'query') {
       if (!this.capabilities().capabilities.includes('page_sources_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension to observe page sources.');
-      const intercept = command === 'intercept';
+      const intercept = command === 'intercept', query = command === 'query';
+      if (query && !this.capabilities().capabilities.includes('page_query_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension to run navigation-aware page queries.');
       if (intercept && !this.capabilities().capabilities.includes('intercept_read_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension to observe intercepted page queries.');
-      const source = intercept ? normalizeInterceptSource(args.source, run.candidates) : normalizePageSource(args.source), reason = textArg(args.reason, 'reason');
-      const values = intercept ? interceptValues(source, args.values) : undefined;
+      const source = query ? normalizePageQuery(args.source) : intercept ? normalizeInterceptSource(args.source, run.candidates) : normalizePageSource(args.source), reason = textArg(args.reason, 'reason');
+      const values = query ? pageQueryValues(source, args.values) : intercept ? interceptValues(source, args.values) : undefined;
       return this.launch(run, 'collecting', async signal => {
         const tab = await this.checkTab(run);
         if (signal.aborted) return;
         const page = new URL(tab.url);
-        const result = await this.request({ type: intercept ? 'exploration_intercept_read' : 'exploration_observe_page', tabId: run.tabId,
-          payload: { source, expectedOrigin: page.origin, expectedPath: page.pathname, ...(intercept ? { values } : {}) } }, 30000);
+        const result = await this.request({ type: query ? 'exploration_page_query' : intercept ? 'exploration_intercept_read' : 'exploration_observe_page', tabId: run.tabId,
+          payload: { source, expectedOrigin: page.origin, expectedPath: page.pathname, ...(intercept || query ? { values } : {}) } }, query ? 45000 : 30000);
         if (signal.aborted) return;
         if (!result?.ok) throw fail(result?.error?.code || 'PAGE_SOURCE_MISSING', result?.error?.message || 'Unable to observe the page source.');
         const current = await this.checkTab(run);
         if (signal.aborted) return;
-        if (new URL(current.url).pathname !== page.pathname) throw fail('TAB_CHANGED', 'Page route changed during observation.');
+        if (new URL(current.url).pathname !== (query ? source.resultPathname : page.pathname)) throw fail('TAB_CHANGED', 'Page route changed during observation.');
         const observed = pageObservation({ source, url: tab.url, shape: result.shape, reason });
         run.pageSources = [...new Map([...(run.pageSources || []), observed].map(item => [item.id, item])).values()].slice(-100);
         this.update(run, 'evidence_ready', 'Page source structure observed. Choose its ID and strategy in a plan.');
@@ -445,11 +447,11 @@ export class ExplorationService {
   validate(run) {
     for (const tool of run.plan?.tools || []) {
       const source = run.pageSources?.find(item => item.id === tool.sourcePageId)?.source;
-      if (source?.strategy === 'INTERCEPT' && source.trigger.parameter) {
+      if ((source?.strategy === 'INTERCEPT' || source?.mode === 'query') && source.trigger.parameter) {
         const cases = run.verification?.[`${run.siteKey}.${tool.name.replace(/_/g, '-')}`] || [];
         const values = cases.map(item => item.args[source.trigger.parameter]);
         if (values.some(value => typeof value !== 'string' || !value.trim()) || new Set(values).size < 2) {
-          throw fail('VERIFICATION_REQUIRED', 'Parameterized intercept queries require at least two authored cases with distinct trigger values.');
+          throw fail('VERIFICATION_REQUIRED', 'Parameterized page queries require at least two authored cases with distinct trigger values.');
         }
       }
       if (!tool.pathParameters?.length) continue;
@@ -460,6 +462,7 @@ export class ExplorationService {
         throw fail('VERIFICATION_REQUIRED', 'Dynamic paths require at least two authored cases with distinct path argument combinations.');
       }
     }
+    if ((run.pageSources || []).some(item => item.source.mode === 'query') && !this.capabilities().capabilities.includes('page_query_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating navigation-aware page queries.');
     const pageTools = (run.plan?.tools || []).filter(tool => tool.sourcePageId).map(tool => `${run.siteKey}.${tool.name.replace(/_/g, '-')}`);
     if (run.plan?.tools?.some(tool => tool.strategy === 'INTERCEPT') && !this.capabilities().capabilities.includes('intercept_read_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating intercepted queries.');
     if (pageTools.length && !this.capabilities().capabilities.includes('page_sources_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating page sources.');

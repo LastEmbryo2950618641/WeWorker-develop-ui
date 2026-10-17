@@ -65,6 +65,20 @@ function v2Manifest(name = "blog", overrides = {}) {
   };
 }
 
+it('limits page query routes to exact same-origin foreground read paths', () => {
+  const manifest = v2Manifest(); const command = manifest.commands[0];
+  Object.assign(command, { safety: 'read', pageStrategy: 'UI_SELECTOR', pageWorkflow: true,
+    pageRoute: { origin: 'https://blog.example.com', pathname: '/search', additionalPaths: ['/results'] } });
+  expect(() => validateV2Manifest(manifest)).not.toThrow();
+  for (const pathname of ['//example.org/results', 'https://example.org/results', '/results?q=example', '/a/../results']) {
+    command.pageRoute.additionalPaths = [pathname]; expect(() => validateV2Manifest(manifest)).toThrow(/additionalPaths/);
+  }
+  command.pageRoute.additionalPaths = ['/results']; command.safety = 'write';
+  expect(() => validateV2Manifest(manifest)).toThrow(/pageRoute/);
+  command.safety = 'read'; command.pageStrategy = 'INTERCEPT';
+  expect(() => validateV2Manifest(manifest)).toThrow(/pageWorkflow/);
+});
+
 const defaultFiles = {
   "extension/commands/search-blog.js": "(function(){})();",
   "extension/internal/api.js": "(function(){})();",

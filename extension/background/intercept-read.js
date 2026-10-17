@@ -103,10 +103,11 @@ export async function executeInterceptRead({ chrome, ensureCdpAttached, tabId, p
     await checkRoute(); await ensureCdpAttached(tabId);
     await chrome.debugger.sendCommand({ tabId }, 'Page.bringToFront');
     await chrome.debugger.sendCommand({ tabId }, 'Page.enable');
+    const initialLoader = (await chrome.debugger.sendCommand({ tabId }, 'Page.getFrameTree'))?.frameTree?.frame?.loaderId;
     await chrome.debugger.sendCommand({ tabId }, 'Network.enable', { maxPostDataSize: 262144, maxResourceBufferSize: 2000000, maxTotalBufferSize: 4000000 });
     listener = async (sender, method, params) => {
       if (!armed || sender.tabId !== tabId) return;
-      if (method === 'Page.frameNavigated' && !params.frame?.parentId) { captureError = failure('INTERCEPT_DOCUMENT_CHANGED', 'The query replaced the page document; use a navigation-aware workflow.'); return; }
+      if (method === 'Page.frameNavigated' && !params.frame?.parentId && (!initialLoader || params.frame.loaderId !== initialLoader)) { captureError = failure('INTERCEPT_DOCUMENT_CHANGED', 'The query replaced the page document; use a navigation-aware workflow.'); return; }
       if (method === 'Network.requestWillBeSent') {
         if (requests.has(params.requestId) && params.redirectResponse) { captureError = failure('INTERCEPT_REDIRECT', 'The matched request redirected; inspect the current endpoint.'); requests.delete(params.requestId); return; }
         if (['Fetch', 'XHR'].includes(params.type) && matchesRequest(params.request || {}, source, values)) { if (requests.size + completed.length + pendingBodies >= 2) { captureError = failure('INTERCEPT_AMBIGUOUS', 'Multiple new requests matched; narrow request correlation.'); return; } requests.set(params.requestId, {}); lastMatch = now(); }
