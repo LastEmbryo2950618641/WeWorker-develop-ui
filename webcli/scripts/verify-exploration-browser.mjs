@@ -20,6 +20,7 @@ import { verifyBrowserProfiles } from './browser-profile-acceptance.mjs';
 import { verifyHostHttp } from './http-acceptance.mjs';
 import { verifyPageNavigation } from './page-navigation-acceptance.mjs';
 import { verifyPageWorkflow } from './page-workflow-acceptance.mjs';
+import { verifyExtensionWrites } from './extension-write-acceptance.mjs';
 
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'webcli-browser-acceptance-'));
@@ -70,9 +71,17 @@ try {
   delete env.WEWORKER_RESOURCES_PATH;
   await fs.mkdir(env.WEWORKER_BUILTIN_ADAPTERS_DIR);
   await fs.writeFile(path.join(copy, 'acceptance-bridge.mjs'), "import { WebSocketBridge } from './bridge.js'; new WebSocketBridge();\n");
+  let bridgeArgs = [path.join(copy, 'acceptance-bridge.mjs')];
+  if (process.argv.includes('--bundled-bridge')) {
+    const bridgeEntry = path.join(copy, 'bridge.cjs');
+    await fs.writeFile(bridgeEntry, (await fs.readFile(path.resolve(source, '../weworker/build/bridge-dist/bridge.cjs'), 'utf8'))
+      .replaceAll('3711', String(bridgePort))
+      .replace(/\(0, import_os\d+\.homedir\)\(\)|\bimport_(?:node_)?os\d*\.default\.homedir\(\)/g, JSON.stringify(path.join(root, 'cli-config-root'))));
+    bridgeArgs = [bridgeEntry, '--service'];
+  }
   async function startBridge() {
     const log = await fs.open(path.join(root, 'bridge.log'), 'a');
-    bridge = spawn(process.execPath, [path.join(copy, 'acceptance-bridge.mjs')], { env, stdio: ['ignore', log.fd, log.fd] });
+    bridge = spawn(process.execPath, bridgeArgs, { env, stdio: ['ignore', log.fd, log.fd] });
     await log.close();
     for (let i = 0; i < 50; i++) {
       const ready = await new Promise(resolve => { const socket = net.connect(bridgePort, '127.0.0.1'); socket.on('connect', () => { socket.destroy(); resolve(true); }); socket.on('error', () => resolve(false)); });
@@ -276,6 +285,11 @@ try {
     startBridge: async () => { await startBridge(); await connected(); },
   });
   if (process.argv.includes('--workflow-only')) { await pageWorkflow(); return; }
+  const pageWrites = () => verifyExtensionWrites({ cli, record, passed,
+    stopBridge: async () => { const closed = new Promise(resolve => bridge.once('exit', resolve)); bridge.kill('SIGTERM'); await closed; },
+    startBridge: async () => { await startBridge(); await connected(); },
+  });
+  if (process.argv.includes('--page-write-only')) { await pageWrites(); return; }
 
   const tabs = (await cli('exploration.tabs')).data.tabs;
   const tabId = tabs.find(tab => tab.url === origin + '/').id;
@@ -976,6 +990,7 @@ try {
   passed('Bridge restart restores tasks, marks interruption and permits explicit resumption');
   await profiles();
   await hostHttp();
+  await pageWrites();
   })();
 } catch (error) {
   await record('failure', { message: error.message, stack: error.stack, browserEvents });
@@ -984,5 +999,5 @@ try {
   await browser?.close();
   if (bridge && bridge.exitCode === null && bridge.signalCode === null) { const exited = new Promise(resolve => bridge.once('exit', resolve)); bridge.kill('SIGTERM'); await exited; }
   if (server) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
-  await record('report', { passed: !process.exitCode, checks, artifacts: root });
+  await record('report', { passed: !process.exitCode, bundledCli: process.argv.includes('--bundled-cli'), bundledBridge: process.argv.includes('--bundled-bridge'), checks, artifacts: root });
 }

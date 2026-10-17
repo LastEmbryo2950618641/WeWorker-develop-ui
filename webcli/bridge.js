@@ -1506,7 +1506,7 @@ export class WebSocketBridge extends EventEmitter {
       const timing = this._callTimings.get(msg.traceID);
       if (timing) timing.dispatchedAt = Date.now();
     }
-    const logMessage = ['http_credentials', 'browser_execute', 'exploration_observe_page', 'exploration_intercept_read', 'exploration_page_query'].includes(msg.type) ? { type: msg.type, command: msg.command, id: msg.id, tabId: msg.tabId }
+    const logMessage = ['http_credentials', 'browser_execute', 'exploration_observe_page', 'exploration_intercept_read', 'exploration_page_query', 'exploration_page_write'].includes(msg.type) ? { type: msg.type, command: msg.command, id: msg.id, tabId: msg.tabId }
       : msg.type === 'validate_generation_preview' ? { type: msg.type, id: msg.id, tabId: msg.tabId,
         expectedToolCount: msg.expectedToolNames?.length || 0, testCaseCount: msg.testCases?.length || 0 } : msg;
     process.stderr.write(`[${ts()}] [Bridge] -> extension: ${JSON.stringify(logMessage).substring(0, 200)}\n`);
@@ -1527,6 +1527,7 @@ export class WebSocketBridge extends EventEmitter {
         if (![1, 2].includes(version) || (version === 1 && (msg.payload?.storeId !== undefined || msg.payload?.partitionKey !== undefined))) throw profileError('HTTP_CREDENTIALS_UNAVAILABLE', 'Unsupported HTTP credential scope version.');
         if (!(connection.capabilities || this._extensionCapabilities).includes(version === 2 ? 'http_credentials_v2' : 'http_credentials_v1')) throw profileError('HTTP_CREDENTIALS_UNAVAILABLE', 'Reload the selected browser extension for scoped HTTP credentials.');
       }
+      if (msg.type === 'exploration_page_write' && !(connection.capabilities || this._extensionCapabilities).includes('page_write_v1')) throw profileError('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before page writes.');
     } catch (error) { return Promise.reject(error); }
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -1669,6 +1670,7 @@ export class WebSocketBridge extends EventEmitter {
     if (selected?.command.pageWorkflow && !this._extensionCapabilities?.includes('page_query_v1')) throw new Error('Reload the browser extension before calling navigation-aware page queries.');
     if (selected?.command.pageRoute?.navigation && !this._extensionCapabilities?.includes('page_navigation_v1')) throw new Error('Reload the browser extension before calling parameterized page navigation.');
     if (selected?.command.pageRoute?.workflow && !this._extensionCapabilities?.includes('page_workflow_v1')) throw new Error('Reload the browser extension before calling ordered page workflows.');
+    if (selected?.command.pageWrite && !this._extensionCapabilities?.includes('page_write_v1')) throw new Error('Reload the browser extension before calling page writes.');
     if (selected?.command.pageStrategy === 'INTERCEPT' && !this._extensionCapabilities?.includes('intercept_read_v1')) throw new Error('Reload the browser extension before calling intercepted page queries.');
     const timeout = resolveToolCallTimeout(toolName);
     return this._request({ type: "call_tool", toolName, args, ...(selected ? { adapterSnapshot: selected.snapshot } : {}) }, timeout, traceID);

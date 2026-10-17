@@ -151,16 +151,24 @@ webcli call exploration.query --args '{"taskId":"example-task","source":{"mode":
 - 观察只保存模板、字段结构和来源理由。生成后至少两组不同路径参数的 cases，精确核对返回 ID/标题等业务含义；每组都实际导航，不能用当前页的旧数据代替。通过后 review/install、普通 call、知识保存。后续 scoped repair 保留已安装路由/参数映射/权限，带入历史 cases 重新验证。
 - 当前限同源主文档的单次导航与读取，不支持动态 query/hash 模板、跨源详情、任意路径正则或多步骤业务流程。取消后丢弃迟到结果，已派发的浏览器导航可能继续完成。
 
-### HTTP 写命令与效果回查
+### HTTP／Extension 写命令与效果回查
 
-- 写工具只支持 PUBLIC_API/COOKIE_API/AUTH_API；页面写流程尚未接入。使用已成功观察的 write 候选，或 `declare-write` 显式传 taskId/url/method/bodyKeys/reason；声明零请求，不能当作成功证据。仅支持 POST/PUT/PATCH/DELETE，任务 origin 必须已声明。
+- HTTP 写工具支持 PUBLIC_API/COOKIE_API/AUTH_API；声明式 Extension PAGE_FETCH 写见下文。使用已成功观察的 write 候选，或 `declare-write` 显式传 taskId/url/method/bodyKeys/reason；声明零请求，不能当作成功证据。仅支持 POST/PUT/PATCH/DELETE，任务 origin 必须已声明。
 - generate 显式计划使用 `risk:"write"`、`sourceApiKind:"action"`、一个 sourceApiIndexes、HTTP strategy 和 writeReason/strategyNote。骨架不会猜测写语义；Agent 编辑 schema/模块，保留确认保护并设置 `x-webcli-agent-authored:true`。`__confirmed` 省略/false 时必须返回 `{blocked:true,requiresConfirmation:true}`，零请求；true 才发送一次请求。
 - `write-verification-read/write` 读取 hash、更新 fixture；每工具一个公开测试用例，字段为 id、representativeArgs、expectedRequest、successResponse/successExpectation、failureResponse/failureExpectation、effect。expectedRequest 为精确 method/url/body 和可选 content-type headers。effect 为独立 GET 的 readback:{url}、before/after 严格断言；同一非通配标量路径必须有不同 equals 值。代表参数不得包含 __confirmed 或凭据。
 - 例：representativeArgs 为 `{"title":"After"}`，expectedRequest 为 `{"method":"PUT","url":"https://example.com/items/example","body":{"title":"After"}}`；effect 为 `{"readback":{"url":"https://example.com/items/example"},"before":{"equals":{"title":"Before"}},"after":{"equals":{"title":"After"}}}`。mock successResponse 为 `{"status":200,"body":{"ok":true,"title":"After"}}`，successExpectation 为 `{"ok":true,"title":"After"}`；failureResponse 为 `{"status":409,"body":{}}`，失败解释按作者代码明确断言。鉴权仍通过 HTTP 契约。
 - 普通 validate 只跑写 mock 和真实只读用例，返回 write_review_ready。write-review 返回完整参数/请求/回查/鉴权声明与综合摘要。已有用户授权覆盖该目标和副作用时，调用 `write-verify --tool=... --reviewId=... --confirmed=true`；否则先展示这份具体审阅并取得授权。安装授权不自动授权远端写测试。
 - 实际验证先 GET 核对 before，再一次写请求，再 GET 核对 after；总预算 30 秒。reviewId 在派发前持久化并消耗，同一任务重复调用/取消/重启均不重发。失败后先查看 writeExecutions；uncertain 表示可能已有副作用，使用 write-readback 仅回查，不能把它当成重新通过验证或自动重试理由。无自动回滚。
 - 全部当前读/写验证通过后才能 review/install；安装只重跑 mock。普通 HTTP write 仍需 __confirmed=true，最多一次请求、拒绝重定向。普通 call 没有探索 reviewId 去重；失败应先检查效果。新声明、修改文件或 fixture 需要重新验证与审阅，不要为了重试而机械改 fixture id。
-- 当前未支持 Extension/UI 写生成、多步/批量写、动态返回 ID 回查、幂等键协商或写工具 repair；单个用例只证明本次明确场景。
+- 当前未支持任意作者页面 JS/UI 控件写、多步/批量写、动态返回 ID 回查、幂等键协商或写工具 repair；单个用例只证明本次明确场景。
+
+### 声明式 Extension PAGE_FETCH 写
+
+- 浏览器任务的写计划可用 PAGE_FETCH，提供 `pagePathname:"/editor"`、`bodyParameters:{"title":"title"}` 和 `idempotency:{"header":"idempotency-key","serverDeduplicates":true}`，绑定单个 mutation 来源并说明 writeReason/strategyNote（含 alternatives）。同源固定 URL/主 frame，POST/PUT/PATCH/DELETE，JSON 字符串字段；需要 page_write_v1。
+- **只有目标服务端明确保证幂等键去重时才填写该声明**。Chromium 响应丢失时可能重发请求；一次 fetch 不等于一次网络发送。支持 idempotency-key/x-idempotency-key，不自动探测或协商，不能凭空声称服务端已支持。
+- 生成固定注册模块及 manifest.pageWrite，参数映射直接在计划/manifest 中声明；不要编辑模块为自定义 JS。每工具写 fixture 沿用上述格式，失败解释为 `{ok:false,errorCode:"PAGE_WRITE_HTTP_STATUS"}`，成功返回原始 JSON。validate 只跑 mock；write-review 明列路由、请求、回查和实际幂等 header/key。
+- 用户授权覆盖目标副作用后 write-verify；相同 review 消耗后不再派发。浏览器同源 Cookie/HttpOnly 保留在浏览器，before/write/after 必须同一文档，取消/断线阻止后续步骤，已派发请求可能完成。响应丢失仍 uncertain，独立只读 readback 不会放行安装。
+- 普通 call 需 `__confirmed:true`，每次显式调用有新幂等键，不能把重复 call 当成安全重试。没有服务端幂等保证、动态 CSRF/签名、任意正文/结果映射、UI 点击提交、多步写/动态 ID/写修复继续未支持。
 
 ### 多步只读网站流程（UI_SELECTOR workflow）
 
@@ -234,7 +242,7 @@ webcli call exploration.repair --args '{"taskId":"example-task","site":"example.
 - Bridge 重启中的任务标记 interrupted，明确选择重新 collect（HTTP 模式 discover/request）或 validate；不自动重放探测或安装。
 - `cancel` 停止后续阶段并丢弃迟到结果；已派发浏览器请求可能完成。安装开始后不能取消。
 - start 可传 allowedOrigins 数组，显式授权额外 API origin，如 `https://api.example.com`；只允许精确 origin，无路径、凭据或通配符。流量不会自动扩大权限，安装 review 会列出新域名。
-- 默认 GET、Agent 计划下的只读 POST JSON/form/GraphQL query、API 动态路径、声明式 UI_SELECTOR/DOM_STATE、单步 INTERCEPT、跨文档页面查询、参数化详情导航和显式 2–8 步只读 workflow 已支持。HTTP 单请求写走独立 mock/审阅/效果验证；页面写、动态 query/hash 页面路由、循环/分支/任意自定义多步 UI 仍未支持；报告限制，不伪装成功。
+- 默认 GET、Agent 计划下的只读 POST JSON/form/GraphQL query、API 动态路径、声明式 UI_SELECTOR/DOM_STATE、单步 INTERCEPT、跨文档页面查询、参数化详情导航和显式 2–8 步只读 workflow 已支持。HTTP 和有明确幂等契约的 Extension 单请求写走独立 mock/审阅/效果验证；UI 控件写、动态 query/hash 页面路由、循环/分支/任意自定义多步 UI 仍未支持；报告限制，不伪装成功。
 - 使用 webcli-browser Skill 的 browser.* 触发搜索、翻页或检查页面状态，再 collect。采集/验证进行中不要操作同一页；TAB_BUSY 时等待。
 - trace 输出结构诊断、事件、文件清单与计划，便于交接修复；不含捕获正文或代码。verification-read 与 knowledge-read 可恢复作者测试用例；安装后修复使用 repair-info/repair，再走相同的验证、审阅与安装流程。
 - 证据的 URL 参数值被省略；不要把 `<value>` 作为实际查询值。业务参数来自用户输入，登录信息由既有浏览器运行时取得。

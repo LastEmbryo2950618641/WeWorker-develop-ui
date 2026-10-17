@@ -1,8 +1,14 @@
 # API 自动探索 CLI 开发设计与首版实现
 
-更新：2026-10-18。已实现多浏览器 profile、独立 HTTP Runner、PUBLIC_API/COOKIE_API/AUTH_API、mode=http 的无浏览器 OpenAPI JSON 发现与宿主请求证据、只读局部修复和显式 2–8 步只读 workflow；最新增加 HTTP 单请求写生成、mock 与真实副作用回查。具体契约见 [HTTP Runtime](http_adapter_runtime.md) 和 [写命令验证](api_exploration_write.md)，历史与验证结果见 [交接文档](api_exploration_cli_handoff.md)。
+更新：2026-10-18。已实现多浏览器 profile、独立 HTTP Runner、PUBLIC_API/COOKIE_API/AUTH_API、mode=http 的无浏览器 OpenAPI JSON 发现与宿主请求证据、只读局部修复和显式 2–8 步只读 workflow；最新增加 HTTP 写与具有服务端幂等契约的 Extension PAGE_FETCH 声明式写生成、mock 和真实副作用回查。具体契约见 [HTTP Runtime](http_adapter_runtime.md) 和 [写命令验证](api_exploration_write.md)，历史与验证结果见 [交接文档](api_exploration_cli_handoff.md)。
 
-最新 WebCLI 回归 113 文件/1218 项通过，完整 Chromium 57 项通过；最终 HTTP 打包链路及全量回归后的聚焦结果以交接文档末尾为准。HTTP version 2 支持 Bearer/header/Basic/声明式 HMAC 和 Cookie store/分区。下文旧阶段的“PUBLIC_API/COOKIE_API 尚未实现”是历史边界；任意站点签名/OAuth、页面/多步写、动态写结果回查、任意多步自定义流程及完整对齐仍未完成。
+最新 WebCLI 回归 114 文件/1224 项及 Chromium 1217 完整 62 项通过；页面写/HTTP 打包链路、59 项扩展测试与 1194 兼容失败详见交接文档末尾。HTTP version 2 支持 Bearer/header/Basic/声明式 HMAC 和 Cookie store/分区。下文旧阶段的“PUBLIC_API/COOKIE_API 尚未实现”是历史边界；任意站点签名/OAuth、UI 控件/多步写、动态写结果回查、任意多步自定义流程及完整对齐仍未完成。
+
+## Extension 页面写：声明式单请求阶段
+
+已增加 `PAGE_FETCH + pageWrite version 1`，固定同源主文档与 POST/PUT/PATCH/DELETE JSON 请求，显式字符串字段映射和服务端幂等键契约。复用现有写 fixture、mock、审阅、派发前落盘、before/after、安装和知识流程。模块固定为注册模板，扩展执行固定请求函数；任意作者页面 JS/UI 提交不属于此阶段。
+
+Chromium 在响应丢失时会自动重发请求，不能以一次 fetch 声称一次网络写。因此必须明确 `idempotency.serverDeduplicates:true`，审阅/账本保存实际稳定 key；本地验收分别统计网络请求和实际副作用。没有服务端幂等保证的页面写继续待办。能力、限制和示例见 [写命令契约](api_exploration_write.md)，最终验证以交接文档末尾为准。
 
 ## HTTP 探索任务：已实现
 

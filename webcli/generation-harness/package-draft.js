@@ -54,6 +54,7 @@ export function writePackageDraft({ memory, adapterDir, supportBundle, paths }) 
     evidence.commands[id] = { originalName: tool.name, safety: tool.access === 'write' ? 'write' : 'read', generationSource: tool.generationSource || null };
     return { id, ...(local !== id ? { aliases: [local] } : {}), runtime, module,
       ...(tool.http ? { http: tool.http } : {}),
+      ...(tool.pageWrite ? { pageWrite: tool.pageWrite } : {}),
       description: tool.description, schema: tool.parameters, safety: tool.access === 'write' ? 'write' : 'read',
       ...(tool.pageRoute ? { pageRoute: tool.pageRoute } : {}),
       ...(tool.pageStrategy ? { pageStrategy: tool.pageStrategy } : {}),

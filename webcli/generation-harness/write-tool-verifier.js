@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import { runHttpTool } from '../http-runner.js';
 import { isPackageDraft, packageDraftBundle, readGenerationEvidence } from './package-inspection.js';
 import { verifyRetainedPackage } from './existing-site.js';
+import { resolvePageWrite } from '../exploration-extension-write.js';
 
 function error(code, message, extra = {}) {
   return { code, message, severity: 'error', ...extra };
@@ -137,8 +138,13 @@ export async function verifyGeneratedWriteTools({ adapterDir, expectedSiteKey = 
       window.__webcliRegisterCommand = (id, handler) => { rawHandlers.set(id, handler); register(id, handler); };
       for (const script of bundle.scripts.slice(1)) new vm.Script(script.source).runInContext(context, { timeout: 1000 });
       packageWriteTools = bundle.pkg.commands.filter(command => command.safety === 'write' && !retained.has(command.id)).map(command => ({
-        name: command.name, httpRuntime: command.runtime === 'http', writeVerification: fixtures?.commands?.[command.id],
-        handler: command.runtime === 'http' ? async args => (await runHttpTool({ adapter: { root: adapterDir, digest: bundle.pkg.digest }, command }, args, {
+        name: command.name, httpRuntime: command.runtime === 'http' || Boolean(command.pageWrite), writeVerification: fixtures?.commands?.[command.id],
+        handler: command.pageWrite ? async args => {
+          if (args.__confirmed !== true) return { blocked: true, requiresConfirmation: true };
+          const request = resolvePageWrite(command, args);
+          requests.push(normalizeHttpWriteRequest({ url: request.url, method: request.method, json: request.body }));
+          return responseSpec.status >= 400 ? { ok: false, errorCode: 'PAGE_WRITE_HTTP_STATUS' } : structuredClone(responseSpec.body ?? {});
+        } : command.runtime === 'http' ? async args => (await runHttpTool({ adapter: { root: adapterDir, digest: bundle.pkg.digest }, command }, args, {
           timeoutMs: 2000, signal,
           mockRequest: async input => {
             requests.push(normalizeHttpWriteRequest(input));

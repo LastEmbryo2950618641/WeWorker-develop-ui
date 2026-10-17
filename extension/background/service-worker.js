@@ -1,5 +1,6 @@
 import { browserContextId } from './browser-profile.js';
 import { readHttpCookies } from './http-credentials.js';
+import { executePageRequest, pageWriteRequest } from './page-write.js';
 import { scopedGenerationPreviewScripts } from './generation-preview-bundle.js';
 import { buildV2Bootstrap, v2InjectionFiles } from "./v2-loader.js";
 import { injectAdapterSources } from './adapter-script-loader.js';
@@ -65,6 +66,7 @@ const EXTENSION_CAPABILITIES = [
   'page_query_v1',
   'page_navigation_v1',
   'page_workflow_v1',
+  'page_write_v1',
 ];
 
 let currentBrowserContextId;
@@ -2720,7 +2722,7 @@ async function handleNativeMessage(msg) {
       }
       if (selected.managed) {
         if (selected.command.runtime !== 'extension') throw new Error('This command requires the host Toolkit runtime.');
-        if ((selected.command.requires_confirmation ?? selected.command.safety === 'write') && args?.__confirmed !== true) throw new Error('Explicit confirmation is required for this command.');
+        if ((selected.command.pageWrite || (selected.command.requires_confirmation ?? selected.command.safety === 'write')) && args?.__confirmed !== true) throw new Error('Explicit confirmation is required for this command.');
         if (selected.command.execution?.runtime === 'background') {
           const result = await callManagedBackgroundTool(selected.manifest, selected.command, args || {}, traceID);
           sendToNative({ type: 'call_tool_result', id: msg.id, result, traceID });
@@ -2765,6 +2767,15 @@ async function handleNativeMessage(msg) {
         if (!tab?.id) {
           const startUrl = assertAdapterNavigationUrl(selected.manifest, 'https://' + route + '/');
           tab = await chrome.tabs.create({ url: startUrl, active: false });
+        }
+        if (selected.command.pageWrite) {
+          const connection = ws, request = pageWriteRequest(selected.command, args || {}), deadline = Date.now() + 30000;
+          const reply = await getHostAdapterRuntime().exclusive(tab.id, () => executePageRequest({ chrome, ensureCdpAttached, tabId: tab.id,
+            payload: { route: selected.command.pageRoute, request, confirmed: true, deadline,
+              idempotency: { header: selected.command.pageWrite.idempotency.header, key: crypto.randomUUID() } },
+            assertRunning: () => { if (connection !== ws) throw new Error('Connection changed.'); } }));
+          sendToNative({ type: 'call_tool_result', id: msg.id, result: reply.ok ? reply.value : { ok: false, errorCode: reply.error.code }, traceID });
+          return;
         }
         const result = await getHostAdapterRuntime().execute(tab.id, selected.manifest, tab.url,
           (remainingMs, continuation) => callToolInTab(tab.id, selected.manifest.name + '.' + selected.command.id, args || {}, traceID, false, remainingMs, continuation), selected.command, traceID);
@@ -2895,6 +2906,14 @@ async function handleNativeMessage(msg) {
       sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
     }
 
+  } else if (msg.type === 'exploration_page_write') {
+    const connection = ws;
+    const result = await getHostAdapterRuntime().exclusive(Number(msg.tabId), () => executePageRequest({ chrome, ensureCdpAttached, tabId: Number(msg.tabId), payload: msg.payload,
+      assertRunning: () => {
+        if (connection !== ws) throw new Error('Connection changed before page request.');
+        assertPageWorkflowActive(Number(msg.tabId), msg.payload?.operationId);
+      } }));
+    sendToNative({ type: 'call_tool_result', id: msg.id, result }, true);
   } else if (msg.type === 'exploration_cancel_workflow') {
     sendToNative({ type: 'call_tool_result', id: msg.id, result: { cancelled: cancelPageWorkflow(Number(msg.tabId), msg.operationId) } });
   } else if (msg.type === 'exploration_page_query') {
