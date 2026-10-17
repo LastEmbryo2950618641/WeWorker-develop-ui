@@ -289,3 +289,4 @@ npm run test:exploration:browser --prefix webcli -- \
 - 本轮 source Bridge 和工作区扩展已更新；下次先用 browser.doctor / exploration.list 查询当前状态，不在文档固定 PID、taskId 或 tabId。维护页面绑定会话为本任务所有；重载扩展后仍应验证身份并重新选择页面。不要关闭用户标签页。
 - Python 相对 `af8e082` 差异为零；没有触及 Python 环境、测试、生命周期或用户持久目录。未推送、未开 PR。
 - 接手下一步：纯 DOM/UI/INTERCEPT 策略、动态路径与请求签名、知识冲突修订，之后完善 UI 共用服务及跨 Agent 独立对话验收。完整 OpenCLI 对齐目标仍 active；本轮只完成安装后只读命令维护这一项，不代表全部对齐。
+- 本轮功能及验收提交 `411fe85`，工作区提交时干净；该提交是当前最近成功验证的代码基线。打包 CLI 帮助确认 26 个探索命令，包含两个修复入口；后续 checkpoint 提交仅更新此记录。未推送、未创建 PR。
