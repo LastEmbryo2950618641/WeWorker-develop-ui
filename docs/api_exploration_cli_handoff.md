@@ -180,3 +180,11 @@ git diff --name-only LAST_DEV_SHA origin/dev-1.1.0
 - 下一步：审阅设计，明确类型检查缺口的处理归属。Python 模块由其他负责人维护，本任务不改造、不补测；该模块整合验收交由负责人。
 
 - 用户追加边界：Python 网站探索agent全程不属于本任务。仅保留来源分支内容，禁止为 CLI 工作调整其模型、生命周期、存储、HTTP 接口或测试。进程管理冲突选择 dev 原文件，因此不宣称保留 develop 在该文件的超时改动；后续由对应负责人判断。
+
+### 本轮最终交接点
+
+- 集成提交：`baf9f98`（父提交为文档提交 `2d177bc` 与 dev-1.1.0 `dae8932`），基线分支 `codex/api-exploration-base`。
+- 已从该提交建立并切换到 `codex/api-exploration-cli`；功能代码尚未开始，开发设计待用户审阅。
+- develop `4c3d5bd` 与 dev-1.1.0 `dae8932` 均已纳入历史；后续同步用这两个 SHA 起算，不再合入 #106/#91 分支。
+- 最后成功完成聚焦验证的集成提交为 `baf9f98`；全量验证仍未完成，限制见上。最终 Python 冲突文件与 dev 原文件一致，先前手工合并版本的 AST 检查不视为最终 Python 验证。
+- 未推送、未创建 PR。后续同步继续采用“上游 → api-exploration-base → api-exploration-cli”，Python 模块若再次冲突，交对应负责人处理，不在本功能开发中改造。
