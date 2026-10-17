@@ -1,6 +1,6 @@
 # API 自动探索 CLI 改造跟进与交接
 
-> 更新日期：2026-10-17。当前阶段：console/network 持续 JSONL 观察、browser.events 序列游标与时间窗口已实现；WebCLI 1128 项、扩展聚焦 76 项及 Adapter helper 回归 15 项通过，隔离真实浏览器完整 32 项通过。日常 Chrome 多订阅者、子 frame、信号/关闭管道与 Bridge 重启续接通过，B 站 Excel 第一页 24 卡片回归通过。完整 OpenCLI 对齐继续进行；独立 Agent 对话、UI 统一与平台安装包验收尚未完成。
+> 更新日期：2026-10-17。当前阶段：AX 语义快照、DOM/AX 覆盖对比及跨 frame/Shadow DOM 引用已实现；WebCLI 1129 项、扩展相关 98 项、隔离真实浏览器完整 34 项及最终 AX 聚焦通过。日常 Chrome 同类原生操作、悬停名称变化拒绝和 B 站主文档 AX/24 卡片回归通过。完整 OpenCLI 对齐继续进行；截图高级选项、多连接、独立 Agent 对话、UI 统一与平台安装包验收尚未完成。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
 
 ## 最新状态
@@ -11,7 +11,7 @@
 - 功能分支在集成提交后创建为 `codex/api-exploration-cli`，最终操作结果见文末。未推送或创建 PR，最终发布目标仍待明确。
 - [开发设计](api_exploration_cli_design.md) 为本次审阅入口。
 - [OpenCLI 能力对齐台账](opencli_parity.md) 为最新范围与缺口清单；用户要求尽力对齐完整能力，不能把当前 36 个 browser 命令或单站点验收视为目标完成。
-- 首版功能实现提交为 `821a7df`，本轮从原生 frame 指针检查点 `3ea604c` 继续；后续实现、真实验收与本地检查点见文末和 Git 日志。集成基线仍为 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`。这些是已纳入快照，后续同步前应重新 fetch，不能据此推断远端未变化。
+- 首版功能实现提交为 `821a7df`，本轮从持续观察检查点 `ae8640c` 继续；后续实现、真实验收与本地检查点见文末和 Git 日志。集成基线仍为 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`。这些是已纳入快照，后续同步前应重新 fetch，不能据此推断远端未变化。
 > 后续每次建分支、同步上游、解决冲突、实现功能或验证后，都应更新本文和 ROADMAP.md。未验证事项不得标为完成。
 
 ## 1. 目标与范围
@@ -449,3 +449,22 @@ npm run test:exploration:browser --prefix webcli -- \
 - 下一步：AX/state 对比、截图标注/尺寸、Shadow DOM/复杂控件、profile/多连接；随后按 Runner 边界实现 PUBLIC_API/COOKIE_API 与显式鉴权契约。多步 UI/动态页面/写命令、知识修订/共享修复、UI/内置聊天共用、独立 Codex/Claude 新对话、平台分发和业务覆盖继续保留在能力台账，不能将本阶段完成当作全目标完成。
 
 - 最终分发复验：首用自动启动 Bridge 的真实 CLI 子进程只输出一行 JSONL error，启动诊断均在 stderr；隔离浏览器最终 5 项聚焦通过，报告 `webcli-browser-acceptance-TRWQmK/report.json`，包含一次性 follow=false、时间单位、双订阅、重启、溢出与主动 detach。WebCLI 106 文件/1128 项在该启动修正后再次通过；CLI/Bridge 构建、595 文件 npm pack dry-run、20 个 JS/MJS 语法、公开配置、Git 差异格式与增量凭据/私网地址检查通过。构建后的 browser.help 正确包含 36 个命令及 follow 参数。完整 32 项报告在启动诊断修正之前，最终聚焦不冒充又一次完整探索验收。用户插件生产源码与最后日常 Chrome 验收版本一致，后来仅 CLI 启动诊断和测试/文档更新；源 Bridge 与用户页保留，本轮检查点 SHA 见 Git 日志。
+
+### 2026-10-17：AX 快照、来源比较与 Shadow DOM 引用
+
+- 上轮 `ae8640c` 已形成有效提交和完整验证，本轮从干净工作区继续。功能分支仍 `codex/api-exploration-cli`，集成基线/已纳入 develop/dev-1.1.0 快照不变；本轮未 fetch/合并/推送，继续使用本文上游→集成基线→功能分支流程。完整 OpenCLI 对齐目标保持 active。
+- 核对 OpenCLI 1.8.8 的 state --source ax / --compare-sources：后者是 DOM/AX 来源指标比较，不是历史页面差异。本项目新增 browser-ax.js / browser_accessibility_v1，state 接受 source 与 compareSources；浏览器命令总数仍为 36，旧默认 DOM 输出保持。没有复制上游 AX/引用业务代码。
+- AX 获取浏览器计算后的角色、名称与状态属性，返回语义 tree/text/elements；不返回输入 value，密码字段 get 仍拒绝。默认逐文档汇总可访问 frame，显式 frameId/documentId 限定一个文档；两个同 URL frame 不合并。引用总数默认 100、最多 200；语义树最多 1000 节点、文本 12000 字符、最多 50 frame，准备截止 30 秒；限额、未映射节点和子 frame 失败给 truncated/partial 和明细，不宣称完整覆盖。
+- 引用保存于扩展隔离世界当前文档 Map，携带随机快照 ID、Chrome frameId/documentId；CDP backendNodeId 只在所属调试 target 解析，并核对 ownerDocument。使用时核对实际 Map、URL、节点连接和新的 AX role/name，不按名称选替代节点。节点替换、名称改变、文档错配、导航和新 state/find 明确失效；没有自动重试。引用属于其文档的最近一次快照，其他 frame 的新快照不替换它。
+- compareSources 按同文档顺序获取控件数、命名覆盖、角色分布和耗时，来源错误保留，不静默回退。比较不生成或替换操作引用；多文档采集不冻结网页，结果含各帧身份和部分覆盖说明，不能把两种计数差异等同于质量优劣。
+- AX ref 可直接用于 get/fill/click 等，自动采用 ref 的 frame/document，不需用户重复猜索引。开放、关闭和嵌套 Shadow DOM 的真实节点可解析，原生指针逐层检查 ShadowRoot/iframe owner 的命中；祖先 overlay 拒绝。指针在悬停后/按下前重新核对 AX 名称与禁用，悬停改名测试拒绝且点击副作用为零。原生输入后的错误仍可能包含先前悬停/第一次点击副作用，不能重放。
+- AX 获取和引用验证均有截止；阻塞 CDP 返回明确 AX_SNAPSHOT_TIMEOUT / AX_REFERENCE_TIMEOUT，后者不派发动作。远程对象按 objectGroup 释放，快照安装前核对文档、URL 和截止，过迟安装拒绝。旧插件对新来源/比较参数和 AX ref 明确要求升级。无新增依赖、manifest 权限或新的 Runner。
+- 单测最终：WebCLI 106 文件/1129 项通过；扩展 AX、持续观察、指针、下载、frame、原生输入、网络、路由、安全、协议与 Adapter helper/注册/写确认等共 98 项通过。AX 七项聚焦覆盖重复控制、ignored/值省略、限额、引用身份、来源错误、节点解析途中上下文丢失、快照和动作前验证截止；Bridge 测试验证旧插件拒绝与原样传递引用。
+- 隔离 Chromium 初版 AX 通过 `webcli-browser-acceptance-gsY9oi/report.json`；补全默认跨 frame 汇总后完整 34 项通过，最终完整报告 `webcli-browser-acceptance-McYwgR/report.json`。新增 browser-ax-acceptance.mjs / --ax-only，可复跑计算名称、重复名称、开放/关闭/嵌套 Shadow DOM 填写和原生点击、密码值省略、disabled/overlay、来源比较不失效引用、同名替换和两同 URL 跨源 frame 自动引用身份；原持续观察、下载、frame Promise、API/DOM/INTERCEPT/跨文档查询、修复、安装、知识与重启全部通过。
+- 完整通过后补引用验证超时、ownerDocument 检查及悬停后 AX 名称复核；相应单测纳入上述 98 项，最后隔离 AX 3 项聚焦通过 `webcli-browser-acceptance-k5IZSv/report.json`（首用启动、连接、AX 场景），没有将该聚焦写成又一次完整 34 项。生产最终改动均经该 AX 浏览器用例覆盖。
+- 日常 Chrome：核实本任务 source Bridge 完整命令后重启并重载已安装 extension-dist，新能力就绪；最终报告 `weworker-ax-live-KWaOLF/report.json`，全部 AX fixture 场景包含悬停改名拒绝通过。自建三 frame 页面与临时服务器均正常关闭。B 站重新 tabs 选择 excel 页并绑定，只对明确主文档做 AX 读取，确有搜索框控件；原 current-video-links 24 张可见卡片标题/规范化链接逐项匹配，页面保持 excel 第一页。真实页面与 AX 树未写进仓库，报告仅保存摘要。
+- 当前 source Bridge 快照 PID 28690、日志 `/tmp/weworker-ax-live-bridge.log`；下次先 doctor/tabs/sessions，再核实完整命令归属，不能复用历史 PID/tab/document。插件目录仍是工作区 extension-dist，用户不需重新安装；源 Bridge 和用户页面保留。
+- 深层 selector/role 查询、复杂自定义控件、跨 frame/DataTransfer 拖拽仍未完成，不能由 AX ref 操作推断全部 Shadow DOM 命令覆盖；exploration 的生成页面来源也未扩为 frame/shadow。下一步优先截图标注/临时尺寸，再推进 profile/多连接、PUBLIC_API/COOKIE_API 与显式凭据契约；动态页面/多步 UI/写命令、知识修订/共享修复、UI/内置聊天复用、独立 Codex/Claude 新对话与平台分发继续保留。
+- Python 网站探索agent相对功能起点 `af8e082` 差异为零，源码/环境/测试/生命周期/数据未触碰。未改 CI/发布/schema/.env，未推送或创建 PR。构建/打包与最终差异检查追加于后，本轮保存本地检查点，SHA 以 Git 日志为准。
+
+- 最终分发检查：CLI/Bridge 构建与公开配置通过；npm pack dry-run 596 文件，包含 browser-ax.js 和最新 browser Skill；构建帮助正确声明 state source/compareSources。11 个 JS/MJS 语法、Git 差异格式与新增内容凭据/私网地址检查通过，无新增依赖，原有可选列映射资源警告保留。工作区只含本阶段源码、测试和上述文档；下一位接手从最新本地提交继续完整目标。

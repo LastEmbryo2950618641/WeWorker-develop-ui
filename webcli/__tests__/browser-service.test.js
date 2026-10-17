@@ -151,3 +151,12 @@ it('event polling bypasses a busy page action without releasing its lock, and gu
   expect((await native.execute('console',{session:'work',follow:true})).error.code).toBe('INVALID_ARGUMENT');
   finish({ok:true,data:{completed:true}});await click;
 });
+
+it('requires AX capability for source flags and opaque AX refs, then forwards them unchanged',async()=>{
+  const {service,options,requestExtension}=setup();await service.execute('bind',{session:'work',tabId:7});
+  const ref='ax:12:example-document:00000000-0000-4000-8000-000000000001:1';
+  for(const [command,args]of[['state',{source:'ax'}],['state',{compareSources:true}],['click',{ref}]])expect((await service.execute(command,{session:'work',...args})).error.code).toBe('EXTENSION_UPGRADE_REQUIRED');
+  const capable=new BrowserService({...options,capabilities:()=>({connected:true,capabilities:['browser_commands_v1','browser_accessibility_v1']})});
+  expect((await capable.execute('click',{session:'work',ref})).ok).toBe(true);
+  expect(requestExtension.mock.calls.at(-1)[0].args).toEqual({ref});
+});

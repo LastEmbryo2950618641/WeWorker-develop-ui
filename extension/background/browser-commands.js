@@ -5,6 +5,7 @@ import { beginBrowserFrames, executeFrameScript, evaluateBrowserFrame } from './
 import { beginBrowserDownloads, clearBrowserDownloads, markBrowserDownloadAction, readBrowserDownloads, waitBrowserDownload } from './browser-downloads.js';
 import { executeFramePointer } from './browser-pointer.js';
 import { beginBrowserEvents, clearBrowserEvents, readBrowserEvents, readNetworkEventDetail, browserTimeWindow } from './browser-events.js';
+import { browserStateOptions, browserAxReference, readBrowserAxState, validateBrowserAxReference } from './browser-ax.js';
 
 const pageCommands = new Set(['state', 'find', 'get', 'extract', 'click', 'dblclick', 'fill', 'type', 'select', 'check', 'uncheck', 'focus', 'hover', 'scroll']);
 const fail = (code, message) => Object.assign(new Error(message), { code });
@@ -53,8 +54,17 @@ export async function executeBrowserCommand({ command, tabId, args = {}, identit
     if (!Number.isInteger(tabId) || tabId < 0) throw fail('INVALID_ARGUMENT', 'tabId is required.');
     const tab = await chrome.tabs.get(tabId);
     if (!/^https?:\/\//.test(tab.url || '')) throw fail('UNSUPPORTED_PAGE', 'Only HTTP(S) pages are supported.');
+    const axReference = typeof args.ref === 'string' && args.ref.startsWith('ax:');
+    if (axReference) {
+      args = browserAxReference(args);
+      await validateBrowserAxReference(chrome, tabId, args, ensureCdpAttached, command);
+    }
+    if (command === 'state') {
+      const options = browserStateOptions(args);
+      if (options.source === 'ax' || options.compare) return {ok:true,data:await readBrowserAxState(chrome,tabId,args,ensureCdpAttached)};
+    }
     if (command === 'bind') data = { identity: await bind(tabId) };
-    else if (['click', 'dblclick', 'hover', 'drag'].includes(command) && Number(args.frameId)) data = await executeFramePointer(chrome, tabId, command, args, ensureCdpAttached);
+    else if (['click', 'dblclick', 'hover', 'drag'].includes(command) && (Number(args.frameId) || axReference)) data = await executeFramePointer(chrome, tabId, command, args, ensureCdpAttached);
     else if (['click', 'dblclick', 'hover', 'drag'].includes(command) && !Number(args.frameId)) {
       await ensureCdpAttached(tabId);
       await chrome.debugger.sendCommand({ tabId }, 'Page.bringToFront');

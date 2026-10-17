@@ -1,5 +1,6 @@
 import { executeFrameScript, withBrowserFrameContext } from './browser-frames.js';
 import { runBrowserPageCommand } from './browser-page.js';
+import { validateBrowserAxReference } from './browser-ax.js';
 const fail = (code, message) => Object.assign(new Error(message), { code });
 const sourceKey = source => source.sessionId || '';
 // Project a viewport point through a CSS-transformed iframe content quad.
@@ -122,7 +123,7 @@ export async function executeFramePointer(chrome, tabId, command, args, ensureCd
             const inViewport = (position, size) => { if (position.x < 0 || position.y < 0 || position.x >= size.width || position.y >= size.height)
                 throw fail('ELEMENT_OFFSCREEN', 'The target or an ancestor is outside the viewport.'); };
             const hitTest = async (source, objectId, position) => {
-                const hit = await send(source, 'Runtime.callFunctionOn', { objectId, functionDeclaration: 'function(x,y){ const hit=this.ownerDocument.elementFromPoint(x,y); return this.isConnected && (this===hit || this.contains(hit)); }', arguments: [{ value: position.x }, { value: position.y }], returnByValue: true });
+                const hit = await send(source, 'Runtime.callFunctionOn', { objectId, functionDeclaration: 'function(x,y){ if(!this.isConnected)return false;let target=this,root=target.getRootNode();while(root instanceof ShadowRoot){const hit=root.elementFromPoint(x,y);if(!hit||(hit!==target&&!target.contains(hit)))return false;target=root.host;root=target.getRootNode();}const hit=this.ownerDocument.elementFromPoint(x,y);return !!hit&&(hit===target||target.contains(hit)); }', arguments: [{ value: position.x }, { value: position.y }], returnByValue: true });
                 if (hit.result?.value !== true)
                     throw fail('ELEMENT_OBSCURED', 'The target or an ancestor frame is covered by another element.');
             };
@@ -184,6 +185,8 @@ export async function executeFramePointer(chrome, tabId, command, args, ensureCd
             };
             for (let count = 1; count <= (command === 'dblclick' ? 2 : 1); count++) {
                 await stable();
+                if (typeof args.ref === 'string' && args.ref.startsWith('ax:'))
+                    await validateBrowserAxReference(chrome, tabId, selectedArgs, ensureCdpAttached, command);
                 checkContext();
                 let releaseAt = from;
                 try {

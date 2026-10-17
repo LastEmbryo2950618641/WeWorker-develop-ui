@@ -11,6 +11,7 @@ import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { verifyBrowserEvents } from './browser-events-acceptance.mjs';
+import { verifyBrowserAx } from './browser-ax-acceptance.mjs';
 
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'webcli-browser-acceptance-'));
@@ -247,6 +248,10 @@ try {
   assert.equal((await cli('browser.doctor')).data.ready, true);
   await cli('browser.bind', { session: 'acceptance', tabId });
   const browserCall = (command, args = {}, expectedOk = true) => cli(`browser.${command}`, { session: 'acceptance', ...args }, expectedOk);
+  if (!process.argv.includes('--downloads-only') && !process.argv.includes('--events-only')) {
+    await verifyBrowserAx({cli,record,passed});
+  }
+  if (process.argv.includes('--ax-only')) return;
   if (!process.argv.includes('--downloads-only')) {
     await verifyBrowserEvents({cli,cliEntry,env,record,passed,
       stopBridge:async()=>{const closed=new Promise(resolve=>bridge.once('exit',resolve));bridge.kill('SIGTERM');await closed;},

@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-17（AX 页面状态）：state 支持 source=ax 与 compareSources，读取 Chrome 计算的名称/语义树并汇总可访问 frame；引用绑定实际节点和文档，可操作关闭/嵌套 Shadow DOM，拒绝同名替换、名称漂移、错配文档、禁用与遮挡。比较仅输出覆盖指标，不改当前引用；限额/帧失败明确标记。WebCLI 1129 项、扩展相关 98 项通过；隔离 Chromium 完整 34 项及最终 AX 聚焦通过，日常 Chrome 同类操作和 B 站主文档 AX/24 卡片回归通过。截图高级选项、深层 selector/复杂控件、多连接及其他 OpenCLI 差距继续进行；Python 网站探索agent零改动，最终检查见跟进文档。
+
 - 2026-10-17（持续浏览器观察）：新增 browser.events、console/network --follow JSONL、时间窗口与序列游标；主/子调试 target 分离，独立订阅、输出背压、信号退出、断线续接和丢失错误，扩展主动调试断开明确清理。WebCLI 106 文件/1128 项、扩展聚焦 76 项及 Adapter helper 回归 15 项通过；隔离 Chromium 完整 32 项与日常 Chrome 持续观察通过，B 站 Excel 第一页 24 卡片逐项回归通过。裸时间单位沿用秒，观察历史有界；AX/截图高级选项、profile/多连接及其他 OpenCLI 差距继续推进，Python 网站探索agent零改动。最终分发与交接结果见跟进文档。
 
 - 2026-10-17（子 frame 原生指针）：click/dblclick/hover 与同 frame drag 支持嵌套同源/跨源文档，复用身份守卫，按内容四边形投影/逆变换并逐层检查遮挡；悬停后移动、文档导航或准备超时拒绝继续，异常释放按钮。WebCLI 1119 项、扩展聚焦 69 项、隔离 Chromium 完整 29 项与最终浏览器聚焦通过；日常 Chrome 六 frame 的原生事件、缩放/旋转/透视、父层遮挡和跨源点击下载通过，B 站 24 卡片回归通过。Shadow DOM、跨 frame/DataTransfer 拖拽、持续观测与其他 OpenCLI 差距继续推进；Python 网站探索agent零改动。

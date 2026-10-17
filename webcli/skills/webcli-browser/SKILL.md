@@ -18,6 +18,11 @@ description: 通过 WebCLI 和浏览器插件直接操作已登录网页、检�
 ## 定位与输入
 
 - `state` 返回页面文本及交互元素，`find` 按 selector、role/name、精确 text 定位。优先有语义且唯一的 selector 或 role/name。
+- `state --source=ax` 从 Chrome 无障碍树读取计算后的 role/name 和语义树，默认汇总可访问 frame；`--frameId=0` 或显式 frameId/documentId 只读指定文档。`state --compareSources=true` 比较 DOM/AX 控件数、命名覆盖、角色分布和耗时，保留当前引用；这是来源对比，不是历史快照差异，也不会自动替换默认 DOM 来源。
+- AX 的 ref 是不透明令牌，自带 frame/document 身份，可直接传给 get/click/fill 等命令，无需猜 frame 索引；重复名称保留不同节点引用。带 ref 时若另传不匹配的 frameId/documentId 会失败。节点替换、role/name 改变、导航、同文档的新 state/find 会使旧引用失效，不按相同名称自动寻找替代节点。
+- AX 引用支持开放、关闭及嵌套 Shadow DOM 的控件，原生指针逐层检查 ShadowRoot 和 iframe 祖先遮挡；截图、selector/role 查询本身的 Shadow DOM 覆盖仍需单独核对。此能力不等于通用自定义组件、多步 UI、跨 frame 或 DataTransfer 拖放已实现。
+- AX 需要 browser_accessibility_v1。结果含 tree/text/elements 和 metrics，省略输入值；用 get 显式读普通字段，密码字段仍拒绝。limit 限制总引用数（1–200，默认 100），语义节点最多 1000、文本最多 12000 字符、默认最多 50 frame；达到上限、子 frame 失败或无法解析的节点会标 truncated/partial 与 frame 明细。部分结果不能代表完整页面，可指定 frame 进一步读取。快照分步采集，不是原子冻结网页。
+- compareSources 不创建新引用；DOM 与 AX 统计口径不同，更多节点不代表更优。来源不可用时报告错误；AX_UNAVAILABLE / AX_SNAPSHOT_TIMEOUT / AX_REFERENCE_TIMEOUT 时检查页面状态，再明确选择来源。不会静默回退或重放输入。
 - ref 仅限最近一次 state/find 快照。新快照、URL 变化、节点移除或标签变化会让旧 ref 失效。遇到 `STALE_REF` 重新读状态；遇到 `AMBIGUOUS_TARGET` 收窄定位。
 - `get` 读取 text/value/html/attribute；`extract` 获取页面或单元素文本。密码字段 get 不返回内容。
 - fill 替换输入、type 追加、select 选择原生选项，check/uncheck 设置勾选状态，focus/keys 操作键盘。fill/type 使用原生 value setter 和 input/change 事件；需要逐键行为时用 keys。

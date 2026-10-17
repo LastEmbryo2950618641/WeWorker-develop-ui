@@ -15,7 +15,7 @@ export async function runBrowserPageCommand(command, args = {}) {
       if (args.ref) {
         const snapshot = globalThis.__weworkerBrowserSnapshot;
         const found = snapshot?.refs.get(String(args.ref));
-        if (!found || !found.node.isConnected || snapshot.url !== location.href || found.label !== label(found.node)) fail('STALE_REF', 'Reference expired. Read browser.state/find again or use a selector.');
+        if (!found || !found.node.isConnected || found.node.ownerDocument !== document || snapshot.url !== location.href || (!found.ax && found.label !== label(found.node))) fail('STALE_REF', 'Reference expired. Read browser.state/find again or use a selector.');
         return [found.node];
       }
       let nodes;
@@ -35,6 +35,9 @@ export async function runBrowserPageCommand(command, args = {}) {
     };
     if (command === 'state' || command === 'find') {
       const nodes = command === 'find' ? query() : [...document.querySelectorAll('a[href],button,input,textarea,select,[role],[contenteditable="true"],[tabindex]')].filter(visible);
+      if (args.metricsOnly) return {ok:true,data:{url:location.href,title:document.title,metrics:{source:'dom',interactiveNodes:nodes.length,
+        namedInteractiveNodes:nodes.filter(node=>label(node)).length,textChars:Math.min(document.body?.innerText.length||0,12000),
+        roles:Object.fromEntries([...new Set(nodes.map(role))].map(value=>[value,nodes.filter(node=>role(node)===value).length])),truncated:nodes.length>limit||(document.body?.innerText.length||0)>12000}}};
       const snapshotId = crypto.randomUUID(); const refs = new Map();
       const elements = nodes.slice(0, limit).map((node, index) => { const ref = `${snapshotId}:${index + 1}`; refs.set(ref, { node, label: label(node) }); return describe(node, ref); });
       globalThis.__weworkerBrowserSnapshot = { refs, url: location.href };
@@ -71,10 +74,19 @@ export async function runBrowserPageCommand(command, args = {}) {
       if (rect.bottom <= 0 || rect.right <= 0 || rect.top >= innerHeight || rect.left >= innerWidth) fail('ELEMENT_OFFSCREEN', 'The target is outside the viewport. Scroll it into view first.');
       const x = Math.max(0, rect.left) + (Math.min(innerWidth, rect.right) - Math.max(0, rect.left)) / 2;
       const y = Math.max(0, rect.top) + (Math.min(innerHeight, rect.bottom) - Math.max(0, rect.top)) / 2;
-      const hit = document.elementFromPoint(x, y);
+      const hitMatches = () => {
+        let target = node, root = target.getRootNode();
+        while (root instanceof ShadowRoot) {
+          const hit = root.elementFromPoint(x,y);
+          if (!hit || (hit !== target && !target.contains(hit))) return false;
+          target = root.host; root = target.getRootNode();
+        }
+        const hit = document.elementFromPoint(x,y);
+        return !!hit && (hit === target || target.contains(hit));
+      };
       // Native frame pointers verify the actual content quad and every ancestor.
       // A rotated element's bounding-box center need not be inside the element.
-      if (!args.pointerToken && (!hit || (hit !== node && !node.contains(hit)))) fail('ELEMENT_OBSCURED', 'Another element covers this target. Inspect the current page.');
+      if (!args.pointerToken && !hitMatches()) fail('ELEMENT_OBSCURED', 'Another element covers this target. Inspect the current page.');
       // Internal native-pointer handoff stays in the extension's isolated world.
       if (typeof args.pointerToken === 'string') globalThis[args.pointerToken] = node;
       return { ok: true, data: { x, y } };

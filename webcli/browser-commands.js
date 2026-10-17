@@ -11,7 +11,7 @@ export const browserCommands = {
   close: { description: 'Close an owned tab, or release a user-bound tab without closing it.', params: ['session'] },
   back: { description: 'Navigate back in an owned tab.', params: ['session'] },
   reload: { description: 'Reload the selected page.', params: ['session'] },
-  state: { description: 'Read page text and interactive elements with snapshot-bound references.', params: ['session', 'frameId?', 'documentId?', 'limit?'] },
+  state: { description: 'Read page state from dom (default) or Chrome ax. compareSources reports DOM/AX metrics without replacing current refs. AX refs carry frame/document identity and support subsequent operations.', params: ['session', 'frameId?', 'documentId?', 'limit?', 'source?', 'compareSources?'] },
   find: { description: 'Find elements by CSS, role/name, text or a current reference.', params: ['session', ...target, 'limit?'] },
   get: { description: 'Read an element property: text, value, html or an attribute.', params: ['session', ...target, 'property?', 'attribute?'] },
   extract: { description: 'Read visible page or element text.', params: ['session', ...target, 'maxChars?'] },
