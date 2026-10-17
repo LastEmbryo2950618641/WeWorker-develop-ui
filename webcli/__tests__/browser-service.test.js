@@ -194,3 +194,13 @@ it('requires compound capability for structured reads and explicit option matchi
   expect((await capable.execute('get',{session:'work',property:'html',as:'json',depth:'3',childrenMax:10})).ok).toBe(true);
   expect(requestExtension.mock.calls.at(-1)[0].args).toEqual({property:'html',as:'json',depth:'3',childrenMax:10});
 });
+
+it('uploads locally validated files with private verification metadata and guards all new target forms',async()=>{
+  const {service,options,requestExtension}=setup();await service.execute('bind',{session:'work',tabId:7});
+  const file=path.join(options.rootDir,'example-file.txt');fs.writeFileSync(file,'Example file');
+  expect((await service.execute('upload',{session:'work',selector:'#file',paths:[file]})).error.code).toBe('EXTENSION_UPGRADE_REQUIRED');
+  const capable=new BrowserService({...options,capabilities:()=>({connected:true,capabilities:['browser_commands_v1','browser_upload_target_v1','browser_shadow_query_v1','browser_frames_v1']})});
+  expect((await capable.execute('upload',{session:'work',shadow:true,role:'button',name:'Example upload',frameId:12,documentId:'example-document',paths:[file]})).ok).toBe(true);
+  expect(requestExtension.mock.calls.at(-1)[0].args._uploadFiles).toEqual([{name:'example-file.txt',size:12}]);
+  expect((await capable.execute('upload',{session:'work',selector:'#file',paths:[file],_uploadFiles:[]})).error.code).toBe('INVALID_ARGUMENT');
+});

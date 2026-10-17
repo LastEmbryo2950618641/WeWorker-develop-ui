@@ -161,13 +161,19 @@ path 只在 Bridge 解析，须为已有目录下的绝对新文件路径；截�
 
 DOM 定位可传 shadow=true，在所选文档及开放 shadow roots 内分别执行 CSS/role/name/text 查询。CSS 组合关系不跨树，重复目标保留并拒绝模糊动作；结果附外到内 shadowHosts 元数据和不透明 shadow refs。树内 aria-labelledby 不误读主文档同 ID，角色/名称/节点/URL 变化使引用失效；主文档 shadow 指针也走已有 frame 指针路径，保留节点并逐层命中测试，悬停后复核 ref。input/change 以 composed 事件通知宿主组件，行为与验证责任写入 Skill。
 
-shadow 查询上限为 20000 元素、100 个开放根、32 层边界，超过即 SHADOW_QUERY_LIMIT，不把不完整候选集当作唯一匹配。输出最多 200 refs，总数和截断明确声明；state 文本仍为 light_dom，深层文本需目标 get/extract。关闭根使用 AX，不支持 shadow 与 AX/compareSources 混用。支持 selector 等待、同 frame drag 与显式 frame/document 操作；子 frame DOM refs 不自动附带路由，调用方继续传身份。upload 与截图编号尚未扩展，通用复合控件协议仍待实现。新能力 browser_shadow_query_v1 防止旧插件忽略选项或引用。
+shadow 查询上限为 20000 元素、100 个开放根、32 层边界，超过即 SHADOW_QUERY_LIMIT，不把不完整候选集当作唯一匹配。输出最多 200 refs，总数和截断明确声明；state 文本仍为 light_dom，深层文本需目标 get/extract。关闭根使用 AX，不支持 shadow 与 AX/compareSources 混用。支持 selector 等待、同 frame drag 与显式 frame/document 操作；子 frame DOM refs 不自动附带路由，调用方继续传身份。upload 已支持该定位契约（见后）；截图编号尚未扩展，通用自定义控件协议仍待实现。新能力 browser_shadow_query_v1 防止旧插件忽略选项或引用。
 
 browser_compound_v1 提供原生复合字段和有界 HTML 树。DOM state/find/元素描述默认附 date/time/datetime-local/month/week、select、file 的 compound；显式读取 property=compound 可查询隐藏文件输入，也可对 AX ref 或指定 frame/document 读取，AX state 仍不自动返回值。日期包括 ISO 值格式、范围/步长、required/readOnly 与原生 validity；fill 成功只表示值保留，范围或步长无效会在 validity 中体现。文件只返回名称、数量、accept/multiple，不读取内容或本地路径。
 
 select 的选项列表限 50，current/currentValues 独立扫描选中项，保证常见长列表第 50 项后的选择仍可见。label 使用原生 option.label，disabled 包含 optgroup 继承。by=auto/value/label 明确匹配语义，重复值/标签或 value/label 碰撞不得选择第一项；缺失/禁用在修改前拒绝。派发 input/change 后核对原节点与选择状态，撤回/替换返回 SELECTION_REJECTED，不重放；异步业务完成仍需调用方另验。最多扫描 20000 选项、请求 1000 项，超限明确失败/省略。选中列表最多 1000、文件名最多 100，字段字符串截断显式标记，复合信息单次 100000 字符预算，用尽输出 omitted，不能当成空值。
 
 get property=html as=json 返回 tag/attrs/直接文本/children/compound，未指定目标时从 documentElement 读取，有目标保持唯一匹配约束。默认 depth/childrenMax/textMax/maxNodes 为 3/50/200/500，可分别调到 0–20/0–200/0–2000/1–2000。普通属性/文本合计 100000 字符，attrs 只保留语义及 aria/data 属性，省略事件处理器；密码 value、script/style/noscript/template 正文不序列化。truncated 明确说明各项限制；不保留文本和元素的交错顺序。开放 shadow root 给出未包含标记，选中内部节点后可单独读取；原 raw HTML 行为保留，不复用 JSON 省略规则。
+
+browser_upload_target_v1 统一上传到主/子 frame 的实际原生文件节点。Bridge 检查 1–20 个绝对普通文件路径并生成名称/大小元数据；扩展通过 withBrowserFrameContext 选择准确文档和 target，在隔离世界保留节点/URL/名称/角色/multiple 校验闭包。CSS、语义、普通/Shadow ref 与 AX ref 共用目标契约，隐藏文件输入允许选中；普通 file 的 DOM role 为 button。关闭根使用 AX，可处理同 URL 和递归跨源 frame。
+
+路径仅传入所属调试 session 的 DOM.setFileInputFiles，不写入脚本参数、DOM 属性或页面标记。派发前核对保留节点仍连接、类型/合同未变且非 disabled，AX ref 另复核计算名称；不重新选择同名替代节点。派发后核对同一 input 的文件名/顺序/大小，页面清空、替换或导航明确失败。verified 不保证文件内容未变或服务器收到，不读取内容/hash；真实验收用本轮公开占位文件额外核对字节与 multipart 接收。
+
+操作有 30 秒期限，页面准备也检查同一截止，防止迟到注入继续保留目标；已派发的 CDP 命令不保证可撤销。错误携带 dispatched（进入本次操作后），已派发失败可能产生页面事件或自动上传，不重放。finally 仅清理本次旧文档隔离标记/远程对象，不接触后继文档。目录输入暂不支持，accept 只返回提示，不推断 MIME 或改变网站校验规则。
 
 ## 已安装命令修复
 
@@ -179,7 +185,7 @@ get property=html as=json 返回 tag/attrs/直接文本/children/compound，未�
 
 ## 验证与未完成范围
 
-具体命令和数量见交接日志。WebCLI 全量 106 文件、1132 项通过；扩展相关 117 项通过。真实 Chromium + 未打包插件 + 独立 CLI/Bridge + loopback 示例站点完整 37 项通过，包含复合字段/结构化 HTML/严格选项选择、开放 Shadow DOM 定位/输入/等待、截图编号/尺寸/恢复、AX/DOM 对比与跨 frame/Shadow DOM 引用、首次自动启动 JSONL、持续观察/游标/信号/断线续接、浏览器操作、下载生命周期与续等、同 URL/嵌套跨源 frame、POST/GraphQL 工具、六组精确断言、知识持久化、API/DOM 定向修复、三个页面来源、动态 GET/POST 路径参数、跨域 INTERCEPT、跨文档页面查询，以及 API 503 后保留历史并切换 DOM 的闭环。frame 的 Promise 超时、输出身份及页面重写内置函数时的隔离匹配仍通过。用户指定的真实公共视频搜索页已完成采集、生成、修复、验证、增量安装和普通 CLI 搜索/分页，DOM 命令也与当前页面逐项核对；原始页面/响应未进入仓库。动态路径使用公开占位 loopback 示例站点验收，不代表已在该外部搜索站点验证动态详情接口。
+具体命令和数量见交接日志。WebCLI 全量 106 文件、1133 项通过；扩展相关 122 项通过。真实 Chromium + 未打包插件 + 独立 CLI/Bridge + loopback 示例站点完整 38 项通过，包含原生文件输入跨 frame/Shadow/AX 上传与本地表单接收、复合字段/结构化 HTML/严格选项选择、开放 Shadow DOM 定位/输入/等待、截图编号/尺寸/恢复、AX/DOM 对比与跨 frame/Shadow DOM 引用、首次自动启动 JSONL、持续观察/游标/信号/断线续接、浏览器操作、下载生命周期与续等、同 URL/嵌套跨源 frame、POST/GraphQL 工具、六组精确断言、知识持久化、API/DOM 定向修复、三个页面来源、动态 GET/POST 路径参数、跨域 INTERCEPT、跨文档页面查询，以及 API 503 后保留历史并切换 DOM 的闭环。frame 的 Promise 超时、输出身份及页面重写内置函数时的隔离匹配仍通过。用户指定的真实公共视频搜索页已完成采集、生成、修复、验证、增量安装和普通 CLI 搜索/分页，DOM 命令也与当前页面逐项核对；原始页面/响应未进入仓库。动态路径使用公开占位 loopback 示例站点验收，不代表已在该外部搜索站点验证动态详情接口。
 
 验收脚本为 `webcli/scripts/verify-exploration-browser.mjs`；使用临时副本改变连接端口及 CLI 配置目录，生产协议和默认端口未改。只启动/停止脚本自己创建的服务和浏览器，Adapter 安装、任务和浏览器配置均隔离。Playwright 用于测试浏览器启动、示例导航及下载取消刺激/诊断；下载观察、探索/生成/验证/安装和业务调用均经过真实 CLI 与插件，不 mock 扩展传输、fetch 或验证器。隔离浏览器显式允许下载并使用临时目录；日常 Chrome 另行验收，不把该测试设置当成用户浏览器的默认策略。
 

@@ -1,6 +1,6 @@
 # API 自动探索 CLI 改造跟进与交接
 
-> 更新日期：2026-10-17。当前阶段：原生日期/下拉/文件复合元数据、结构化 HTML 和明确选项匹配/保留校验已实现；WebCLI 1132 项、扩展相关 117 项、隔离真实浏览器完整 37 项及最终复合字段聚焦通过。日常 Chrome 同类操作和 B 站 24 卡片回归通过。完整 OpenCLI 对齐继续进行；通用复杂控件/Shadow 上传、多连接、独立 HTTP runner、独立 Agent 对话、UI 统一与平台安装包验收尚未完成。
+> 更新日期：2026-10-17。当前阶段：原生文件输入支持隐藏/语义/Shadow/AX/嵌套跨源 frame 上传，保留节点、验证文件名/顺序/大小并报告已派发状态；WebCLI 1133 项、扩展相关 122 项、隔离真实浏览器完整 38 项及最终上传聚焦通过。日常 Chrome 同类操作和 B 站 24 卡片回归通过。完整 OpenCLI 对齐继续进行；通用复杂控件/目录输入、多连接、独立 HTTP runner、独立 Agent 对话、UI 统一与平台安装包验收尚未完成。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
 
 ## 最新状态
@@ -11,7 +11,7 @@
 - 功能分支在集成提交后创建为 `codex/api-exploration-cli`，最终操作结果见文末。未推送或创建 PR，最终发布目标仍待明确。
 - [开发设计](api_exploration_cli_design.md) 为本次审阅入口。
 - [OpenCLI 能力对齐台账](opencli_parity.md) 为最新范围与缺口清单；用户要求尽力对齐完整能力，不能把当前 36 个 browser 命令或单站点验收视为目标完成。
-- 首版功能实现提交为 `821a7df`，本轮从开放 Shadow DOM 检查点 `b01392e` 继续；后续实现、真实验收与本地检查点见文末和 Git 日志。集成基线仍为 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`。这些是已纳入快照，后续同步前应重新 fetch，不能据此推断远端未变化。
+- 首版功能实现提交为 `821a7df`，本轮从复合字段检查点 `21f193c` 继续；后续实现、真实验收与本地检查点见文末和 Git 日志。集成基线仍为 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`。这些是已纳入快照，后续同步前应重新 fetch，不能据此推断远端未变化。
 > 后续每次建分支、同步上游、解决冲突、实现功能或验证后，都应更新本文和 ROADMAP.md。未验证事项不得标为完成。
 
 ## 1. 目标与范围
@@ -510,3 +510,16 @@ npm run test:exploration:browser --prefix webcli -- \
 - 下一步继续实际控件操作缺口：Shadow/子 frame/AX ref 文件输入、通用自定义组件；然后推进 profile/多连接、独立 PUBLIC_API/COOKIE_API runner。UI/聊天共用服务、写命令/多步 UI、知识修订与共享修复、独立 Agent 对话、平台分发和其余台账目标均未完成，goal 保持 active。
 
 - 最终分发/受控检查：597 文件 dry-pack、构建帮助、公开配置、9 个 JS/MJS 语法、Git 差异格式与新增内容凭据/私网地址检查通过；最新 Skill 随包，既有可选列映射资源警告保留。最终工作区仅含本阶段源码、测试与文档，保存本地检查点，整体目标未标完成。
+
+### 文件输入目标扩展（2026-10-17）
+
+- 从 `21f193c` 继续，集成快照与分支不变，没有 fetch/merge/push。新增 browser-upload.js / browser_upload_target_v1，upload 改为通用 selector/role/name/text/ref + paths，可显式 frame/document/shadow；AX ref 自动携带文档身份，普通子 frame DOM ref 仍需继续传身份。
+- Bridge 本地验证 1–20 个绝对普通文件路径，生成名称/大小元数据，调用方不能传内部验证字段。扩展解析一次并在隔离世界保留节点、URL、名称/角色/multiple 与校验闭包，再以准确 target session 的 objectId 调用 DOM.setFileInputFiles；无 DOM 标记属性，路径不进入页面脚本参数。隐藏文件输入允许，原生 file 的 DOM role 补为 button。关闭根使用 AX；未把普通自定义 button 当成文件输入。
+- 派发前复核节点/文档/类型/名称/角色/multiple/disabled，拒绝继承 disabled、aria-disabled、重复目标、单文件输入传多个、目录 input 与非文件节点。30 秒准备/派发/验证期限，页面侧也检查截止，避免延迟注入后继续保留目标；已发送的 Chrome 命令不能保证撤销。finally 只清理原文档隔离标记和远程对象。
+- 派发后核对同一 input 的实际文件名、顺序和大小，不只对数量；页面清空、替换或导航明确失败。错误在进入本次操作后附 dispatched，true 时页面事件/自动上传可能发生，不能自动重放。verified 只证明文件输入状态，不证明内容 hash 或服务器收到；目录输入、目录/文件选择弹窗和通用自定义上传业务流程尚未覆盖，accept 不用于 CLI MIME 猜测。
+- WebCLI 106 文件/1133 项通过，扩展最终 122 项通过。新增 5 项单测：target session/objectId 保留与路径不注入、失效/禁用/上下文消失阻止派发、迟到验证不能发送文件、名称/顺序/大小精确校验、页面准备过期与合同变化；Bridge 验证内部字段不能伪造且旧插件拒绝。没有新增依赖。
+- 新增 browser-upload-acceptance.mjs / --uploads-only。初版隔离 `webcli-browser-acceptance-jghQCA/report.json` 通过；文件名追加空格/中文后，生产主体完整 38 项 `webcli-browser-acceptance-W5Q8Pm/report.json` 通过，包含原复合字段、Shadow/AX、截图、持续观察、下载/frame，以及探索/生成/安装/修复/知识/重启全流程。其后补页面侧过期检查，最终聚焦 `webcli-browser-acceptance-nlsrAp/report.json` 通过；没有将最终聚焦称为再次完整运行。
+- 日常 Chrome 最终 `weworker-upload-live-Giy5xv/report.json`：隐藏 input、语义选择、开放/嵌套 Shadow、关闭 AX、同 URL 两跨源 frame 与递归嵌套跨源目标全部正确；实际 File 内容逐项等于两份公开占位文本，测试页 multipart 提交到本轮 loopback 服务后内容仍一致。重复/禁用/目录/非文件/多文件限制、同名替换旧引用、页面清空、旧文档与选择后导航均拒绝，没有重放。测试页面与自建服务器正常关闭，测试文件只位于临时目录，没有真实业务上传。
+- 重载后重新选择 B 站 excel 用户页并绑定，主文档 AX 与 current-video-links 的 24 张可见视频卡片标题/规范化链接逐项一致，页面保持第一页；真实结果未入仓库。当前 source Bridge 快照 PID 38679、日志 `/tmp/weworker-upload-live-bridge.log`，插件加载工作区 extension-dist 且已重载；下次先核实完整进程命令、doctor/tabs，不照抄旧身份。
+- CLI/Bridge 构建、构建帮助的 ref/semantic/frame/shadow upload 参数、公开配置通过；npm pack dry-run 598 文件，包含 browser-upload.js 与最新 Skill。10 个 JS/MJS 语法、Git 差异格式和新增内容凭据/私网地址检查通过；原有可选列映射资源警告保留。Python 网站探索agent相对 `af8e082` 零差异，源码/环境/测试/生命周期/数据未触碰；CI/发布/schema/.env 未改，未推送或创建 PR。
+- 下一步优先多 profile/连接的明确选择与路由，再推进独立 PUBLIC_API/COOKIE_API runner；自定义组件/多步 UI/写命令、知识修订/共享修复、UI/聊天共用服务、独立 Agent 对话和平台分发仍属完整目标，goal 保持 active。保存本阶段本地检查点，SHA 见 Git 日志。

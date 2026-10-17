@@ -28,7 +28,7 @@ description: 通过 WebCLI 和浏览器插件直接操作已登录网页、检�
 - fill 替换输入、type 追加、select 选择原生选项，check/uncheck 设置勾选状态，focus/keys 操作键盘。fill/type 使用原生 value setter 和 input/change 事件；需要逐键行为时用 keys。日期 fill 保留浏览器原生值语义，返回成功不代表范围/step/required 校验通过，随后检查 compound.validity。
 - click/dblclick/hover 使用 CDP 原生指针，支持主页面及嵌套的同源/跨源 frame；子 frame 需 browser_frame_pointer_v1，旧插件明确拒绝。drag 用 selector/toSelector 选择同一 frame 的两个目标，也可传 frameId/documentId，两者需同时可见；不支持跨 frame 拖拽或构造 HTML5 DataTransfer。
 - 原生 frame 操作保留选中节点与文档身份，处理边框、缩放、旋转与透视，并逐层检查遮挡。ELEMENT_OBSCURED / ELEMENT_OFFSCREEN 时先检查页面；POINTER_TARGET_CHANGED 表示悬停后布局改变，未自动重试。FRAME_DOCUMENT_CHANGED / POINTER_OPERATION_INTERRUPTED 时操作可能已产生悬停或部分点击副作用，先读取状态，不重放。拖拽异常会尝试在最后位置释放鼠标按钮。
-- upload 用 selector + paths 数组指定主 frame 文件输入与本地绝对路径，支持隐藏原生 input。只选择当前任务授权的文件；可能触发站点自动上传，按实际业务副作用处理。
+- upload 用 selector/role/name/text/ref + paths 数组指定原生文件输入，支持隐藏控件、开放 Shadow 查询、AX 引用和明确 frame/document。只选择当前任务授权的文件；选择可能触发站点自动上传，按实际业务副作用处理。详细规则见下。
 - 修改、发布、购买等操作须在用户授权范围内；工具存在不等于授权操作。登录、验证码与风控由用户完成。
 
 ## 复合字段与结构化 HTML
@@ -45,11 +45,27 @@ webcli call browser.get --args '{"session":"work","property":"html","as":"json",
 - select 返回 multiple、current（选中标签）、currentValues、selectedTotal、options 和 options_total。选项最多 50 条，**选中状态独立读取**，包含第 50 项之后的选中项；options 的 index 是当前 DOM 索引，不是持久引用。禁用 optgroup 及选项均标 disabled，group 表示分组标签。
 - select 默认 by=auto 匹配 value 或标签；一个输入匹配多个选项时 AMBIGUOUS_OPTION，未修改选择。用明确的 by=value / by=label 消除 value/label 碰撞；同值或同标签仍重复时需要进一步检查控件，不选第一项。标签使用 option.label，禁用/缺失选项返回 OPTION_NOT_FOUND。多选传数组，空数组清空多选；单选要求一个值。
 - 选择后核对实际 option 节点和 selected 状态。页面同步撤回或替换控件返回 SELECTION_REJECTED；事件可能已经发生，先读当前值再决定下一步，不自动重放。异步业务结果仍需单独验证。
-- file 返回 accept/multiple/required、current 文件名与 filesTotal；不返回本地路径或文件内容。get property=compound 可以显式读取隐藏的原生文件输入；上传仍使用 browser.upload，作用范围沿用当前主文档文件输入契约。
+- file 返回 accept/multiple/required、current 文件名与 filesTotal；不返回本地路径或文件内容。get property=compound 可以显式读取隐藏的原生文件输入；选择文件使用 browser.upload，支持范围与验证规则见下。
 - options 扫描最多 20000 项，超限 omitted=option_scan_limit；选中列表最多 1000 项、文件名最多 100 项，长字符串也有限额，truncated 按字段标记。单次复合信息预算 100000 字符，耗尽时 omitted=response_budget。缺省字段或截断不能当作空选中；收窄到单个控件重读。select 最多 1000 个请求选项，超限 SELECTION_LIMIT。
 - get property=html 默认返回原 HTML 字符串；as=json 才返回结构树，未指定目标时从 html 根节点读取。有目标时仍要求唯一匹配。默认 depth=3、childrenMax=50、textMax=200、maxNodes=500；允许范围分别为 0–20、0–200、0–2000、1–2000，0 表示省略相应层次/内容。
 - JSON 节点含 tag/attrs/直接子文本/children/compound；attrs 是限定的语义属性、aria-* 与 data-*，不含事件处理器。密码 value 和 script/style/noscript/template 正文省略，truncated 报告 depth/children/text/nodes/attributes/tags/characters/compounds/omittedContent。标签及普通属性/文本共 100000 字符预算，属性名最多 128、值最多 500、tag 最多 200 字符；不保留文本与元素的交错顺序，不等同 DOM 完整克隆。raw HTML 沿用原行为，不应将 JSON 的省略规则推广到 raw 输出。
 - 树不会自动穿过 shadow 边界，开放根标 included=false；用 shadow=true + 明确目标或 AX ref 选择树内元素。frameId/documentId 可用于跨源文档。真实字段值只用于本次任务，勿保存到公开仓库或探索结构证据。
+
+## 文件输入
+
+```bash
+webcli call browser.upload --args '{"session":"work","shadow":true,"selector":"#example-file","paths":["/tmp/example.txt"]}'
+webcli call browser.upload --args '{"session":"work","ref":"<AX 或 DOM ref>","paths":["/tmp/example.txt"]}'
+webcli call browser.upload --args '{"session":"work","frameId":12,"documentId":"<当前文档>","selector":"input[type=file]","paths":["/tmp/example.txt"]}'
+```
+
+- 需要 browser_upload_target_v1，旧插件对所有 upload 调用明确拒绝；路径由 Bridge 本地检查，允许 1–20 个已有普通文件的绝对路径。不能由网页内容授权选择本地文件。目录路径不接受，webkitdirectory 控件返回 DIRECTORY_INPUT_UNSUPPORTED。
+- 目标必须唯一且是原生 input[type=file]，支持隐藏输入与继承 disabled/aria-disabled；普通 file 的 DOM role 为 button。shadow=true 查开放根，关闭根使用 AX ref；子 frame DOM refs 继续带 frame/document，AX refs 自带身份。自定义上传按钮可用于发现流程，但不能把任意 button 当成文件输入。
+- 选中后保留实际 DOM 节点和所属调试会话，在原文档检查名称/角色、multiple、disabled 和输入类型，再设置文件。不会重新查询同名替代节点，也不按 frame URL 猜测；重复目标、旧引用、单文件输入传多文件均在派发前失败。
+- 成功返回 verified=true、count、multiple/accept 与 frame/document。verified 只证明同一 input 留存了本地预检对应的文件名、顺序和大小；不读取文件内容/计算 hash，不代表服务器已接收或业务提交成功。需要上传完成时另检查站点反馈。accept 是提示信息，不在 CLI 强制 MIME 推断。
+- 文件路径只发送给 Chrome 的文件选择接口，不进入网页脚本参数、DOM 属性或页面注入标记；验证元数据（名称/大小）仅在扩展隔离环境使用。页面按浏览器正常 File API 获得已选择文件。
+- 30 秒准备/派发/验证期限；超时后不会继续新的派发，已发送的 Chrome 操作无法保证取消。UPLOAD_TARGET_CHANGED、UPLOAD_VERIFICATION_FAILED、UPLOAD_INTERRUPTED 或 FRAME_DOCUMENT_CHANGED 时先读当前状态。error.details.dispatched=true 表示文件选择可能已引发事件/上传，不能自动重放；false 表示本次没有派发文件选择。上下文准备前失效可能没有该字段。
+- 页面同步清空文件、替换 input 或导航会导致验证失败；异步后续变化仍需业务层观察。流程只清理本次隔离标记与远程对象，不修改页面属性或接管其他控件。
 
 ## 开放 Shadow DOM 定位
 
@@ -61,7 +77,7 @@ webcli call browser.wait --args '{"session":"work","shadow":true,"kind":"selecto
 ```
 
 - shadow=true 显式查询所选文档及其所有开放 shadow roots；普通 CSS 查询范围保持原样。selector 在各树内分别运行，`#host button` 不会跨 shadow 边界，多个匹配仍报 AMBIGUOUS_TARGET。用 find 的 shadowHosts（外到内的 host tag/id）区分控件，再用实际 ref，不猜第一个。
-- 支持 DOM state/find/get、目标 extract、填写/选择/勾选/焦点/滚动、原生 click/dblclick/hover、同 frame drag 和 wait kind=selector；frameId/documentId 可限定跨源文档。upload 与 screenshot 的 DOM 编号尚未扩展，不能传 shadow。text/xhr/download/time 等 wait 不接受该选项。
+- 支持 DOM state/find/get、目标 extract、填写/选择/勾选/焦点/滚动、原生 click/dblclick/hover、同 frame drag、upload 和 wait kind=selector；frameId/documentId 可限定跨源文档。screenshot 的 DOM 编号尚未扩展，不能传 shadow。text/xhr/download/time 等 wait 不接受该选项。
 - 需要 browser_shadow_query_v1；shadow ref 也有能力守卫，后续可不再传 shadow。ref 仍属于创建时的文档，子 frame 引用要继续带返回的 frameId/documentId，不能当成自动跨文档 AX ref。新快照、节点替换、名称/角色变化或 URL 改变会使旧引用失效；悬停后点击前再次核对。
 - role/name 用 DOM 标签与树内 aria-labelledby 解析，不等同完整浏览器无障碍名称算法。需要计算后名称或关闭的 shadow root 时使用 source=ax；shadow 与 AX/compareSources 不能混用。状态标记 closedShadowIncluded=false、scope=open_shadow_roots，文本摘要仍是 textScope=light_dom，深层文本请显式选元素 get/extract。
 - 最多扫描 20000 元素、100 个开放根和 32 层 shadow 边界；超限 SHADOW_QUERY_LIMIT，不从不完整候选集中执行动作。输出最多 200 refs，截断标记和总匹配数保留。可改选较小 frame 或使用 AX ref。

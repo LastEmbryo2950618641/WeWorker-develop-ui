@@ -7,6 +7,7 @@ import { executeFramePointer } from './browser-pointer.js';
 import { beginBrowserEvents, clearBrowserEvents, readBrowserEvents, readNetworkEventDetail, browserTimeWindow } from './browser-events.js';
 import { browserStateOptions, browserAxReference, readBrowserAxState, validateBrowserAxReference } from './browser-ax.js';
 import { captureBrowserScreenshot } from './browser-screenshot.js';
+import { uploadBrowserFiles } from './browser-upload.js';
 
 const pageCommands = new Set(['state', 'find', 'get', 'extract', 'click', 'dblclick', 'fill', 'type', 'select', 'check', 'uncheck', 'focus', 'hover', 'scroll']);
 const fail = (code, message) => Object.assign(new Error(message), { code });
@@ -92,18 +93,7 @@ export async function executeBrowserCommand({ command, tabId, args = {}, identit
     }
     else if (pageCommands.has(command)) data = await page(command, args);
     else if (command === 'upload') {
-      await ensureCdpAttached(tabId);
-      if (!Array.isArray(args.paths) || !args.paths.length || typeof args.selector !== 'string') throw fail('INVALID_ARGUMENT', 'A selector and file paths are required.');
-      const { root } = await chrome.debugger.sendCommand({ tabId }, 'DOM.getDocument');
-      const { nodeIds } = await chrome.debugger.sendCommand({ tabId }, 'DOM.querySelectorAll', { nodeId: root.nodeId, selector: args.selector });
-      if (nodeIds.length !== 1) throw fail(nodeIds.length ? 'AMBIGUOUS_TARGET' : 'ELEMENT_NOT_FOUND', 'Choose one file input.');
-      const { node } = await chrome.debugger.sendCommand({ tabId }, 'DOM.describeNode', { nodeId: nodeIds[0] });
-      const attrs = Object.fromEntries((node.attributes || []).reduce((pairs, item, i, all) => i % 2 ? pairs : [...pairs, [item, all[i + 1]]], []));
-      if (node.nodeName !== 'INPUT' || attrs.type !== 'file') throw fail('INVALID_ARGUMENT', 'Target must be a file input.');
-      if (Object.hasOwn(attrs, 'disabled')) throw fail('ELEMENT_DISABLED', 'The file input is disabled.');
-      if (args.paths.length > 1 && !Object.hasOwn(attrs, 'multiple')) throw fail('INVALID_ARGUMENT', 'The file input accepts only one file.');
-      await chrome.debugger.sendCommand({ tabId }, 'DOM.setFileInputFiles', { nodeId: nodeIds[0], files: args.paths });
-      data = { completed: true, count: args.paths.length };
+      data = await uploadBrowserFiles(chrome,tabId,args,ensureCdpAttached);
     }
     else if (command === 'close') { await chrome.tabs.remove(tabId); await chrome.storage.session.remove(identityKey(tabId)); clearBrowserObservations(tabId); clearBrowserDownloads(tabId); data = { closed: true }; }
     else if (command === 'reload') { await chrome.tabs.reload(tabId); data = { reloading: true }; }

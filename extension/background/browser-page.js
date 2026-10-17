@@ -8,7 +8,7 @@ export async function runBrowserPageCommand(command, args = {}) {
     const limit = Math.max(1, Math.min(Number(args.limit) || 100, 200));
     const visible = node => !!(node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden');
     const role = node => node.getAttribute('role') || ({ BUTTON: 'button', A: 'link', TEXTAREA: 'textbox', SELECT: 'combobox' }[node.tagName])
-      || (node.tagName === 'INPUT' ? ({ checkbox: 'checkbox', radio: 'radio', search: 'searchbox', submit: 'button', button: 'button' }[node.type] || 'textbox') : '');
+      || (node.tagName === 'INPUT' ? ({ checkbox: 'checkbox', radio: 'radio', search: 'searchbox', submit: 'button', button: 'button', file: 'button' }[node.type] || 'textbox') : '');
     const label = node => (node.getAttribute('aria-label') || (node.getAttribute('aria-labelledby') || '').split(/\s+/).map(id => node.getRootNode().getElementById?.(id)?.textContent || '').join(' ').trim()
       || [...(node.labels || [])].map(item => item.textContent).join(' ') || node.getAttribute('placeholder') || node.textContent || '').trim().slice(0, 500);
     const shadowHosts = node => {
@@ -87,7 +87,7 @@ export async function runBrowserPageCommand(command, args = {}) {
       if (args.role) nodes = nodes.filter(node => role(node) === args.role);
       if (args.name !== undefined) nodes = nodes.filter(node => label(node) === String(args.name));
       if (args.text !== undefined) nodes = nodes.filter(node => node.textContent.trim() === String(args.text) && ![...node.children].some(child => child.textContent.trim() === String(args.text)));
-      return nodes.filter(node=>visible(node)||(command==='get'&&args.property==='compound'));
+      return nodes.filter(node=>visible(node)||command==='upload-target'||(command==='get'&&args.property==='compound'));
     };
     const one = () => {
       if (!args.selector && !args.ref && !args.role && args.text === undefined) fail('INVALID_ARGUMENT', 'Provide selector, ref, role/name or text.');
@@ -167,6 +167,23 @@ export async function runBrowserPageCommand(command, args = {}) {
       return { ok: true, data: { value: String(readers[property]() ?? '').slice(0, 100000), element: describe(node) } };
     }
     if (disabled(node)) fail('ELEMENT_DISABLED', 'The target element is disabled.');
+    if(command==='upload-target'){
+      if(Date.now()>=args.uploadDeadline)fail('UPLOAD_INTERRUPTED','Upload preparation exceeded its deadline.');
+      if(node.tagName!=='INPUT'||node.type!=='file')fail('INVALID_ARGUMENT','Target must be a native file input.');
+      if(node.webkitdirectory)fail('DIRECTORY_INPUT_UNSUPPORTED','Directory inputs require a directory selection; regular file upload cannot populate them.');
+      if(args.fileCount>1&&!node.multiple)fail('INVALID_ARGUMENT','The file input accepts only one file.');
+      const captured={node,url:location.href,name:label(node),role:role(node),multiple:node.multiple};
+      captured.validate=(phase)=>{
+        if(!node.isConnected||node.ownerDocument!==document||location.href!==captured.url)fail('UPLOAD_TARGET_CHANGED','The selected file input or document changed.');
+        if(phase==='before'){
+          if(Date.now()>=args.uploadDeadline)fail('UPLOAD_INTERRUPTED','The upload target preparation expired.');
+          if(node.tagName!=='INPUT'||node.type!=='file'||node.multiple!==captured.multiple||node.webkitdirectory||label(node)!==captured.name||role(node)!==captured.role)fail('UPLOAD_TARGET_CHANGED','The file input contract changed before upload.');
+          if(disabled(node))fail('ELEMENT_DISABLED','The file input became disabled.');
+        }
+      };
+      globalThis[args.uploadToken]=captured;
+      return{ok:true,data:{multiple:!!node.multiple,accept:String(node.accept||'').slice(0,500)}};
+    }
     if (args.scrollIntoView !== false) node.scrollIntoView({ block: 'center', inline: 'center' });
     if (command === 'bounds') {
       const rect = node.getBoundingClientRect();

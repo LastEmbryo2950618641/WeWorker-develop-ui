@@ -31,3 +31,5 @@ AX 对照增量：核对 cli.js state 的 --source 与 --compare-sources，以�
 复合字段/HTML 树增量：按 compound.d.ts、html-tree.d.ts 和 browser Skill 的公开契约核对。WebCLI DOM state/find 默认提供日期/时间格式与约束、select 列表/current、file 名称与 accept/multiple，get compound 可单独读取；列表同样限 50，选中项独立读取以覆盖列表之外的选中值，另附 currentValues、disabled optgroup、原生 validity 与显式省略/截断。AX state 保留原有省略值规则，需显式 get compound。
 
 select 支持 by=auto/value/label，使用 option.label 并核对修改后状态。与 OpenCLI 标签优先选择相比，本项目在 value/label 碰撞或同类重复时明确拒绝，需要作者明确匹配方式；不能把这种差异写成逐参数完全相同。结构化 HTML 用 get property=html as=json，支持 depth=0、html 根节点、子节点/文本/总节点限额，包含复合信息和截断报告。默认有界、限定属性、密码值/脚本正文省略，原 raw HTML 保留；树不自动遍历 shadow roots，选中内部元素再读。自定义日期弹层/组件状态机和 Shadow 文件输入仍未覆盖。
+
+上传对照增量：核对发布包 BasePage.uploadFiles 的 selector/semantic/ref 入口和 CDP setFileInput。WebCLI 统一 upload target 与其他命令，新增准确 frame/document、开放 shadow 与关闭 AX ref 上传，隐藏原生 input 也可选择。实现保留隔离世界实际节点，经所属 target session 按 objectId 赋文件，不向 DOM 写标记属性；验证文件名/顺序/大小，失效目标不重识别，已派发失败明确标记。原生 disabled/单多文件限制和目录输入拒绝均纳入测试；目录/文件选择弹窗、通用自定义上传业务流程尚未覆盖。

@@ -52,6 +52,7 @@ export class BrowserService {
   }
   async send(command, args, tabId, identity) {
     if (!this.capabilities().capabilities.includes('browser_commands_v1')) throw fail('EXTENSION_UPGRADE_REQUIRED', 'Reload the extension built from this branch to enable browser commands.');
+    if(command==='upload'&&!this.capabilities().capabilities.includes('browser_upload_target_v1'))throw fail('EXTENSION_UPGRADE_REQUIRED','Reload the extension to upload to retained frame/shadow targets with verification.');
     if((args.compound!==undefined||args.property==='compound'||args.as!==undefined||['depth','childrenMax','textMax','maxNodes','by'].some(key=>args[key]!==undefined))&&!this.capabilities().capabilities.includes('browser_compound_v1'))throw fail('EXTENSION_UPGRADE_REQUIRED','Reload the extension to inspect compound controls, structured HTML or select by an explicit match mode.');
     if((args.shadow!==undefined||String(args.ref||'').startsWith('shadow:'))&&!this.capabilities().capabilities.includes('browser_shadow_query_v1'))throw fail('EXTENSION_UPGRADE_REQUIRED','Reload the extension to query open shadow roots or operate their references.');
     if(command==='screenshot'&&['annotate','width','height'].some(key=>args[key]!==undefined)&&!this.capabilities().capabilities.includes('browser_screenshot_v1'))throw fail('EXTENSION_UPGRADE_REQUIRED','Reload the extension to annotate screenshots or temporarily change their viewport.');
@@ -106,11 +107,15 @@ export class BrowserService {
     if (command === 'back' && !binding.owned) throw fail('BOUND_TAB_NAVIGATION', 'Back is available only for session-owned tabs.');
     if (command === 'upload') {
       if (!Array.isArray(args.paths) || !args.paths.length || args.paths.length > 20) throw fail('INVALID_ARGUMENT', 'paths must contain 1–20 absolute file paths.');
+      const files=[];
       for (const file of args.paths) {
         if (typeof file !== 'string' || !path.isAbsolute(file)) throw fail('INVALID_ARGUMENT', 'Each upload path must be absolute.');
         let stat; try { stat = fs.statSync(file); } catch { throw fail('FILE_UNAVAILABLE', 'An upload file is unavailable.'); }
         if (!stat.isFile()) throw fail('INVALID_ARGUMENT', 'Upload paths must point to regular files.');
+        files.push({name:path.basename(file),size:stat.size});
       }
+      const {session:ignored,...params}=args;
+      return{session,tabId:binding.tabId,...await this.send(command,{...params,_uploadFiles:files},binding.tabId,binding.identity)};
     }
     if(command==='screenshot'&&args.path!==undefined){
       if(typeof args.path!=='string'||!path.isAbsolute(args.path))throw fail('INVALID_ARGUMENT','Screenshot path must be absolute.');
