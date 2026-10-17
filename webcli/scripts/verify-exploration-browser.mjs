@@ -19,6 +19,7 @@ import { verifyBrowserUploads } from './browser-upload-acceptance.mjs';
 import { verifyBrowserProfiles } from './browser-profile-acceptance.mjs';
 import { verifyHostHttp } from './http-acceptance.mjs';
 import { verifyPageNavigation } from './page-navigation-acceptance.mjs';
+import { verifyPageWorkflow } from './page-workflow-acceptance.mjs';
 
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'webcli-browser-acceptance-'));
@@ -270,6 +271,11 @@ try {
   });
   if (process.argv.includes('--http-only')) { await hostHttp(); return; }
   if (process.argv.includes('--navigation-only')) { await verifyPageNavigation({ cli, record, passed }); return; }
+  const pageWorkflow = () => verifyPageWorkflow({ cli, record, passed,
+    stopBridge: async () => { const closed = new Promise(resolve => bridge.once('exit', resolve)); bridge.kill('SIGTERM'); await closed; },
+    startBridge: async () => { await startBridge(); await connected(); },
+  });
+  if (process.argv.includes('--workflow-only')) { await pageWorkflow(); return; }
 
   const tabs = (await cli('exploration.tabs')).data.tabs;
   const tabId = tabs.find(tab => tab.url === origin + '/').id;
@@ -896,6 +902,7 @@ try {
   await record('page-query-validation', queryValidation);
   passed('full-document search survives navigation in observation, two strict preview cases, installation and repeated ordinary calls on the result route');
   await verifyPageNavigation({ cli, record, passed });
+  await pageWorkflow();
 
   const fallbackTab = (await cli('browser.open', { session: 'fallback', url: origin + '/fallback-only' })).data.tabId;
   const fallbackTask = (await cli('exploration.start', { tabId: fallbackTab, goal: 'Read public items despite an unstable API', requestId: 'example-strategy-fallback' })).data.taskId;
@@ -955,8 +962,9 @@ try {
   const restoredKnowledge = (await cli('exploration.knowledge-read', { site: review.name })).data;
   assert.equal(restoredKnowledge.knowledge.commands[verificationTool].cases.length, 6);
   assert.equal(restoredKnowledge.stale, false);
-  assert.equal(restoredKnowledge.knowledge.pages.length, 9);
+  assert.equal(restoredKnowledge.knowledge.pages.length, 10);
   assert.ok(restoredKnowledge.knowledge.pages.some(page => page.source.mode === 'navigate'));
+  assert.ok(restoredKnowledge.knowledge.pages.some(page => page.source.mode === 'workflow'));
   const restoredAttempt = (await cli('exploration.revision-read', { taskId: fallbackTask, revision: 1 })).data;
   assert.equal(restoredAttempt.runtimeValidation.passed, false);
   assert.equal((await cli('exploration.revision-read', { taskId: fallbackTask, revision: 1, file: 'manifest.json' })).data.content, oldManifest.content);

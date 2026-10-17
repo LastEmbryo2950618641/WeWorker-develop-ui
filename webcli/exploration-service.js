@@ -1,4 +1,5 @@
 import { normalizePageQuery, pageQueryValues } from './exploration-query.js';
+import { workflowParameters } from './exploration-workflow.js';
 import { analyzeApiCandidate, analyzeExploration, normalizeStrategyNote } from './exploration-analysis.js';
 import { explorationDraftHash, archiveExplorationDraft, explorationRevisionView, readExplorationRevision } from './exploration-revisions.js';
 import fs from 'node:fs';
@@ -258,6 +259,7 @@ export class ExplorationService {
       const intercept = command === 'intercept', query = command === 'query';
       if (query && !this.capabilities().capabilities.includes('page_query_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension to run navigation-aware page queries.');
       if (query && args.source?.mode === 'navigate' && !this.capabilities().capabilities.includes('page_navigation_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension to navigate parameterized page routes.');
+      if (query && args.source?.mode === 'workflow' && !this.capabilities().capabilities.includes('page_workflow_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension to execute ordered page workflows.');
       if (intercept && !this.capabilities().capabilities.includes('intercept_read_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension to observe intercepted page queries.');
       const source = query ? normalizePageQuery(args.source) : intercept ? normalizeInterceptSource(args.source, run.candidates) : normalizePageSource(args.source), reason = textArg(args.reason, 'reason');
       const values = query ? pageQueryValues(source, args.values) : intercept ? interceptValues(source, args.values) : undefined;
@@ -265,15 +267,21 @@ export class ExplorationService {
         const tab = await this.checkTab(run);
         if (signal.aborted) return;
         const page = new URL(tab.url);
-        const result = await this.request({ type: query ? 'exploration_page_query' : intercept ? 'exploration_intercept_read' : 'exploration_observe_page', tabId: run.tabId,
-          payload: { source, expectedOrigin: page.origin, expectedPath: page.pathname, ...(intercept || query ? { values } : {}) } }, query ? 45000 : 30000);
+        const operationId = source.mode === 'workflow' ? randomUUID() : undefined;
+        const cancel = () => { this.request({ type: 'exploration_cancel_workflow', tabId: run.tabId, operationId }, 5000).catch(() => {}); };
+        if (operationId) signal.addEventListener('abort', cancel, { once: true });
+        let result;
+        try {
+          result = await this.request({ type: query ? 'exploration_page_query' : intercept ? 'exploration_intercept_read' : 'exploration_observe_page', tabId: run.tabId,
+            payload: { source, expectedOrigin: page.origin, expectedPath: source.mode === 'workflow' ? source.steps[0].pathname : page.pathname, ...(intercept || query ? { values } : {}), ...(operationId ? { operationId } : {}) } }, query ? 45000 : 30000);
+        } finally { if (operationId) signal.removeEventListener('abort', cancel); }
         if (signal.aborted) return;
         if (!result?.ok) throw fail(result?.error?.code || 'PAGE_SOURCE_MISSING', result?.error?.message || 'Unable to observe the page source.');
         const current = await this.checkTab(run);
         if (signal.aborted) return;
         // The extension verifies the exact resolved route for navigation; tabs
         // summaries normalize numeric IDs, so they cannot compare raw arguments.
-        if (source.mode !== 'navigate' && new URL(current.url).pathname !== (query ? source.resultPathname : page.pathname)) throw fail('TAB_CHANGED', 'Page route changed during observation.');
+        if (!['navigate', 'workflow'].includes(source.mode) && new URL(current.url).pathname !== (query ? source.resultPathname : page.pathname)) throw fail('TAB_CHANGED', 'Page route changed during observation.');
         const observed = pageObservation({ source, url: tab.url, shape: result.shape, reason });
         run.pageSources = [...new Map([...(run.pageSources || []), observed].map(item => [item.id, item])).values()].slice(-100);
         this.update(run, 'evidence_ready', 'Page source structure observed. Choose its ID and strategy in a plan.');
@@ -511,6 +519,13 @@ export class ExplorationService {
   validate(run) {
     for (const tool of run.plan?.tools || []) {
       const source = run.pageSources?.find(item => item.id === tool.sourcePageId)?.source;
+      if (source?.mode === 'workflow') {
+        const cases = run.verification?.[`${run.siteKey}.${tool.name.replace(/_/g, '-')}`] || [];
+        for (const { name } of workflowParameters(source)) {
+          const values = cases.map(item => item.args[name]);
+          if (values.some(value => typeof value !== 'string' || !value.trim()) || new Set(values).size < 2) throw fail('VERIFICATION_REQUIRED', 'Every workflow parameter requires at least two distinct authored values.');
+        }
+      }
       if ((source?.strategy === 'INTERCEPT' || source?.mode === 'query') && source.trigger.parameter) {
         const cases = run.verification?.[`${run.siteKey}.${tool.name.replace(/_/g, '-')}`] || [];
         const values = cases.map(item => item.args[source.trigger.parameter]);
@@ -527,7 +542,8 @@ export class ExplorationService {
         throw fail('VERIFICATION_REQUIRED', 'Dynamic paths require at least two authored cases with distinct path argument combinations.');
       }
     }
-    if ((run.pageSources || []).some(item => ['query', 'navigate'].includes(item.source.mode)) && !this.capabilities().capabilities.includes('page_query_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating navigation-aware page queries.');
+    if ((run.pageSources || []).some(item => ['query', 'navigate', 'workflow'].includes(item.source.mode)) && !this.capabilities().capabilities.includes('page_query_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating navigation-aware page queries.');
+    if ((run.pageSources || []).some(item => item.source.mode === 'workflow') && !this.capabilities().capabilities.includes('page_workflow_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating ordered page workflows.');
     if ((run.pageSources || []).some(item => item.source.mode === 'navigate') && !this.capabilities().capabilities.includes('page_navigation_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating parameterized page routes.');
     const pageTools = (run.plan?.tools || []).filter(tool => tool.sourcePageId || isHttpStrategy(tool.strategy)).map(tool => `${run.siteKey}.${tool.name.replace(/_/g, '-')}`);
     for (const command of readPackageDirectory(run.draft.adapterDir).commands.filter(command => run.draft.toolNames.includes(command.name))) {

@@ -1,4 +1,5 @@
 import { executePageSource } from './page-source.js';
+import { pageWorkflowContract } from './page-workflow.js';
 
 const fail = (code, message) => Object.assign(new Error(message), { code });
 const validValue = value => typeof value === 'string' && value.trim() && value.length <= 512
@@ -13,12 +14,12 @@ export function matchesPagePath(pathname, template) {
   });
 }
 
-export function resolvePageDestination(origin, source, values = {}) {
+export function resolvePageDestination(origin, source, values = {}, allowStatic = false) {
   const url = new URL(origin + source.resultPathname);
   if (url.origin !== origin || url.pathname !== source.resultPathname || url.search || url.hash || url.username || url.password
     || !['http:', 'https:'].includes(url.protocol)) throw fail('INVALID_PAGE_QUERY', 'Invalid navigation route.');
   const bindings = source.pathParameters, segments = url.pathname.slice(1).split('/');
-  if (!Array.isArray(bindings) || !bindings.length || bindings.length > 16 || !values || typeof values !== 'object' || Array.isArray(values)) throw fail('INVALID_PAGE_QUERY_ARGUMENT', 'Provide explicit page path bindings and values.');
+  if (!Array.isArray(bindings) || (!bindings.length && !allowStatic) || bindings.length > 16 || !values || typeof values !== 'object' || Array.isArray(values)) throw fail('INVALID_PAGE_QUERY_ARGUMENT', 'Provide explicit page path bindings and values.');
   const names = new Set(), indexes = new Set();
   for (const { segmentIndex, name } of bindings) {
     if (!Number.isSafeInteger(segmentIndex) || segments[segmentIndex] !== ':id' || indexes.has(segmentIndex)
@@ -37,6 +38,11 @@ export function assertPageQueryRoute(payload, command) {
   const route = command?.pageRoute;
   if (command?.pageWorkflow !== true || command.safety !== 'read' || payload?.version !== 1
     || payload.expectedOrigin !== route?.origin || payload.expectedPath !== route.pathname) throw fail('INVALID_PAGE_QUERY', 'Page query route differs from the selected command.');
+  if (payload.source?.mode === 'workflow') {
+    if (!route.workflow || JSON.stringify(pageWorkflowContract(payload.source)) !== JSON.stringify(route.workflow)) throw fail('INVALID_PAGE_QUERY', 'Workflow actions differ from the declared steps.');
+    return route.origin + route.pathname;
+  }
+  if (route.workflow) throw fail('INVALID_PAGE_QUERY', 'A workflow must execute its complete declared sequence.');
   if (payload.source?.mode === 'navigate') {
     if (!route.navigation || payload.source.resultPathname !== route.navigation.pathname
       || JSON.stringify(payload.source.pathParameters) !== JSON.stringify(route.navigation.pathParameters)) throw fail('INVALID_PAGE_QUERY', 'Navigation differs from the declared path bindings.');
@@ -47,9 +53,9 @@ export function assertPageQueryRoute(payload, command) {
 }
 
 /** One explicit navigation, retained in the background across document replacement. */
-export async function executePageNavigation({ chrome, ensureCdpAttached, tabId, payload, now, sleep }) {
+export async function executePageNavigation({ chrome, ensureCdpAttached, tabId, payload, now, sleep, allowStaticNavigation = false, assertRunning = () => {}, captureWorkflowPage = false }) {
   const { source, expectedOrigin, expectedPath, values, metadataOnly = false } = payload;
-  const destination = resolvePageDestination(expectedOrigin, source, values);
+  const destination = resolvePageDestination(expectedOrigin, source, values, allowStaticNavigation);
   const initial = await chrome.tabs.get(tabId), initialUrl = new URL(initial.url);
   if (initialUrl.origin !== expectedOrigin || (!matchesPagePath(initialUrl.pathname, expectedPath) && !matchesPagePath(initialUrl.pathname, source.resultPathname))) throw fail('PAGE_QUERY_ROUTE_CHANGED', 'Open the observed entry or a declared detail page.');
   await ensureCdpAttached(tabId);
@@ -57,10 +63,12 @@ export async function executePageNavigation({ chrome, ensureCdpAttached, tabId, 
   const initialFrame = (await chrome.debugger.sendCommand({ tabId }, 'Page.getFrameTree'))?.frameTree?.frame;
   if (!initialFrame?.id || !initialFrame.loaderId) throw fail('PAGE_QUERY_ROUTE_CHANGED', 'Cannot establish the initial page document.');
   let navigated = false, version = 0, error;
+  let currentLoaderId = initialFrame.loaderId;
   const listener = (sender, method, params) => {
     if (sender.tabId !== tabId || sender.sessionId) return;
     if (method === 'Page.frameNavigated' && !params.frame?.parentId && params.frame?.id === initialFrame.id && params.frame.loaderId !== initialFrame.loaderId) {
       navigated = true; version++;
+      currentLoaderId = params.frame.loaderId;
       try { if (new URL(params.frame.url).origin !== expectedOrigin) error = fail('PAGE_QUERY_ORIGIN_CHANGED', 'Navigation left the declared origin.'); }
       catch { error = fail('PAGE_QUERY_ORIGIN_CHANGED', 'Navigation left the declared origin.'); }
     } else if (method === 'Page.navigatedWithinDocument' && params.frameId === initialFrame.id) {
@@ -73,6 +81,7 @@ export async function executePageNavigation({ chrome, ensureCdpAttached, tabId, 
   let navigationTimer;
   try {
     const started = now();
+    assertRunning();
     const response = await Promise.race([
       chrome.debugger.sendCommand({ tabId }, 'Page.navigate', { url: destination.href }),
       new Promise((_, reject) => { navigationTimer = setTimeout(() => reject(fail('PAGE_QUERY_TIMEOUT', 'Navigation did not respond before timeout; it may still finish and was not replayed.')), source.timeoutMs); }),
@@ -81,6 +90,7 @@ export async function executePageNavigation({ chrome, ensureCdpAttached, tabId, 
     if (response?.errorText || response?.isDownload) throw fail('PAGE_QUERY_NAVIGATION_FAILED', 'Page navigation failed or initiated a download; it was not replayed.');
     let stable, stableVersion, stableSince = now();
     while (now() - started < source.timeoutMs) {
+      assertRunning();
       if (error) throw error;
       const current = await chrome.tabs.get(tabId), url = new URL(current.url);
       if (url.origin !== expectedOrigin) throw fail('PAGE_QUERY_ORIGIN_CHANGED', 'Navigation left the declared origin.');
@@ -95,10 +105,15 @@ export async function executePageNavigation({ chrome, ensureCdpAttached, tabId, 
           if (serialized !== stable || observedVersion !== stableVersion) { stable = serialized; stableVersion = observedVersion; stableSince = now(); }
           else if (now() - stableSince >= 300) {
             if (metadataOnly) result = await executePageSource(chrome, tabId, { ...readPayload, metadataOnly: true });
+            assertRunning();
             const final = new URL((await chrome.tabs.get(tabId)).url);
             if (error) throw error;
             if (final.href !== destination.href || observedVersion !== version) throw fail('PAGE_QUERY_ROUTE_CHANGED', 'Page changed while reading navigation results.');
-            return result;
+            if (captureWorkflowPage) {
+              const frame = (await chrome.debugger.sendCommand({ tabId }, 'Page.getFrameTree'))?.frameTree?.frame;
+              if (frame?.id !== initialFrame.id || frame?.loaderId !== currentLoaderId || observedVersion !== version) throw fail('PAGE_QUERY_ROUTE_CHANGED', 'Workflow navigation document changed before completion.');
+            }
+            return captureWorkflowPage ? { ...result, internalWorkflowPage: { url: final.href, frameId: initialFrame.id, loaderId: currentLoaderId } } : result;
           }
         } else stable = undefined;
       } else stable = undefined;

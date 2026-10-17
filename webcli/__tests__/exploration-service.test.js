@@ -54,12 +54,43 @@ it('returns only structural evidence and rejects mutation/cross-origin candidate
   expect(bad).toMatchObject({ ok: false, error: { code: 'INVALID_PLAN' } });
 });
 
-it('requires navigation capability before dispatching a parameterized page observation', async () => {
+it.each(['navigate', 'workflow'])('requires %s capability before dispatching a page observation', async mode => {
   const f = setup({ capabilities: () => ({ connected: true, capabilities: ['passive_exploration_v1', 'page_sources_v1', 'page_query_v1'] }) });
   const taskId = await start(f.service);
-  const result = await f.service.execute('query', { taskId, source: { mode: 'navigate' }, values: { itemId: '007' }, reason: 'Read public detail' });
+  const result = await f.service.execute('query', { taskId, source: { mode }, values: { itemId: '007' }, reason: 'Read public detail' });
   expect(result.error.code).toBe('CAPABILITY_UNAVAILABLE');
   expect(f.requestExtension.mock.calls.some(([message]) => message.type === 'exploration_page_query')).toBe(false);
+});
+
+it('cancels the exact in-flight workflow, discards late evidence and requires variation for every generated parameter', async () => {
+  const f = setup({ capabilities: () => ({ connected: true, capabilities: ['passive_exploration_v1', 'page_sources_v1', 'page_query_v1', 'page_workflow_v1', 'strict_output_contract_v1'] }) });
+  const source = { mode: 'workflow', steps: [
+    { pathname: '/list', query: { mode: 'navigate', resultPathname: '/list', result: { strategy: 'DOM_STATE', path: ['publicResults'] } } },
+    { pathname: '/list', query: { mode: 'filter', resultPathname: '/list', trigger: { kind: 'filter', selector: '#category', parameter: 'category', description: 'Public category' }, matchResult: { category: 'category' }, result: { strategy: 'DOM_STATE', path: ['publicResults'] } } },
+  ] };
+  let finish; const original = f.requestExtension.getMockImplementation();
+  f.requestExtension.mockImplementation(message => message.type === 'exploration_page_query' ? new Promise(resolve => { finish = resolve; }) : original(message));
+  const taskId = await start(f.service);
+  await f.service.execute('query', { taskId, source, values: { category: 'example-private-observation' }, reason: 'Read filtered public content' });
+  await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+  const operationId = f.requestExtension.mock.calls.find(([message]) => message.type === 'exploration_page_query')[0].payload.operationId;
+  await f.service.execute('cancel', { taskId });
+  expect(f.requestExtension.mock.calls.some(([message]) => message.type === 'exploration_cancel_workflow' && message.operationId === operationId && message.tabId === 7)).toBe(true);
+  finish({ ok: true, shape: { type: 'object' } }); await f.service.jobs.get(taskId);
+  expect((await f.service.execute('get', { taskId })).data.pageSourceCount).toBe(0);
+  const nextId = await start(f.service, 'example-second-workflow');
+  f.requestExtension.mockImplementation(message => message.type === 'exploration_page_query' ? { ok: true, shape: { type: 'object' } } : original(message));
+  await f.service.execute('query', { taskId: nextId, source, values: { category: 'example-private-observation' }, reason: 'Read filtered content' }); await f.service.jobs.get(nextId);
+  expect(fs.readFileSync(path.join(f.options.rootDir, `${nextId}.json`), 'utf8')).not.toContain('example-private-observation');
+  const evidence = (await f.service.execute('evidence', { taskId: nextId })).data;
+  const generated = await f.service.execute('generate', { taskId: nextId, plan: { tools: [{ name: 'workflow', strategy: 'UI_SELECTOR', sourcePageId: evidence.pageSources[0].id, risk: 'read', readReason: 'Public filter' }] } });
+  expect(generated.ok).toBe(true);
+  expect((await f.service.execute('validate', { taskId: nextId })).error.code).toBe('VERIFICATION_REQUIRED');
+  const tool = generated.data.toolNames[0]; const before = (await f.service.execute('verification-read', { taskId: nextId, tool })).data;
+  await f.service.execute('verification-write', { taskId: nextId, tool, expectedHash: before.hash, cases: ['books', 'music'].map((category, index) => ({ id: 'case-' + index, args: { category }, expect: { equals: { 'data.category': category } } })) });
+  f.runtimeValidator.mockResolvedValue({ passed: true, executionSummary: { attempted: 2, passed: 2, failed: 0, skipped: 0 } });
+  expect((await f.service.execute('validate', { taskId: nextId })).ok).toBe(true); await f.service.jobs.get(nextId);
+  expect((await f.service.execute('get', { taskId: nextId })).data.status).toBe('review_ready');
 });
 
 it('deduplicates concurrent starts and persists identity across a new service process', async () => {

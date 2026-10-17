@@ -1,8 +1,8 @@
 # API 自动探索 CLI 开发设计与首版实现
 
-更新：2026-10-18。已实现多浏览器 profile、独立 HTTP Runner、PUBLIC_API/COOKIE_API/AUTH_API、mode=http 的无浏览器 OpenAPI JSON 发现与宿主请求证据，以及只读局部修复；最新增加按路径参数导航到页面并读取的 UI_SELECTOR navigate 模式。具体 HTTP 契约见 [HTTP Runtime](http_adapter_runtime.md)，历史与验证结果见 [交接文档](api_exploration_cli_handoff.md)。
+更新：2026-10-18。已实现多浏览器 profile、独立 HTTP Runner、PUBLIC_API/COOKIE_API/AUTH_API、mode=http 的无浏览器 OpenAPI JSON 发现与宿主请求证据，以及只读局部修复；最新在参数化页面导航之上增加显式 2–8 步只读 workflow。具体 HTTP 契约见 [HTTP Runtime](http_adapter_runtime.md)，历史与验证结果见 [交接文档](api_exploration_cli_handoff.md)。
 
-最新回归：WebCLI 111 文件/1197 项、扩展聚焦 40 项、完整 Chromium 52 项、打包 CLI 导航专项 4 项通过；本轮源码与打包链路验证明细以交接文档末尾为准。HTTP version 2 已支持 Bearer/header/Basic/声明式 HMAC 和 Cookie store/分区。下文旧阶段的“PUBLIC_API/COOKIE_API 尚未实现”是历史边界，以本段与 HTTP 契约为准；任意站点签名/OAuth、多步 UI/写命令及完整对齐仍未完成。
+最新回归：WebCLI 112 文件/1203 项、最终扩展相关 64 项、完整 Chromium 57 项通过；完整回归之后的步骤间文档身份加固已通过最终打包 CLI 工作流专项 7 项与聚焦测试。源码与打包链路明细以交接文档末尾为准。HTTP version 2 支持 Bearer/header/Basic/声明式 HMAC 和 Cookie store/分区。下文旧阶段的“PUBLIC_API/COOKIE_API 尚未实现”是历史边界；任意站点签名/OAuth、写命令/副作用验证、任意多步自定义流程及完整对齐仍未完成。
 
 ## HTTP 探索任务：已实现
 
@@ -11,6 +11,16 @@
 `discover` 从显式 URL 获取 OpenAPI 3.0/3.1 或 Swagger 2 JSON，保留有界声明结构与 warnings，不执行端点。`request` 发送明确的 GET/只读 JSON/form POST，逐跳检查 origin 和动作语义，以 host_http 来源保存实际 JSON 结构；未获取成功证据时禁止生成。每任务 100 次、单次 30 秒/4 MiB，取消/重启不重放，请求预算在派发前持久化。JSON 文档仅支持本地引用，不猜变量、不展开组合 schema、不自动爬取。
 
 生成必须显式选择 PUBLIC_API/AUTH_API 并绑定观察索引，每命令有作者断言；validate、review/install、知识及 scoped repair 复用现有流程，宿主任务禁止浏览器依赖的命令。HTTP 传输抽取为 http-client.js，由观察和 Worker Runner 共用，鉴权值只留宿主内存。浏览器模式的页面身份、锁、profile 和 Cookie 路径保持独立。
+
+## 多步只读页面流程：已实现，验收记录见交接末尾
+
+`exploration.query source.mode=workflow` 声明 2–8 个 `{pathname, query}` 步骤。query 复用现有跨文档查询/参数化导航，并新增仅工作流内可用的固定路径 filter；步骤必须按前一步 resultPathname 串联，不支持循环、分支或任意 JS。工作流内的 navigate 可用无参数静态路径作为可重复入口；只有首步是 navigate 时，才允许从其他步骤的目标页显式从头运行。
+
+filter 只操作已有 search/filter/pagination 读控件，保持同 origin/path/document。参数筛选通过 matchResult 将 result.data 的标量路径与调用参数精确关联，观察 300ms 稳定结果；无参数翻页要求数据变化。同值参数允许已满足关联的结果，作者必须选能证明业务结果的公开字段。所有参数在首步前校验，每个参数至少两组不同值的作者 cases。每次仅派发一次动作，最后一步返回数据；失败带 stepIndex/completedSteps，后续不执行，已完成动作不撤销。每步成功时保留完整 URL/main frame/loader 的内部快照，下一步核对同一文档，不能以同一路由模板接受另一 ID 或同 URL 新文档；快照不进入调用输出或持久证据。
+
+page_workflow_v1 在观察/验证/调用前检查；manifest.pageRoute.workflow 固定动作顺序、选择器、参数、关联条件和路由，总预算最多 30 秒，纳入 page-workflow 权限。结果提取声明不属于动作授权，可在 scoped repair 中修复并重跑历史断言；改动作、参数或顺序须重新生成和审阅。预览与普通调用复用同一后台序列及 manifest 检查，仍只续接一次映射结果。
+
+观察与作者验证分配临时 operationId；cancel 发往绑定 profile，扩展记录取消并在下一动作/读取前检查。验证一次发送一个 workflow case，避免五个长流程共用一次传输时限；取消不会开始下一 case。Bridge 断线使当前工作流失效，重启任务保留 interrupted，不自动续跑。已派发动作可能完成；普通调用暂无独立取消入口。持久化仅存结构与作者明确提交的 cases，观察 values 不保存。仍限同源主 frame 原生读控件，写操作、副作用验证、动态 query/hash 模板、自定义组件和跨 frame 流程待做。
 
 ## 参数化页面导航：已实现
 

@@ -10,7 +10,8 @@ import { callLocalCommand } from '../exploration-client.js';
 vi.mock('../adapter-host.js', async original => ({ ...await original(), resolveAdapterCall: name => name === 'example.toolkit'
   ? { command: { runtime: 'wewright', id: 'read', module: 'example.js' }, adapter: { root: '/example' } }
   : name === 'example.http' ? { command: { runtime: 'http', id: 'read', http: { version: 2, strategy: 'AUTH_API' } }, adapter: { root: '/example' } }
-  : name === 'example.navigation' ? { command: { runtime: 'extension', id: 'read', pageWorkflow: true, pageRoute: { navigation: { pathname: '/items/:id' } } }, adapter: { root: '/example' } } : null }));
+  : name === 'example.navigation' ? { command: { runtime: 'extension', id: 'read', pageWorkflow: true, pageRoute: { navigation: { pathname: '/items/:id' } } }, adapter: { root: '/example' } }
+  : name === 'example.workflow' ? { command: { runtime: 'extension', id: 'read', pageWorkflow: true, pageRoute: { workflow: { steps: [] } } }, adapter: { root: '/example' } } : null }));
 vi.mock('../toolkit-runner.js', () => ({ runToolkitTool: vi.fn(async () => ({ exitCode: 0, result: { example: 'toolkit' } })) }));
 vi.mock('../http-runner.js', () => ({ runHttpTool: vi.fn(async () => ({ exitCode: 0, result: { example: 'http' } })) }));
 
@@ -79,14 +80,14 @@ it('routes host AUTH_API desktop calls without a profile, whether zero or multip
   expect((await rpc({ type: 'call_tool', toolName: 'example.http', args: {} })).result).toEqual({ example: 'http' });
 });
 
-it('rejects page navigation on an older selected profile before dispatch without falling back', async () => {
+it.each([['navigation', 'page_navigation_v1', /parameterized page navigation/], ['workflow', 'page_workflow_v1', /ordered page workflows/]])('rejects page %s on an older selected profile before dispatch without falling back', async (kind, capability, message) => {
   const { rpc, peer } = await setup();
   const capabilities = ['adapter_catalog_v1', 'page_sources_v1', 'page_query_v1'];
-  const old = await peer(randomUUID(), capabilities), current = await peer(randomUUID(), [...capabilities, 'page_navigation_v1']);
-  const result = await rpc({ type: 'call_tool', toolName: 'example.navigation', args: { itemId: '007' }, browserProfile: old.contextId });
-  expect(result.error).toMatch(/parameterized page navigation/);
+  const old = await peer(randomUUID(), capabilities), current = await peer(randomUUID(), [...capabilities, capability]);
+  const result = await rpc({ type: 'call_tool', toolName: 'example.' + kind, args: { itemId: '007' }, browserProfile: old.contextId });
+  expect(result.error).toMatch(message);
   expect([...old.received, ...current.received].some(msg => msg.type === 'call_tool')).toBe(false);
-  expect((await rpc({ type: 'call_tool', toolName: 'example.navigation', args: { itemId: '007' }, browserProfile: current.contextId })).result.contextId).toBe(current.contextId);
+  expect((await rpc({ type: 'call_tool', toolName: 'example.' + kind, args: { itemId: '007' }, browserProfile: current.contextId })).result.contextId).toBe(current.contextId);
 });
 
 it('routes HTTP exploration independently of browser flags/defaults with stable host task history', async () => {

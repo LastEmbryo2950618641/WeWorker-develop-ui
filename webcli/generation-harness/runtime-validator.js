@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { buildRuntimeTestCases } from './runtime-test-policy.js';
 import { verifyGeneratedWriteTools } from './write-tool-verifier.js';
 import { isPackageDraft, packageDraftBundle, readGenerationEvidence } from './package-inspection.js';
@@ -124,18 +125,26 @@ export function createPreviewRuntimeValidator({ requestExtension, restrictToExpe
       // Extension previews bound each batch to five calls. Every planned case
       // must be sent, including plans larger than the historical two-tool limit.
       const executions = [];
-      for (let offset = 0; offset < Math.max(testCases.length, 1); offset += 5) {
+      const workflow = previewBundle.manifest.commands?.some(command => command.pageRoute?.workflow);
+      const batchSize = workflow ? 1 : 5;
+      for (let offset = 0; offset < Math.max(testCases.length, 1); offset += batchSize) {
         if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
-        executions.push(await requestExtension({
+        const operationId = workflow ? randomUUID() : undefined;
+        const cancel = () => { requestExtension({ type: 'exploration_cancel_workflow', tabId: run.snapshot.input?.tabId, operationId }, 5000).catch(() => {}); };
+        if (operationId) signal?.addEventListener('abort', cancel, { once: true });
+        try { executions.push(await requestExtension({
           type: 'validate_generation_preview',
           previewAdapterId: preview.previewAdapterId,
           previewBundle,
           siteKey: memory.siteHost || run.snapshot.siteKey,
           tabId: run.snapshot.input?.tabId,
           expectedToolNames: draft.toolNames || [],
-          testCases: testCases.slice(offset, offset + 5),
-        }, 60_000));
+          testCases: testCases.slice(offset, offset + batchSize),
+          ...(operationId ? { operationId } : {}),
+        }, 60_000)); }
+        finally { if (operationId) signal?.removeEventListener('abort', cancel); }
       }
+      if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
       const execution = executions.length === 1 ? executions[0] : {
         passed: executions.every(result => result?.passed === true),
         errors: executions.flatMap(result => result?.errors || []),

@@ -7,6 +7,8 @@ import { join } from 'node:path';
 import vm from 'node:vm';
 import { createHostAdapterClient } from '../../background/host-adapter-client.js';
 import { matchesPagePath, assertPageQueryRoute } from '../../background/page-navigation.js';
+import { pageRoutePaths } from '../../background/page-workflow.js';
+import { cancelPageWorkflow, cancelAllPageWorkflows, assertPageWorkflowActive } from '../../background/page-query.js';
 import { createHostAdapterRuntime, assertAdapterNavigationUrl, createNavigationGuard, classifyNavigationTarget, navigateAdapterTab } from '../../background/host-adapter-runtime.js';
 import { createManagedBackgroundRuntime, MANAGED_RUNNER_PATH } from '../../background/managed-background-runtime.js';
 import { buildV2Bootstrap, v2InjectionFiles } from '../../background/v2-loader.js';
@@ -16,7 +18,7 @@ import { selectCompatibleCaptureBoundEntry, validateGenerationPreviewOutputV2 } 
 export function runServiceWorkerInContext(context, { repoRoot = process.cwd() } = {}) {
   const source = readFileSync(join(repoRoot, 'extension/background/service-worker.js'), 'utf8')
     .replace(/^import\s*\{[^}]*\}\s*from\s*['"][^'"]+['"];?\s*/gm, '');
-  Object.assign(context, { matchesPagePath, assertPageQueryRoute, recordBrowserEvent, clearBrowserEvents, recordBrowserDownload, clearBrowserDownloads, recordBrowserFrameEvent, clearBrowserFrames, scopedGenerationPreviewScripts, createHostAdapterClient, createHostAdapterRuntime, assertAdapterNavigationUrl, createNavigationGuard, classifyNavigationTarget, navigateAdapterTab, buildV2Bootstrap,
+  Object.assign(context, { cancelPageWorkflow, cancelAllPageWorkflows, assertPageWorkflowActive, pageRoutePaths, matchesPagePath, assertPageQueryRoute, recordBrowserEvent, clearBrowserEvents, recordBrowserDownload, clearBrowserDownloads, recordBrowserFrameEvent, clearBrowserFrames, scopedGenerationPreviewScripts, createHostAdapterClient, createHostAdapterRuntime, assertAdapterNavigationUrl, createNavigationGuard, classifyNavigationTarget, navigateAdapterTab, buildV2Bootstrap,
     createManagedBackgroundRuntime, MANAGED_RUNNER_PATH,
     v2InjectionFiles, injectAdapterSources, selectCompatibleCaptureBoundEntry, validateGenerationPreviewOutputV2 });
   vm.runInContext(source, context, { filename: 'service-worker.js', timeout: 5000 });

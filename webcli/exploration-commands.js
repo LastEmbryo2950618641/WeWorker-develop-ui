@@ -19,7 +19,7 @@ export const explorationCommands = {
   evidence: { description: 'Read structural API evidence, without captured values or credentials.', params: ['taskId'] },
   collect: { description: 'Collect fresh evidence after manual page interaction, without reloading.', params: ['taskId'] },
   observe: { description: 'Observe a declarative DOM selector or page-state/JSON-script source. Persists types and counts only; requires an authored reason.', params: ['taskId', 'source', 'reason'] },
-  query: { description: 'Run one observed read control, or mode=navigate to an explicitly parameterized page path; wait across navigation and observe fresh DOM/state. Saves structure only.', params: ['taskId', 'source', 'values?', 'reason'] },
+  query: { description: 'Run one observed read control, mode=navigate for an explicit page path, or mode=workflow for 2–8 ordered navigation/query/filter steps. Wait for correlated DOM/state; save structure only.', params: ['taskId', 'source', 'values?', 'reason'] },
   intercept: { description: 'Run an explicitly selected search/filter/pagination control and observe its new JSON response, correlated to supplied values. Saves structure only.', params: ['taskId', 'source', 'values?', 'reason'] },
   actions: { description: 'Inspect safe search/filter/pagination controls on the bound page.', params: ['taskId'] },
   probe: { description: 'Execute one freshly inspected safe read action and collect its network delta (three probes per task).', params: ['taskId', 'candidateId', 'value?'] },

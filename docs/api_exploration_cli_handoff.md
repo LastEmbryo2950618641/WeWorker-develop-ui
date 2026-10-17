@@ -1,18 +1,18 @@
 # API 自动探索 CLI 改造跟进与交接
 
-> 更新日期：2026-10-18。最新阶段新增 UI_SELECTOR navigate 同源参数化详情页导航，接通观察→生成→两组作者验证→审阅安装→普通调用→知识/只读修复。WebCLI 1197 项、扩展聚焦 40 项、完整 Chromium 52 项、打包 CLI 导航专项 4 项通过。多浏览器 profile、HTTP v2 鉴权/Cookie 分区、无浏览器 OpenAPI JSON 探索已在前序阶段完成。整体 OpenCLI 对齐仍未完成，Python 网站探索agent全程未动。
+> 更新日期：2026-10-18。最新阶段新增 UI_SELECTOR workflow，显式组合 2–8 个导航/搜索/当前页筛选/翻页步骤，接通生成、作者验证、安装、调用、知识与提取修复。WebCLI 1203 项、最终扩展相关 64 项、完整 Chromium 57 项、最后打包 CLI 工作流专项 7 项通过。多浏览器 profile、HTTP v2 鉴权/Cookie 分区、无浏览器 OpenAPI JSON 探索与参数化页面导航已在前序阶段完成。整体 OpenCLI 对齐仍未完成，Python 网站探索agent全程未动。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
 
 ## 新会话从这里接手
 
 - 范围澄清：用户明确不需要 OpenCLI 桌面客户端。只对齐 CLI、浏览器扩展与相关工具能力；WeWorker API 探索 UI/内置聊天/profile 选择界面单列产品集成，不作为 CLI 对齐完成条件。多步 UI 指目标网站操作，CDP/Electron 指 CLI 控制外部目标，不是开发桌面客户端。
-- 继续当前分支 `codex/api-exploration-cli`，最新参数化页面导航阶段起点 `8c87339`；检查点 SHA 见 Git 最新提交。先核对工作区/日志，不重建分支或重复实现 profile/HTTP Runner/宿主探索/参数化详情导航。根 AGENTS.md、ROADMAP.md、本文末尾、[开发设计](api_exploration_cli_design.md)、[HTTP 契约](http_adapter_runtime.md) 和 [能力台账](opencli_parity.md) 为接手入口。
+- 继续当前分支 `codex/api-exploration-cli`，最新多步只读流程阶段起点 `7cc63ea`；检查点 SHA 见 Git 最新提交。先核对工作区/日志，不重建分支或重复实现 profile/HTTP Runner/宿主探索/参数化详情导航/声明式只读 workflow。根 AGENTS.md、ROADMAP.md、本文末尾、[开发设计](api_exploration_cli_design.md)、[HTTP 契约](http_adapter_runtime.md) 和 [能力台账](opencli_parity.md) 为接手入口。
 - 已完成多浏览器 profile，使用 `webcli call profile.list` 和 `--profile=<contextId|alias>`；唯一在线可自动选择，显式/default 离线不回退。旧 browser/exploration 根通过 `--profile=legacy` 只读访问，新 profile 不继承旧 tabId。桌面尚无 profile 选择 UI，多连接时需 CLI 保存默认或由调用方显式传路由。
-- PUBLIC_API/COOKIE_API/AUTH_API runner、version 2 环境鉴权/分区，以及 mode=http 的 JSON OpenAPI 发现/显式请求已实现，保持 Extension/Toolkit Runner 边界。HTTP start 不发请求；http- taskId 自动路由宿主，task-free 命令需 mode=http，文档声明不能代替真实证据。参数化页面导航已支持固定同源主文档、明确路径绑定、一次派发和严格验证；多步网站流程尚未实现。下一步多步 UI/写命令及副作用验证，再推进知识修订/共享修复、CDP/外部 CLI/插件生态与站点覆盖。动态 query/hash/跨源页面路由、YAML/任意 API 文档爬取、任意站点签名/OAuth 尚未覆盖；独立 Agent 对话及平台分发仍在台账，不能把本阶段当作完整对齐完成。
+- PUBLIC_API/COOKIE_API/AUTH_API runner、version 2 环境鉴权/分区，以及 mode=http 的 JSON OpenAPI 发现/显式请求已实现，保持 Extension/Toolkit Runner 边界。HTTP start 不发请求；http- taskId 自动路由宿主，task-free 命令需 mode=http，文档声明不能代替真实证据。参数化页面导航及 2–8 步显式只读 workflow 已支持固定同源主文档、完整参数/动作绑定、失败停止和严格验证；不能推断任意多步网站流程已完成。下一步写命令生成与真实副作用验证；再推进知识修订/共享修复、CDP/外部 CLI/插件生态与站点覆盖。循环/分支/自定义组件、跨 frame/跨源流程、动态 query/hash 页面路由、YAML/任意 API 文档爬取、任意站点签名/OAuth 尚未覆盖；独立 Agent 对话及平台分发仍在台账，不能把本阶段当作完整对齐完成。
 - WebCLI + 插件继续面向任意能执行 CLI 的 Agent，调用方处理自然语言，不依赖桌面或第二模型 Key。Python 网站探索agent源码、环境、测试、生命周期和数据全程不动。
 - 集成基线 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`；本轮没有 fetch/merge/push/PR。后续同步按第 4 节“上游 → 集成基线 → 功能分支”，这些 SHA 仅是已纳入快照。
 - 用户已安装工作区 extension-dist，无需重装。HTTP 与鉴权阶段仅重建资源，在隔离浏览器实测，没有重载日常 Chrome 或重启用户 Bridge；使用新 Cookie scope 能力前需核对 `http_credentials_v2` 并重载已安装扩展/本工作区 Bridge。AUTH 普通调用读 CLI 环境；预览/COOKIE/桌面调用读相应 HTTP 宿主环境，不自动转发 CLI 环境、不加载 .env。真实外部目标仍为 B 站 Excel 搜索页，重新 doctor/tabs/bind；不要照抄历史身份/PID。历史 source Bridge 快照 PID 47386、日志 `/tmp/weworker-profile-live-bridge.log`，本阶段未重新核实，重启前必须检查完整命令和归属。
-- 最新临时报告：完整 `webcli-browser-acceptance-amRAoV/report.json`（52 项）；打包 CLI 导航专项 `webcli-browser-acceptance-RFY6iV/report.json`（4 项，Bridge 为源码）。前序零浏览器源码 `webcli-http-discovery-HPGl9M/report.json`、打包 CLI/Bridge `webcli-http-discovery-whk1T0/report.json`（各 8 项）。位于系统临时根，可被清理；缺失时用已提交脚本复跑，不把旧报告当作最新测试。本阶段未重跑日常 Chrome/B 站。
+- 最新临时报告：完整 `webcli-browser-acceptance-KlTLYt/report.json`（57 项）；最后打包 CLI 工作流专项 `webcli-browser-acceptance-WxdKzg/report.json`（7 项，Bridge 为源码，含完整回归后的文档身份加固）。前序零浏览器源码 `webcli-http-discovery-HPGl9M/report.json`、打包 CLI/Bridge `webcli-http-discovery-whk1T0/report.json`（各 8 项）。位于系统临时根，可被清理；缺失时用已提交脚本复跑，不把旧报告当作最新测试。本阶段未重跑日常 Chrome/B 站。
 
 ## 最新状态
 
@@ -607,3 +607,16 @@ npm run test:exploration:browser --prefix webcli -- \
 - 实机完成观察→生成→单组 case 被拒→两组精确断言→审阅安装→普通调用→知识，准确保留 `007` 与中文 ID；同 URL 两次各一次请求，非法路径零请求，错误 ID 重定向明确失败。实际改变标记后旧 cases 失败，局部改模块、重验证、安装和调用通过；从数字详情路径启动修复也通过。
 - 完整回归初次因新增知识页后旧计数仍为 8 失败，更新为 9 并断言存在 navigate 来源。另一次旧 INTERCEPT 用例把安装目录刷新后的延迟页面初始化 GET/POST 计为非法参数调用的请求；根据失败报告的导航事件和准确初始参数，验收改为仅允许该 fixture 的有效初始化 GET/POST，其他新增请求仍拒绝，记录 `invalid-intercept-query-background-requests.json`。该用例不宣称所有背景流量为零，生产刷新/参数验证逻辑未放宽。中文夹具补 UTF-8、失败调用期望值修正后通过。
 - 下一阶段：多步网站工作流与写命令生成/副作用验证；当前只实现单次同源详情导航，未开始多步工作流实现。后续仍含动态 query/hash/跨源页面、知识冲突与共享/写修复、自定义控件/目录上传/跨 frame 拖拽、CDP/外部 CLI/插件生态、独立 Agent 和跨平台/分发验收。保持完整目标进行中；OpenCLI 桌面客户端明确排除。
+
+### 2026-10-18：有序只读网站 workflow
+
+- 起点 `7cc63ea`，继续当前分支；无 fetch/merge/push/PR。新增 `webcli/exploration-workflow.js`、`extension/background/page-workflow.js`、对应测试与真实浏览器验收。package.json 仅增加 files 中的宿主模块，无新增依赖/lockfile/CI/发布/schema/.env 变更。Python 网站探索agent源码、环境、测试、进程和数据全程未动。
+- query 的 mode=workflow 声明 2–8 个 `{pathname, query}`，后一步入口等于前一步目标，统一同源主文档。可组合静态/动态 navigate、跨文档 query，以及保留当前 URL/document 的 filter（search/native-select/pagination）。filter 的参数必须与公开结果标量关联，无参数翻页必须看到数据变化；稳定 300ms 后继续。首步导航时可从中间/最终路径从头调用，其他首步限入口。静态导航无需虚构路径参数。
+- 所有参数在首步前检查；每个参数至少两种不同值的作者 cases，返回最后一步的数据。每步至多一次，失败带 stepIndex/completedSteps，不执行后续动作、不撤销已完成动作。总预算最多 30 秒，剩余不足时不再派发；子步骤在动作/读取前检查总期限。各步末尾保留完整 URL/main frame/loader 的内部身份，后一步验证相同文档，避免路由模板放过不同 ID/同 URL 新文档；内部身份不进入最终输出或持久证据。
+- `page_workflow_v1` 守卫观察、验证与普通调用。manifest.pageRoute.workflow 保存规范化动作/选择器/参数/关联/路由/时限，整体成为 `page-workflow:` 安装权限，拒绝跳步/替换/重排。仅结果提取声明不参与动作权限，允许 scoped repair 修改结果选择器；动作或顺序变化需重新生成审阅。输出仍走既有一次 continuation，原 handler 不重放。
+- 观察/作者验证使用临时 operationId，取消通知绑定 profile 的扩展，后续步骤停止；取消可先于排队任务到达。验证按单 case 请求扩展，当前 case 取消后不启动下一组。Bridge 断线使当前流程失效，重启仍 interrupted，不重放；已经派发的浏览器动作可能完成。普通调用暂无独立任务取消入口，循环/分支/自定义控件/跨源/跨 frame 流程和写操作仍未覆盖。
+- 实际隔离 Chromium 四步：入口导航→分类筛选→跨文档搜索→下一页，观察/生成/单组断言拒绝/两组精确结果/审阅安装/重复调用/知识通过。无效后续参数首步零动作；分类结果未更新时停止搜索/翻页；观察取消、验证取消、Bridge 中途关闭/重启均无后续动作，页面锁释放。改结果标记后保存 cases 失败，局部改提取选择器、重验/安装/普通调用通过。
+- 验证：WebCLI **112 文件/1203 项**；最后 runtime-validator 聚焦 **4 项**（含新增取消断言）；最终扩展相关 **64 项**；完整真实 Chromium **57 项**；源码专项 **7 项**及最后打包 CLI 工作流专项 **7 项**。完整回归之后增加步骤间 URL/文档身份加固，已由最终扩展 64 项和最后打包专项覆盖，未再跑完整 57 项。CLI/Bridge 构建、公开配置、**23 文件**语法、diff 格式及新增内容常见凭据/私网模式扫描通过；npm pack dry-run **613 文件**，包含新宿主模块、扩展 helper 与更新 Skill。
+- 报告：完整 `webcli-browser-acceptance-KlTLYt/report.json`；源码专项 `webcli-browser-acceptance-xPCRhY/report.json`；最后打包专项 `webcli-browser-acceptance-WxdKzg/report.json`，均在系统临时根。打包专项是打包 CLI + 源码 Bridge，不等于真实平台安装包。日志 `/tmp/weworker-workflow-full.log`、`/tmp/weworker-workflow-focused-final.log`、`/tmp/weworker-workflow-extension-final.log`、`/tmp/weworker-workflow-browser-full.log`、`/tmp/weworker-workflow-bundled-final.log`、`/tmp/weworker-workflow-build-final.log`、`/tmp/weworker-workflow-pack.json`。日常 Chrome/Bridge/B 站未操作。
+- 首次实机把安装目录刷新导致的页面重载算成重复 search；改夹具分别记录文档 loads 和实际 form submit/category/next 事件，严查每轮动作各一次，保留 loads 供诊断，未修改生产刷新或放宽动作断言。取消测试首次立即读取遇到合法 TAB_BUSY，改为最多 5 秒只读等待释放（小于慢步骤 10 秒超时）；观察/验证取消均实测通过。单测初次漏 schema、模拟 runtime count 仍为 1、VM 夹具漏新导入，以及重复 --run 参数，均修正夹具后通过。
+- 下一步写命令已核查：`generation-harness/write-tool-verifier.js` 现有的是模拟 fetch 的确认/请求/响应验证；`exploration-service.js` 的 generate/assertReadDraft/validate 仍严格只读。不能直接去掉这些守卫并把模拟当成实际副作用。后续需设计明确写计划、绑定草稿摘要/具体参数的执行确认、派发前持久状态、真实只读回查和失败/取消/重启后的不确定结果；公开隔离夹具先完成整条链路，再考虑授权外站。此处仅记录下一阶段入口，未实现写命令或副作用验证。

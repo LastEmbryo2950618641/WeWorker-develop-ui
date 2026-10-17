@@ -19,6 +19,7 @@
     "exploration-page.js",
     "exploration-intercept.js",
     "exploration-query.js",
+    "exploration-workflow.js",
     "exploration-analysis.js",
     "exploration-revisions.js",
     "browser-commands.js",

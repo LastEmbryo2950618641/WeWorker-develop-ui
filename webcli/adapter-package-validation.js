@@ -15,6 +15,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync } from "fs";
 import { basename, join, resolve, sep } from "path";
 import { validateHttpContract } from './http-contract.js';
 import { normalizePathParameters } from './generation-harness/path-parameters.js';
+import { validatePageWorkflowContract } from './exploration-workflow.js';
 
 
 const RUNTIMES = ["extension", "wewright", "http"];
@@ -170,7 +171,7 @@ export function validateV2Manifest(manifest, directoryName = "?") {
       let url;
       try { url = new URL(route?.origin + route?.pathname); } catch { /* Rejected below. */ }
       if (!route || typeof route !== 'object' || Array.isArray(route)
-        || Object.keys(route).some(key => !['origin', 'pathname', 'additionalPaths', 'navigation'].includes(key))
+        || Object.keys(route).some(key => !['origin', 'pathname', 'additionalPaths', 'navigation', 'workflow'].includes(key))
         || typeof route.pathname !== 'string' || !/^\/(?!\/)/.test(route.pathname)
         || command.runtime !== 'extension' || command.execution || command.safety === 'write'
         || !url || !['http:', 'https:'].includes(url.protocol) || url.username || url.password
@@ -193,6 +194,13 @@ export function validateV2Manifest(manifest, directoryName = "?") {
       } catch { valid = false; }
       if (!valid) fail(adapterName, 'pageRoute.navigation requires a declared same-origin path template and complete path bindings.');
     } else if (command.pageRoute?.pathname.includes(':id')) fail(adapterName, 'Dynamic pageRoute requires explicit navigation bindings.');
+    if (command.pageRoute?.workflow !== undefined) {
+      try {
+        const source = validatePageWorkflowContract(command.pageRoute.workflow);
+        if (command.pageWorkflow !== true || command.pageRoute.navigation || command.pageRoute.additionalPaths
+          || source.steps[0].pathname !== command.pageRoute.pathname) throw new Error('Invalid entry route.');
+      } catch { fail(adapterName, 'pageRoute.workflow requires a complete normalized read-only step sequence beginning at pathname.'); }
+    }
     if (command.pageRoute?.additionalPaths !== undefined) {
       const paths = command.pageRoute.additionalPaths;
       if (command.pageWorkflow !== true || !Array.isArray(paths) || paths.length > 4 || paths.some(value => {

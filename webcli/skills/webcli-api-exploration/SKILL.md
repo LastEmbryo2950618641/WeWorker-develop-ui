@@ -125,7 +125,7 @@ webcli call exploration.intercept --args '{"taskId":"example-task","source":{"so
 
 ### 跨页面查询（UI_SELECTOR query）
 
-搜索会整页导航，或结果来自 DOM/公开状态时，用 `exploration.query`。先观察实际查询控件、结果路径与数据来源；此命令只执行一次查询，不是任意步骤脚本。插件需要 page_query_v1。
+搜索会整页导航，或结果来自 DOM/公开状态时，用 `exploration.query`。先观察实际查询控件、结果路径与数据来源；默认模式执行一次查询，多步流程用下文 mode=workflow。插件需要 page_query_v1。
 
 ```bash
 webcli call exploration.query --args '{"taskId":"example-task","source":{"trigger":{"kind":"search","selector":"#search","submitSelector":"#search-submit","parameter":"keyword","description":"公开查询关键词"},"result":{"strategy":"UI_SELECTOR","selector":".item","fields":{"title":{"selector":"h3"}}},"resultPathname":"/results","matchQuery":{"q":"keyword"},"timeoutMs":20000},"values":{"keyword":"Example"},"reason":"搜索表单跳转到结果页，读取新列表"}'
@@ -150,6 +150,50 @@ webcli call exploration.query --args '{"taskId":"example-task","source":{"mode":
 - 每次只派发一次 Page.navigate。即使目标 URL 等于当前 URL，也等待新的主文档以及至少 300ms 稳定结果；读取后再核对 URL/文档。跨源、跳到其他 ID、下载、超时或导航中断失败，不重放。浏览器可能已经访问重定向目标，失败不回退到旧页或旧数据。
 - 观察只保存模板、字段结构和来源理由。生成后至少两组不同路径参数的 cases，精确核对返回 ID/标题等业务含义；每组都实际导航，不能用当前页的旧数据代替。通过后 review/install、普通 call、知识保存。后续 scoped repair 保留已安装路由/参数映射/权限，带入历史 cases 重新验证。
 - 当前限同源主文档的单次导航与读取，不支持动态 query/hash 模板、跨源详情、任意路径正则或多步骤业务流程。取消后丢弃迟到结果，已派发的浏览器导航可能继续完成。
+
+### 多步只读网站流程（UI_SELECTOR workflow）
+
+用 `exploration.query` 的 `source.mode=workflow` 显式组合 2–8 个已观察步骤。每步声明开始 `pathname` 和 `query`；后一步 pathname 必须等于前一步 resultPathname。插件需要 `page_workflow_v1`，选择的 profile 不支持时直接失败。固定同源主文档；没有循环、分支或任意脚本步骤。
+
+```json
+{
+  "mode": "workflow",
+  "timeoutMs": 20000,
+  "steps": [
+    {
+      "pathname": "/entry",
+      "query": {"mode":"navigate","resultPathname":"/search","result":{"strategy":"DOM_STATE","path":["publicResults"]}}
+    },
+    {
+      "pathname": "/search",
+      "query": {
+        "mode":"filter","resultPathname":"/search",
+        "trigger":{"kind":"filter","selector":"#category","parameter":"category","description":"公开内容分类"},
+        "matchResult":{"category":"category"},
+        "result":{"strategy":"DOM_STATE","path":["publicResults"]}
+      }
+    },
+    {
+      "pathname": "/search",
+      "query": {
+        "resultPathname":"/results",
+        "trigger":{"kind":"search","selector":"#q","submitSelector":"#search","parameter":"keyword","description":"公开检索词"},
+        "matchQuery":{"q":"keyword"},
+        "result":{"strategy":"UI_SELECTOR","selector":"article.item","fields":{"title":{"selector":"h3"}}}
+      }
+    }
+  ]
+}
+```
+
+把上述对象作为 source，values 传 `{"category":"books","keyword":"Example"}`。工作流中的 navigate 可用固定路径，无须虚构 pathParameters；动态路径仍逐段绑定。filter 仅用于当前文档中的 search/filter/pagination 读控件，不能改变 URL 或主文档。参数控件必须用 matchResult 将读取结果的标量路径关联到参数；路径相对于 result.data（UI_SELECTOR 例：`items.0.category`），必须选择能证明业务结果的字段，不能只读取输入框。无参数翻页必须观察到数据变化。结果至少稳定 300ms，最后一个步骤的数据为命令输出；同值筛选允许已符合关联条件的稳定结果。
+
+- 每个步骤至多派发一次；任何错误立即停止后续步骤，返回 stepIndex/completedSteps。总时间预算 1–30 秒，单步不能突破剩余预算，不自动重试、回退或恢复到旧页。参数在首步前统一校验；较长流程需调用方拆分并显式编排。
+- 首步为 navigate 时，普通调用可从入口或任一步骤的目标页面开始，显式从头运行；其他首步只接受其入口。每步执行前后检查页面。失败后已经完成的导航/筛选不会撤销，先检查当前状态再决定是否重新执行。
+- 观察/作者验证期间取消，扩展收到对应 operationId 后停止后续步骤；已派发的动作可能完成。Bridge 断线停止当前流程后续步骤，重启任务为 interrupted，不自动续跑。普通已安装调用没有单独的任务取消入口。
+- 所有参数合并为必填字符串；每个参数都至少需要两组不同值的作者 cases，精确验证最终业务结果。作者验证逐 case 发往扩展，避免多条长流程堆在一个传输超时内。无参数流程也须至少一组作者断言。
+- manifest.pageRoute.workflow 记录动作、参数、关联条件、顺序与路由，整体纳入安装权限；源码不能跳步或改变动作而保留旧权限。结果读取选择器可通过 scoped repair 修改，动作选择器/顺序/参数变化需要重新生成、验证和审阅。知识保存完整来源，观察 values 不自动保存为默认值。
+- 仍不支持写动作、跨源/子 frame 工作流、任意自定义控件、循环/分支/数据驱动步骤。不得把只读流程通过当作写操作或任意网站流程通过。
 
 ### 输出断言示例
 
@@ -179,7 +223,7 @@ webcli call exploration.repair --args '{"taskId":"example-task","site":"example.
 - Bridge 重启中的任务标记 interrupted，明确选择重新 collect（HTTP 模式 discover/request）或 validate；不自动重放探测或安装。
 - `cancel` 停止后续阶段并丢弃迟到结果；已派发浏览器请求可能完成。安装开始后不能取消。
 - start 可传 allowedOrigins 数组，显式授权额外 API origin，如 `https://api.example.com`；只允许精确 origin，无路径、凭据或通配符。流量不会自动扩大权限，安装 review 会列出新域名。
-- 默认 GET、Agent 计划下的只读 POST JSON/form/GraphQL query、API 动态路径、声明式 UI_SELECTOR/DOM_STATE、单步 INTERCEPT、跨文档页面查询与参数化详情导航已支持。写命令、动态 query/hash 页面路由、自动多步 UI 工作流仍未支持；报告限制，不伪装成功。
+- 默认 GET、Agent 计划下的只读 POST JSON/form/GraphQL query、API 动态路径、声明式 UI_SELECTOR/DOM_STATE、单步 INTERCEPT、跨文档页面查询、参数化详情导航和显式 2–8 步只读 workflow 已支持。写命令、动态 query/hash 页面路由、循环/分支/任意自定义多步 UI 仍未支持；报告限制，不伪装成功。
 - 使用 webcli-browser Skill 的 browser.* 触发搜索、翻页或检查页面状态，再 collect。采集/验证进行中不要操作同一页；TAB_BUSY 时等待。
 - trace 输出结构诊断、事件、文件清单与计划，便于交接修复；不含捕获正文或代码。verification-read 与 knowledge-read 可恢复作者测试用例；安装后修复使用 repair-info/repair，再走相同的验证、审阅与安装流程。
 - 证据的 URL 参数值被省略；不要把 `<value>` 作为实际查询值。业务参数来自用户输入，登录信息由既有浏览器运行时取得。

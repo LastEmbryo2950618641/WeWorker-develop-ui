@@ -4,6 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { scopedGenerationPreviewScripts } from '../background/generation-preview-bundle.js';
 import { buildV2Bootstrap } from '../background/v2-loader.js';
+import { assertPageWorkflowActive } from '../background/page-query.js';
 
 const token = '00000000-0000-4000-8000-000000000001';
 function setup() {
@@ -70,6 +71,7 @@ for (const fail of [false, true]) {
     const source = readFileSync(new URL('../background/service-worker.js', import.meta.url), 'utf8');
     const body = source.slice(source.indexOf('async function validateGenerationPreview('), source.indexOf('function shouldHandleTabUrl('));
     const context = vm.createContext({
+      assertPageWorkflowActive,
       generationPreviewGrants: new Map(), normalizeRouteHosts: value => value || [], crypto: { randomUUID: () => token }, SAFE_ADAPTER_ID_RE: /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/,
       findGenerationPreviewTab: async () => ({ id: 7, url: 'https://example.com/' }),
       getHostAdapterRuntime: () => ({ exclusive: async (_id, operation) => operation() }),

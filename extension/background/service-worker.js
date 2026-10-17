@@ -10,8 +10,9 @@ import { executeBrowserCommand } from './browser-commands.js';
 import { browserResponseEvidence } from './browser-network.js';
 import { executePageSource } from './page-source.js';
 import { executeInterceptRead } from './intercept-read.js';
-import { executePageQuery } from './page-query.js';
+import { executePageQuery, cancelPageWorkflow, cancelAllPageWorkflows, assertPageWorkflowActive } from './page-query.js';
 import { matchesPagePath, assertPageQueryRoute } from './page-navigation.js';
+import { pageRoutePaths } from './page-workflow.js';
 import { recordBrowserObservation, clearBrowserObservations } from './browser-observations.js';
 import { recordBrowserFrameEvent, clearBrowserFrames } from './browser-frames.js';
 import { recordBrowserDownload, clearBrowserDownloads } from './browser-downloads.js';
@@ -63,6 +64,7 @@ const EXTENSION_CAPABILITIES = [
   'intercept_read_v1',
   'page_query_v1',
   'page_navigation_v1',
+  'page_workflow_v1',
 ];
 
 let currentBrowserContextId;
@@ -2583,6 +2585,7 @@ function connectToNativeHost() {
 
   socket.addEventListener("close", (event) => {
     if (ws !== socket) return;
+    cancelAllPageWorkflows();
     bridgeCapabilities = [];
     clearNativeHeartbeatAckTimer();
     const closeDetail = event?.reason || (event?.code ? `WebSocket close code ${event.code}` : 'WebSocket 已关闭');
@@ -2730,9 +2733,7 @@ async function handleNativeMessage(msg) {
           const { origin, pathname } = selected.command.pageRoute;
           assertAdapterNavigationUrl(selected.manifest, origin + pathname);
           const matches = tabs.filter(entry => {
-            try { const url = new URL(entry.url); return url.origin === origin && (matchesPagePath(url.pathname, pathname)
-              || (selected.command.pageRoute.navigation && matchesPagePath(url.pathname, selected.command.pageRoute.navigation.pathname))
-              || (selected.command.pageRoute.additionalPaths || []).includes(url.pathname)); }
+            try { const url = new URL(entry.url); return url.origin === origin && pageRoutePaths(selected.command.pageRoute).some(path => matchesPagePath(url.pathname, path)); }
             catch { return false; }
           });
           const activeMatches = matches.filter(entry => entry.active);
@@ -2894,8 +2895,13 @@ async function handleNativeMessage(msg) {
       sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
     }
 
+  } else if (msg.type === 'exploration_cancel_workflow') {
+    sendToNative({ type: 'call_tool_result', id: msg.id, result: { cancelled: cancelPageWorkflow(Number(msg.tabId), msg.operationId) } });
   } else if (msg.type === 'exploration_page_query') {
-    const result = await getHostAdapterRuntime().exclusive(Number(msg.tabId), () => executePageQuery({ chrome, ensureCdpAttached, tabId: Number(msg.tabId), payload: { ...msg.payload, metadataOnly: true } }));
+    const connection = ws;
+    const result = await getHostAdapterRuntime().exclusive(Number(msg.tabId), () => connection !== ws
+      ? { ok: false, error: { code: 'PAGE_WORKFLOW_CANCELLED', message: 'Connection changed before the workflow could start.' } }
+      : executePageQuery({ chrome, ensureCdpAttached, tabId: Number(msg.tabId), payload: { ...msg.payload, metadataOnly: true } }));
     sendToNative({ type: 'call_tool_result', id: msg.id, result });
   } else if (msg.type === 'exploration_intercept_read') {
     const result = await getHostAdapterRuntime().exclusive(Number(msg.tabId), () => executeInterceptRead({ chrome, ensureCdpAttached, tabId: Number(msg.tabId), payload: { ...msg.payload, metadataOnly: true } }));
@@ -7797,7 +7803,7 @@ async function callGenerationPreviewTool(tabId, token, toolName, args, timeoutMs
 
 const generationPreviewGrants = new Map();
 
-async function validateGenerationPreview({ previewAdapterId, previewBundle = null, siteKey, tabId, expectedToolNames = [], testCases = [] } = {}) {
+async function validateGenerationPreview({ previewAdapterId, previewBundle = null, siteKey, tabId, expectedToolNames = [], testCases = [], operationId } = {}) {
   if (!SAFE_ADAPTER_ID_RE.test(String(previewAdapterId || '')) || !String(previewAdapterId).startsWith('generation_preview_')) {
     throw new Error('invalid generation preview adapter id');
   }
@@ -7816,11 +7822,11 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
   }
 
   return getHostAdapterRuntime().exclusive(targetTab.id, async () => validateGenerationPreviewOnTab({
-    previewAdapterId, previewBundle, siteKey, expectedToolNames, testCases,
+    previewAdapterId, previewBundle, siteKey, expectedToolNames, testCases, operationId,
   }, await chrome.tabs.get(targetTab.id)));
 }
 
-async function validateGenerationPreviewOnTab({ previewAdapterId, previewBundle, siteKey, expectedToolNames, testCases }, targetTab) {
+async function validateGenerationPreviewOnTab({ previewAdapterId, previewBundle, siteKey, expectedToolNames, testCases, operationId }, targetTab) {
   const inlinePreview = normalizeGenerationPreviewBundle(previewBundle);
   const manifest = inlinePreview?.manifest || await loadAdapterManifest(previewAdapterId);
   if (!manifest) throw new Error(`preview manifest not found: ${previewAdapterId}`);
@@ -7859,6 +7865,7 @@ async function validateGenerationPreviewOnTab({ previewAdapterId, previewBundle,
     const toolResults = [];
     if (errors.length === 0 && Array.isArray(testCases)) {
       for (const testCase of testCases.slice(0, 5)) {
+        assertPageWorkflowActive(targetTab.id, operationId);
         const toolName = String(testCase?.toolName || '');
         const risk = testCase?.risk || {};
         const tool = registeredTools.find((item) => String(item?.name || '') === toolName) || null;
@@ -7905,7 +7912,7 @@ async function validateGenerationPreviewOnTab({ previewAdapterId, previewBundle,
             const command = manifest.commands?.find(entry => `${manifest.name}.${entry.id}` === toolName);
             const payload = output.__webcli_page_query;
             assertAdapterNavigationUrl(manifest, assertPageQueryRoute(payload, command));
-            const result = await executePageQuery({ chrome, ensureCdpAttached, tabId: targetTab.id, payload: { ...payload, metadataOnly: false } });
+            const result = await executePageQuery({ chrome, ensureCdpAttached, tabId: targetTab.id, payload: { ...payload, operationId, metadataOnly: false } });
             if (!result.ok) output = result;
             else {
               await sendTabMessage(targetTab.id, { type: 'end_generation_preview', token });
