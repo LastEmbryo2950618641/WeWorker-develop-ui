@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-17（API 动态路径参数）：Agent plan 可显式绑定 pathname 段与字符串参数，覆盖脱敏 :id 或作者选择的 slug；生成 schema 必填、无捕获值默认参数、单段编码、保持前导零，区分 path/query/body。至少两组不同路径组合实际验证，映射随站点知识保存。WebCLI 102 文件/1090 项、隔离真实 Chromium 23 项通过，含 GET/POST 四组 ID/中文/特殊字符精确断言、安装后普通调用和非法路径零请求；CLI/Bridge 构建及公开配置通过。本轮未在外部站点验证动态详情接口；动态页面路由、INTERCEPT、写操作及完整 OpenCLI 对齐仍未完成。Python 网站探索agent零改动。
+
 - 2026-10-17（页面来源探索与修复）：新增 observe 与 UI_SELECTOR/DOM_STATE，支持无 JSON API 的 DOM 列表、公开页面状态和 JSON 脚本生成；页面证据独立绑定，作者 cases 必填，支持混合计划、站点知识与定向修复。新增 pageRoute 精确页面选择，避免同域首页误调用，缺失/歧义明确报错。WebCLI 全量 101 文件/1086 项、Extension 聚焦 40 项、隔离真实 Chromium 22 项通过；CLI/Bridge 构建、公开配置和 npm pack dry-run（583 文件）通过。用户指定公共搜索页新增 DOM 命令本地安装后读取 27 张已渲染卡片，标题/链接与当前页逐项一致；已有 API 三组查询仍通过。INTERCEPT、动态路径、写操作、多步 UI、跨 Agent 独立对话及完整 OpenCLI 对齐仍在进行；Python 网站探索agent零改动。
 
 - 2026-10-17（已安装命令定向修复）：新增 repair-info/repair，从当前包和新采集证据建立隔离草稿，限定所选只读命令模块/schema/description；共享文件、其他命令、权限和路由保持原样，安装基线变化拒绝覆盖。历史 cases 自动带入并标记过期，必须重新实际验证。WebCLI 全量 100 文件/1080 项通过；真实 Chromium 20 项通过，包含返回字段变化→旧六组全部失败→CLI 修复→六组通过→安装与普通调用。共享文件/写命令修复、其他策略与完整 OpenCLI 对齐仍待做，Python 网站探索agent未动。

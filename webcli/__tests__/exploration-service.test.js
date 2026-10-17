@@ -445,3 +445,41 @@ it('combines API and page plans and rejects mismatched page strategy or stale ob
   expect(sources['api-items'].generationSource.version).toBe('api-source-v2');
   expect((await f.service.execute('observe', { taskId, source: {}, reason: 'Changed' })).error.code).toBe('INVALID_STATE');
 });
+
+it('binds dynamic endpoint segments to required string arguments and requires varying authored cases', async () => {
+  const f = setup(); const original = f.requestExtension.getMockImplementation();
+  f.requestExtension.mockImplementation(msg => msg.type === 'exploration_capture_passive' ? { entries: [{
+    url: 'https://example.com/api/groups/12345/items/67890?lang=en', method: 'GET', status: 200,
+    responsePreview: '{"data":{"groupId":"12345","itemId":"67890"}}',
+  }] } : original(msg));
+  const taskId = await start(f.service);
+  expect((await f.service.execute('generate', { taskId })).error.code).toBe('PATH_PLAN_REQUIRED');
+  const tool = { name: 'read_item', risk: 'read', sourceApiKind: 'list', sourceApiIndexes: [0], readReason: 'Reads one public item.' };
+  expect((await f.service.execute('generate', { taskId, plan: { tools: [tool] } })).error.code).toBe('INVALID_PLAN');
+  tool.pathParameters = [{ segmentIndex: 2, name: 'groupId', description: 'Group ID' }, { segmentIndex: 4, name: 'itemId', description: 'Item ID' }];
+  const generated = await f.service.execute('generate', { taskId, plan: { tools: [tool] } });
+  expect(generated.ok).toBe(true);
+  const manifest = JSON.parse((await f.service.execute('draft-read', { taskId, file: 'manifest.json' })).data.content);
+  const command = manifest.commands.find(item => item.id === 'read-item');
+  expect(command.schema.required).toEqual(expect.arrayContaining(['groupId', 'itemId']));
+  expect(command.schema.properties.groupId.type).toBe('string');
+  const source = (await f.service.execute('draft-read', { taskId, file: command.module })).data.content;
+  expect(source).not.toMatch(/12345|67890/);
+  expect(source).toContain('resolvePathRequest');
+  expect((await f.service.execute('validate', { taskId })).error.code).toBe('VERIFICATION_REQUIRED');
+  const toolName = generated.data.toolNames[0];
+  const current = (await f.service.execute('verification-read', { taskId, tool: toolName })).data;
+  const cases = [{ id: 'first', args: { groupId: 'example-group', itemId: 'example-one' }, expect: { equals: { 'data.data.itemId': 'example-one' } } },
+    { id: 'second', args: { groupId: 'example-group', itemId: 'example-one' }, expect: { equals: { 'data.data.itemId': 'example-two' } } }];
+  await f.service.execute('verification-write', { taskId, tool: toolName, expectedHash: current.hash, cases });
+  expect((await f.service.execute('validate', { taskId })).error.code).toBe('VERIFICATION_REQUIRED');
+  const updated = (await f.service.execute('verification-read', { taskId, tool: toolName })).data;
+  cases[1].args.itemId = 'example-two';
+  await f.service.execute('verification-write', { taskId, tool: toolName, expectedHash: updated.hash, cases });
+  f.runtimeValidator.mockResolvedValue({ passed: true, executionSummary: { attempted: 2, passed: 2, failed: 0, skipped: 0 } });
+  await f.service.execute('validate', { taskId }); await f.service.jobs.get(taskId);
+  expect(f.service.runs.get(taskId).status).toBe('review_ready');
+  const known = (await f.service.execute('knowledge-read', { site: 'example.com' })).data;
+  const saved = await f.service.execute('knowledge-save', { taskId, expectedHash: known.hash });
+  expect(saved.data.knowledge.commands[toolName].pathParameters).toEqual(tool.pathParameters);
+});

@@ -37,7 +37,7 @@ Codex / Claude / 其他 CLI Agent + Skill
 | actions / probe | 复用插件安全搜索、筛选和分页候选，每任务最多三次探测 |
 | observe | 观察声明式 UI_SELECTOR / DOM_STATE 来源，只保存路由、字段类型结构和选择理由 |
 | cancel | 停止后续阶段，丢弃迟到结果；已经派发的浏览器操作可能完成 |
-| generate | 默认最多两个 GET；Agent plan 支持 1–50 个读取工具及 JSON/form POST、GraphQL query，POST 必须有 readReason |
+| generate | 默认最多两个 GET；Agent plan 支持 1–50 个读取工具、JSON/form POST、GraphQL query、动态路径绑定与页面来源；POST/动态路径必须有 readReason |
 | repair-info / repair | 查看当前安装包摘要/历史 cases，从新证据建立所选已有只读命令的修复草稿；其他文件与命令保留 |
 | draft-read / draft-write / draft-add | 列文件、读取内容和 hash、按 expectedHash 修改现有文件，或新增 helper/command/guidance 文件 |
 | verification-read / verification-write | 按工具读写带 hash 的 1–10 组真实参数及精确输出断言；修改后重新验证 |
@@ -73,7 +73,11 @@ Codex / Claude / 其他 CLI Agent + Skill
 
 持久化与输出只含请求/响应结构、字段名称、状态及端点。省略响应值和请求头，移除凭据查询字段，其余查询值变为占位；常见数字 ID、UUID 和邮箱路径段结构化为 :id。跨源流量不自动增加权限。
 
-当前生成范围：已观察成功且被判定为读取的 GET 与 Agent 明确编写读取理由的 POST（JSON/form/GraphQL query），每个计划最多 50 个新命令。未知/持久 GraphQL 操作、mutation、subscription 和动态 :id 路径不自动生成；写命令尚未开放。额外 API origin 在 start 显式授权，生成包只从选中证据派生 runtime_allowed_hosts，安装前审阅权限差异。已有包的命令按原有增量机制保留；只执行新生成的查询验证，不运行保留的写命令。
+当前生成范围：已观察成功且被判定为读取的 GET 与 Agent 明确编写读取理由的 POST（JSON/form/GraphQL query），每个计划最多 50 个新命令。未知/持久 GraphQL 操作、mutation、subscription 不自动生成；写命令尚未开放。额外 API origin 在 start 显式授权，生成包只从选中证据派生 runtime_allowed_hosts，安装前审阅权限差异。已有包的命令按原有增量机制保留；只执行新生成的查询验证，不运行保留的写命令。
+
+API 动态路径由显式 plan.pathParameters 绑定，包含 segmentIndex/name/description；索引是 pathname 去掉开头 `/` 后按 `/` 切分的零基位置。必须覆盖每个脱敏 :id，也可由作者参数化已观察的 slug 段。名称不能与 query/body 或其他路径参数冲突，必须说明读取理由；自动计划不猜测这些参数。生成 schema 使用必填 string，保留前导零，无捕获值默认参数。每个命令内联路径解析函数，按单段编码，保持固定 origin/其余路径；拒绝斜杠、百分号、控制字符和 dot traversal。已观察 query 键从参数提取到 URL，其余留给 GET query/POST body，路径键不会重复进入请求体。
+
+动态命令至少两组不同路径参数组合的作者 cases，仍要求真实执行、零失败/跳过；Agent 用精确返回字段确认参数生效。知识保存命令的路径映射，定向 repair 使用相同要求。当前不从页面自动提取鉴权参数或签名，也不为尚未观察的 URL 建立证据；动态页面 pageRoute 另行设计。
 
 ## 页面来源策略
 
@@ -109,8 +113,8 @@ Agent 可以为最终命令输出声明 requiredPaths、types、notEmpty、patte
 
 ## 验证与未完成范围
 
-具体命令和数量见交接日志。当前 WebCLI 全量 100 文件、1080 项通过。真实 Chromium + 未打包插件 + 独立 CLI/Bridge + loopback 示例站点 20 项通过，包含浏览器操作、三个 POST/GraphQL 工具闭环、六组精确断言、知识持久化和已安装命令在响应字段变化后的定向修复。用户指定的真实公共视频搜索页已完成采集、生成、修复、验证、增量安装和普通 CLI 搜索/分页，结果结构和页面变化通过；原始页面/响应未进入仓库。
+具体命令和数量见交接日志。当前 WebCLI 全量 102 文件、1090 项通过。真实 Chromium + 未打包插件 + 独立 CLI/Bridge + loopback 示例站点 23 项通过，包含浏览器操作、POST/GraphQL 工具、六组精确断言、知识持久化、API/DOM 定向修复、三个页面来源及动态 GET/POST 路径参数闭环。用户指定的真实公共视频搜索页已完成采集、生成、修复、验证、增量安装和普通 CLI 搜索/分页，DOM 命令也与当前页面逐项核对；原始页面/响应未进入仓库。动态路径本轮使用公开占位 loopback 示例站点验收，不代表已在该外部搜索站点验证动态详情接口。
 
 验收脚本为 `webcli/scripts/verify-exploration-browser.mjs`；使用临时副本改变连接端口及 CLI 配置目录，生产协议和默认端口未改。只启动/停止脚本自己创建的服务和浏览器，Adapter 安装、任务和浏览器配置均隔离。Playwright 只用于测试浏览器启动与示例页面导航，探索/生成/验证/安装和业务调用均经过真实 CLI 与插件，不 mock 扩展传输、fetch 或验证器。
 
-待做：纯 DOM/拦截等策略生成、动态路径、写命令、知识冲突修订与共享文件/写命令修复；Codex/Claude 各一次全新独立对话验收、各平台安装包；API 探索 UI/旧聊天入口统一，以及能力台账中的其他差距。当前证据不代表任意 Agent 在任意站点上的生成质量已验证。
+待做：INTERCEPT/自动策略回退、动态页面路由/多步 UI、CSRF/签名、写命令、知识冲突修订与共享文件/写命令修复；Codex/Claude 各一次全新独立对话验收、各平台安装包；API 探索 UI/旧聊天入口统一，以及能力台账中的其他差距。当前证据不代表任意 Agent 在任意站点上的生成质量已验证。

@@ -16,7 +16,7 @@ export const explorationCommands = {
   actions: { description: 'Inspect safe search/filter/pagination controls on the bound page.', params: ['taskId'] },
   probe: { description: 'Execute one freshly inspected safe read action and collect its network delta (three probes per task).', params: ['taskId', 'candidateId', 'value?'] },
   cancel: { description: 'Cancel task processing; an already dispatched browser request may finish but its result is discarded.', params: ['taskId'] },
-  generate: { description: 'Create an isolated read-only draft from evidence. Optional plan is authored by the calling agent; no model is called.', params: ['taskId', 'plan?'] },
+  generate: { description: 'Create an isolated read-only draft from evidence. Agent plans can bind API pathParameters (segmentIndex/name/description) or page sources. Dynamic paths require an explicit plan; no model is called.', params: ['taskId', 'plan?'] },
   'repair-info': { description: 'Inspect an active Extension Adapter digest, command identities and historical test knowledge before scoped repair.', params: ['site'] },
   repair: { description: 'Copy an installed Adapter into an isolated draft for selected read commands bound to fresh API evidence. Preserves other commands and shared files.', params: ['taskId', 'site', 'expectedDigest', 'plan'] },
   'draft-read': { description: 'List draft files or read one file and its content hash.', params: ['taskId', 'file?'] },

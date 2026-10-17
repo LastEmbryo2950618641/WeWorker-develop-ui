@@ -20,6 +20,7 @@ import { buildAdapterCatalog } from './adapter-catalog.js';
 import { repairTarget, writeRepairDraft } from './exploration-repair.js';
 import { normalizePageSource, pageObservation, buildPageTool } from './exploration-page.js';
 import { writePackageDraft } from './generation-harness/package-draft.js';
+import { normalizePathParameters } from './generation-harness/path-parameters.js';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const active = new Set(['collecting', 'validating', 'installing']);
@@ -181,14 +182,15 @@ export class ExplorationService {
       const pages = (run.pageSources || []).filter(item => pageIds.has(item.id)).map(clone);
       const verifiedAt = run.verifiedAt || run.updatedAt;
       const commands = Object.fromEntries(run.draft.toolNames.map(tool => [tool, { verifiedAt, packageDigest: run.runtimeDigest,
-        cases: clone(run.verification?.[tool] || []) }]));
+        cases: clone(run.verification?.[tool] || []),
+        pathParameters: clone(run.plan?.tools?.find(item => `${run.siteKey}.${item.name.replace(/_/g, '-')}` === tool)?.pathParameters || []) }]));
       return this.knowledge.save(run.siteKey, { expectedHash: args.expectedHash, verifiedAt, packageDigest: run.runtimeDigest,
         endpoints, pages, commands, notes: args.notes, fields: args.fields });
     }
     if (command === 'trace') return { ...this.summary(run), events: clone(run.events),
       evidence: run.candidates.map(({ id, url, method, status, risk, requestSemantics }) => ({ id, url, method, status, risk, requestSemantics })),
       pageSources: clone(run.pageSources || []),
-      plannedTools: (run.plan?.tools || []).map(({ name, risk, sourceApiKind, sourceApiIndexes, strategy, sourcePageId }) => ({ name, risk, sourceApiKind, sourceApiIndexes, strategy, sourcePageId })),
+      plannedTools: (run.plan?.tools || []).map(({ name, risk, sourceApiKind, sourceApiIndexes, strategy, sourcePageId, pathParameters }) => ({ name, risk, sourceApiKind, sourceApiIndexes, strategy, sourcePageId, pathParameters })),
       files: run.draftFiles || [], structuralOnly: true };
     if (command === 'events') {
       const cursor = integerArg(args.cursor, 'cursor', 0);
@@ -361,26 +363,30 @@ export class ExplorationService {
   generate(run, proposedPlan, repair = null) {
     if (run.draft) return this.summary(run); // Repeated generation never overwrites an authored draft.
     if (repair && (!proposedPlan || typeof proposedPlan !== 'object')) throw fail('INVALID_PLAN', 'Repair requires an explicit plan naming existing command IDs and current source indexes.');
-    const candidates = run.candidates.filter(item => (item.method === 'GET' || (item.method === 'POST' && ['json', 'form'].includes(item.requestEvidence.bodyKind))) && !new URL(item.url).pathname.includes(':id')
+    const candidates = run.candidates.filter(item => (item.method === 'GET' || (item.method === 'POST' && ['json', 'form'].includes(item.requestEvidence.bodyKind)))
       && item.risk.level === 'read' && item.status >= 200 && item.status < 300);
     if (!candidates.length && !proposedPlan?.tools?.some(tool => tool?.sourcePageId)) throw fail('NO_READ_EVIDENCE', 'Collect a successful read query or observe a page source before generating.');
+    if (!proposedPlan && candidates.length && candidates.every(item => new URL(item.url).pathname.includes(':id'))) throw fail('PATH_PLAN_REQUIRED', 'Dynamic endpoints need an explicit plan with pathParameters and authored verification cases.');
     // Keep original evidence indexes stable for agent-authored plans.
     run.memory = { siteKey: run.siteKey, siteHost: new URL(run.origin).hostname, siteOrigin: run.origin, canonicalEntryUrl: run.origin + '/',
       listApiCandidates: run.candidates.map(item => clone(item)), actionApiCandidates: [], pageSources: clone(run.pageSources || []) };
     const facade = this.facade(run);
     prepareGenerationRun(facade, { paths: this.paths });
     run.siteKey = facade.snapshot.siteKey; run.memory = facade.snapshot.input.memory;
-    const plan = proposedPlan || buildQuickGenerationPlan({ ...run.memory, listApiCandidates: run.memory.listApiCandidates.map(item => item.method === 'GET' && candidates.some(candidate => candidate.id === item.id) ? item : { ...item, url: '' }) });
+    const plan = proposedPlan || buildQuickGenerationPlan({ ...run.memory, listApiCandidates: run.memory.listApiCandidates.map(item => item.method === 'GET' && !new URL(item.url).pathname.includes(':id') && candidates.some(candidate => candidate.id === item.id) ? item : { ...item, url: '' }) });
     if (!Array.isArray(plan.tools) || !plan.tools.length || plan.tools.length > 50) throw fail('INVALID_PLAN', 'Provide 1–50 read tools per draft. Split larger plans into incremental tasks.');
     for (const tool of plan.tools) {
       if (tool?.sourcePageId) {
         const observed = (run.pageSources || []).find(item => item.id === tool.sourcePageId);
-        if (!observed || tool.risk !== 'read' || tool.strategy !== observed.source.strategy || tool.sourceApiIndexes !== undefined || tool.sourceApiKind !== undefined) throw fail('INVALID_PLAN', 'Page tools must bind an observed page ID and matching strategy without API evidence.');
+        if (!observed || tool.risk !== 'read' || tool.strategy !== observed.source.strategy || tool.sourceApiIndexes !== undefined || tool.sourceApiKind !== undefined || tool.pathParameters !== undefined) throw fail('INVALID_PLAN', 'Page tools must bind an observed page ID and matching strategy without API evidence.');
         textArg(tool.readReason, 'readReason');
         continue;
       }
       const candidate = run.candidates[tool.sourceApiIndexes?.[0]];
       if (tool.risk !== 'read' || tool.sourceApiKind !== 'list' || !candidate || !candidates.some(item => item.id === candidate.id)) throw fail('INVALID_PLAN', 'Each tool must reference a successful observed read query by index.');
+      try { normalizePathParameters(candidate, tool.pathParameters); }
+      catch (error) { throw fail('INVALID_PLAN', error.message); }
+      if (tool.pathParameters?.length) textArg(tool.readReason, 'readReason');
       if (candidate.method !== 'GET' && (typeof tool.readReason !== 'string' || !tool.readReason.trim() || tool.readReason.length > 2000)) throw fail('INVALID_PLAN', 'POST queries require an authored readReason explaining their read semantics.');
     }
     if (repair) {
@@ -433,6 +439,15 @@ export class ExplorationService {
   }
 
   validate(run) {
+    for (const tool of run.plan?.tools || []) {
+      if (!tool.pathParameters?.length) continue;
+      const cases = run.verification?.[`${run.siteKey}.${tool.name.replace(/_/g, '-')}`] || [];
+      const pathValues = cases.map(item => tool.pathParameters.map(binding => item.args[binding.name]));
+      if (cases.length < 2 || pathValues.some(values => values.some(value => typeof value !== 'string' || !value.trim()))
+        || new Set(pathValues.map(values => JSON.stringify(values))).size < 2) {
+        throw fail('VERIFICATION_REQUIRED', 'Dynamic paths require at least two authored cases with distinct path argument combinations.');
+      }
+    }
     const pageTools = (run.plan?.tools || []).filter(tool => tool.sourcePageId).map(tool => `${run.siteKey}.${tool.name.replace(/_/g, '-')}`);
     if (pageTools.length && !this.capabilities().capabilities.includes('page_sources_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating page sources.');
     if ((run.repairScope ? run.draft.toolNames : pageTools).some(tool => !run.verification?.[tool]?.length)) throw fail('VERIFICATION_REQUIRED', 'Every repaired or page-based command needs authored verification cases; read or write cases before validation.');

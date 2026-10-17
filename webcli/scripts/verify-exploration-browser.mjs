@@ -90,12 +90,21 @@ try {
     </script>`;
   const apiRequests = [];
   const postRequests = [];
+  const detailRequests = [];
   let failApi = false;
   let renamedItemField = false;
   let renamedPageField = false;
   server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
-    if (url.pathname === '/page-only') {
+    if (/^\/api\/groups\/[^/]+\/items\/[^/]+(?:\/query)?$/.test(url.pathname)) {
+      let body = ''; req.on('data', chunk => body += chunk); req.on('end', () => {
+        const parts = url.pathname.split('/').map(decodeURIComponent);
+        const payload = body ? JSON.parse(body) : {};
+        const data = { groupId: parts[3], itemId: parts[5], lang: url.searchParams.get('lang'), term: payload.term || url.searchParams.get('term') };
+        detailRequests.push({ method: req.method, path: url.pathname, query: Object.fromEntries(url.searchParams), body: payload });
+        res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ data }));
+      });
+    } else if (url.pathname === '/page-only') {
       res.writeHead(200, { 'content-type': 'text/html' });
       res.end(`<!doctype html><title>Example static inventory</title><h1>Static inventory</h1>
         <ul id="rows"><li class="item"><a class="${renamedPageField ? 'heading' : 'title'}" href="/items/1">Example first</a></li><li class="item"><a class="${renamedPageField ? 'heading' : 'title'}" href="/items/2">Example second</a></li></ul><p id="empty" hidden>No items</p>
@@ -351,6 +360,47 @@ try {
   assert.ok(postRequests.some(entry => entry.path === '/graphql' && entry.data.variables?.keyword === 'Example authored'));
   assert.equal((await cli('exploration.trace', { taskId: postTaskId })).data.structuralOnly, true);
   passed('three authored JSON/form/GraphQL read queries, new helper, real validation, installation and ordinary calls');
+
+  const dynamicTaskId = (await cli('exploration.start', { ...args, requestId: 'example-dynamic-paths' })).data.taskId;
+  await settle(dynamicTaskId);
+  await cli('browser.bind', { session: 'acceptance', tabId });
+  await browserCall('eval', { expression: "Promise.all([fetch('/api/groups/101/items/201?lang=en&term=Example'),fetch('/api/groups/101/items/201/query?lang=en',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({term:'Example'})})]).then(()=>true)" });
+  await cli('exploration.collect', { taskId: dynamicTaskId }); await settle(dynamicTaskId);
+  const dynamicEvidence = (await cli('exploration.evidence', { taskId: dynamicTaskId })).data.candidates;
+  const pathParameters = [{ segmentIndex: 2, name: 'groupId', description: 'Public group identifier' }, { segmentIndex: 4, name: 'itemId', description: 'Public item identifier' }];
+  const dynamicPlan = { tools: ['GET', 'POST'].map((method, i) => ({ name: `detail_query_${i}`, risk: 'read', sourceApiKind: 'list',
+    sourceApiIndexes: [dynamicEvidence.findIndex(item => item.method === method && item.url.includes('/api/groups/:id/items/:id'))], pathParameters, readReason: 'Queries public item details; no mutation.' })) };
+  assert.ok(dynamicPlan.tools.every(tool => tool.sourceApiIndexes[0] >= 0));
+  const dynamicDraft = (await cli('exploration.generate', { taskId: dynamicTaskId, plan: dynamicPlan })).data;
+  assert.equal((await cli('exploration.validate', { taskId: dynamicTaskId }, false)).error.code, 'VERIFICATION_REQUIRED');
+  const dynamicCases = [{ id: 'one', args: { groupId: '000101', itemId: 'example one?#', lang: 'en', term: 'Example first' } },
+    { id: 'two', args: { groupId: '000102', itemId: 'example-中文', lang: 'zh', term: 'Example second' } }].map(item => ({ ...item,
+      expect: { equals: Object.fromEntries(Object.entries(item.args).map(([key, value]) => ['data.data.' + key, value])) } }));
+  for (const tool of dynamicDraft.toolNames) {
+    const current = (await cli('exploration.verification-read', { taskId: dynamicTaskId, tool })).data;
+    await cli('exploration.verification-write', { taskId: dynamicTaskId, tool, expectedHash: current.hash, cases: dynamicCases });
+  }
+  await cli('exploration.validate', { taskId: dynamicTaskId });
+  const dynamicValidation = await settle(dynamicTaskId);
+  assert.equal(dynamicValidation.status, 'review_ready', JSON.stringify(dynamicValidation));
+  assert.deepEqual(dynamicValidation.runtimeValidation.executionSummary, { attempted: 4, passed: 4, failed: 0, skipped: 0 });
+  const dynamicReview = (await cli('exploration.review', { taskId: dynamicTaskId })).data;
+  await cli('exploration.install', { taskId: dynamicTaskId, reviewId: dynamicReview.reviewId, confirmed: true });
+  assert.equal((await settle(dynamicTaskId)).status, 'installed');
+  for (const tool of dynamicDraft.toolNames) for (const test of dynamicCases) {
+    const result = await cli(tool, test.args);
+    assert.deepEqual(result.data.data, test.args);
+  }
+  const beforeInvalid = detailRequests.length;
+  const unsafePath = await cli(dynamicDraft.toolNames[0], { ...dynamicCases[0].args, itemId: '../delete' }, false);
+  assert.equal(unsafePath.ok, false); assert.equal(unsafePath.error.code, 'INVALID_PATH_PARAMETER');
+  assert.equal(detailRequests.length, beforeInvalid);
+  for (const request of detailRequests.slice(2)) {
+    assert.ok(!Object.hasOwn(request.query, 'itemId') && !Object.hasOwn(request.query, 'groupId'));
+    assert.ok(!Object.hasOwn(request.body, 'itemId') && !Object.hasOwn(request.body, 'groupId') && !Object.hasOwn(request.body, 'lang'));
+  }
+  await record('dynamic-path-validation', dynamicValidation);
+  passed('GET/POST dynamic paths preserve leading zeros and Unicode, separate query/body fields, execute varying IDs and reject traversal without requests');
 
   // A real response-schema change makes the installed command's historical
   // output contract fail. Repair its mapping without changing any sibling.

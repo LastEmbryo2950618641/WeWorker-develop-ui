@@ -305,3 +305,16 @@ npm run test:exploration:browser --prefix webcli -- \
 - CLI/Bridge bundle、打包 CLI 的 observe 帮助、公开配置、21 个修改/新增 JS 文件语法、git diff --check 通过。npm pack dry-run 583 文件，含 exploration-page.js、扩展 page-source.js 和新 Skill；预打包日志写在 JSON 前，解析报告时需跳过 prepare 日志。公开配置脚本位于仓库根 scripts/check-public-config.mjs，不在 weworker/scripts。已有可选列映射资源缺失提示未改。
 - source Bridge/用户扩展已具备本轮页面能力；后续仍先用 doctor、tabs、list 查询当前状态，不假定旧 PID/tabId。Chrome 重载后身份可能失效，应重新选择绑定；不要终止未知进程。Python 相对功能起点 `af8e082` 差异为零，未碰其环境、测试、生命周期或持久数据。未推送、未开 PR。
 - 下一步仍是完整 OpenCLI 对齐：INTERCEPT/策略回退、动态路径/CSRF/签名、写命令语义与验证、多步 UI/复杂 frame/Shadow DOM、多连接、下载/网络流、知识修订、UI 共用服务及独立 Codex/Claude 新对话验收。当前页面策略是阶段成果，目标保持 active；不要把这一批测试通过当作全部目标完成。
+
+### 2026-10-17：API 动态路径参数
+
+- 上一阶段代码与记录已提交为 `7e1e899`，本轮从该干净检查点继续。上轮属于有效进展；本轮目标保留完整 OpenCLI 对齐，优先补 API 详情地址中的动态路径。分支和上游整合基线未变。
+- 新增 generation-harness/path-parameters.js，plan.pathParameters 使用 segmentIndex/name/description，索引按 pathname 去掉开头 `/` 后分段计数。每个脱敏 :id 必须绑定，也允许显式参数化已观察的 slug；名称与 query/body 键不能冲突，须填写 readReason。只有动态端点又未提供 plan 时返回 PATH_PLAN_REQUIRED，默认自动计划不猜路径参数。
+- shared plan binding 将元数据附在所选 candidate 副本上，生成命令内联解析函数，不修改共享 runtime 文件。schema 将路径参数声明为必填字符串，无捕获值默认参数；保留前导零、按单段编码，拒绝斜杠、百分号、控制字符和 dot traversal。路径参数不会进入 query/body；已观察 query 键回到 URL，其余参数继续作为查询或请求体。静态路径、已有包及其他命令保留机制不变。
+- 每个动态命令至少两组不同路径参数组合；不要求每个参数都变化，避免只有一个授权父对象时无法测试两个子对象。作者应通过返回 ID/字段精确 equals 确认效果，不能只检查非空。知识中的命令新增 pathParameters，trace 也提供映射。repair 计划和验证使用相同约束；不把历史用例当当前成功证据。
+- 自动化：新增完整/重复/冲突路径绑定、编码/前导零、路径与 query/body 分离、非法值拦截回归；服务验证生成 schema、无捕获 ID、缺失/重复验证组合拒绝及知识保存。全量 102 文件/1090 项通过；8 个修改/新增 JS 文件语法与 git diff --check 通过。
+- 隔离真实 Chromium 全流程 23 项通过。在既有实例上用实际 browser.eval 触发 GET 和 JSON POST 详情请求，collect 得到两个动态结构端点，显式计划生成两个命令；四组不同 ID、前导零、中文及 ?/# 的精确输出断言通过。安装后四次普通 CLI 调用返回对应 ID/query/body；检查实际服务器请求，路径参数没有被重复发送。`../delete` 返回 INVALID_PATH_PARAMETER，服务器请求计数不变。
+- 首次新增验收复用了已由生命周期测试释放的 browser session，按实际状态重新 bind 后继续。随后非法参数虽然阻止了请求，但抛错经旧调用链缺少统一 ok 字段；生成命令改为返回 `{ok:false,error:{code,message}}`，完整重跑通过。没有把错误改成空结果或忽略断言。
+- CLI/Bridge 构建、公开配置通过；npm pack dry-run 584 文件，包含新的 generation-harness/path-parameters.js 和更新 Skill。构建/pack 与依赖生成资产的测试顺序执行；已有可选列映射资源警告不变，无依赖/lockfile 变化。
+- 真实用户 Chrome 的 B 站 API/DOM 验收仍以上一阶段为证据；本轮动态路径使用隔离 loopback 公开占位站点，没有在 B 站虚构不存在的动态详情接口。用户 source Bridge 仍运行上一阶段已确认进程，新能力在隔离实例和构建产物验证；下一次需要新功能时先核实进程身份再更新。扩展代码本轮无变化，不需用户重装。
+- Python 相对 `af8e082` 差异为零，未碰其环境/生命周期/测试/数据；未推送、未创建 PR。下一步仍包括 INTERCEPT、CSRF/签名、写命令、动态页面路由/多步 UI、知识修订、多连接/复杂浏览器能力、UI 共用服务及独立 Agent 验收；完整目标继续 active。

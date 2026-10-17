@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { resolveAdaptersDir } from './paths.js';
 import { bindGenerationPlan } from './generation-harness/plan-binding.js';
+import { resolvePathRequest } from './generation-harness/path-parameters.js';
 import { draftCommandId, resolveGeneratedPackageRoot, writePackageDraft } from './generation-harness/package-draft.js';
 import {
     buildApiSourceEvidence,
@@ -1327,13 +1328,14 @@ function resolveGenerationSource(candidate, sourceKind) {
 }
 function buildRequestInvokeLine(input) {
     const method = (input.method || 'POST').toUpperCase();
+    const endpoint = input.urlRef || serializeJsValue(input.transport === 'get_query' ? stripRequestUrlQuery(input.url) : input.url);
     if (input.transport === 'get_query') {
-        return `    return fetchGet(${serializeJsValue(stripRequestUrlQuery(input.url))}, ${input.payloadRef});`;
+        return `    return fetchGet(${endpoint}, ${input.payloadRef});`;
     }
     if (input.transport === 'post_form') {
-        return `    return postForm(${serializeJsValue(input.url)}, ${input.payloadRef});`;
+        return `    return postForm(${endpoint}, ${input.payloadRef});`;
     }
-    return `    return sendJson(${serializeJsValue(input.url)}, ${serializeJsValue(method)}, ${input.payloadRef});`;
+    return `    return sendJson(${endpoint}, ${serializeJsValue(method)}, ${input.payloadRef});`;
 }
 function buildActionToolDescription(candidate, transport) {
     if (transport === 'get_query') {
@@ -1376,11 +1378,24 @@ function buildListToolModule(input) {
         ...((candidate.sourceEvidence?.bodyKeys) || [])
     ].filter((key)=>!isSensitiveKnowledgeKey(key));
     const schema = applySemanticParameterUiHints(buildCapturedFieldsSchema(defaults, '列表请求中的默认字段', parameterDescriptions, parameterNames), parameterUiHints);
+    const pathParameters = candidate.pathParameters || [];
+    for (const { name, description } of pathParameters) schema.properties[name] = { type: 'string', minLength: 1, maxLength: 512, description };
+    if (pathParameters.length) schema.required = [...new Set([...(schema.required || []), ...pathParameters.map(item => item.name)])];
+    const endpoint = pathParameters.length ? new URL(candidate.url) : null;
+    // Replace authored slots before serializing to avoid retaining an observed
+    // slug when the Agent parameterizes a non-numeric identifier.
+    if (endpoint) {
+        const segments = endpoint.pathname.slice(1).split('/');
+        for (const binding of pathParameters) segments[binding.segmentIndex] = ':id';
+        endpoint.pathname = '/' + segments.join('/');
+    }
+    const pathSetup = pathParameters.length ? `    let request;\n    try { request = (${resolvePathRequest.toString()})(${serializeJsValue(endpoint.href)}, ${serializeJsValue(pathParameters)}, params); }\n    catch (error) { return { ok: false, error: { code: error.code || 'INVALID_PATH_PARAMETER', message: error.message } }; }\n` : '';
     const invokeLine = buildRequestInvokeLine({
         url: candidate.url,
+        ...(pathParameters.length ? { urlRef: 'request.url' } : {}),
         method: candidate.method,
         transport,
-        payloadRef: 'params'
+        payloadRef: pathParameters.length ? 'request.params' : 'params'
     });
     return createGeneratedToolModule(siteKey, toolName, `  async function ${functionName}(args = {}) {
     const params = {
@@ -1388,7 +1403,7 @@ function buildListToolModule(input) {
       ...(args || {}),
     };
 
-${invokeLine}
+${pathSetup}${invokeLine}
   }`, buildGeneratedToolDefinitionSource({
         toolName,
         description,
