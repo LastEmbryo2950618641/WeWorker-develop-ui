@@ -37,6 +37,7 @@ const EXTENSION_CAPABILITIES = [
   'generation_harness_v1',
   'runtime_validation_v1',
   'browser_commands_v1',
+  'strict_output_contract_v1',
 ];
 
 function buildExtensionHello(extra = {}) {
@@ -7759,6 +7760,7 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
         if (preflightErrors.length > 0) {
           toolResults.push({
             toolName,
+            ...(testCase.caseId ? { caseId: testCase.caseId } : {}),
             attempted: false,
             passed: false,
             skipReason: testCase?.skipReason || 'preflight_contract_mismatch',
@@ -7769,6 +7771,7 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
         if (!testCase?.execute || risk.level !== 'read' || Number(risk.confidence || 0) < 0.75) {
           toolResults.push({
             toolName,
+            ...(testCase.caseId ? { caseId: testCase.caseId } : {}),
             attempted: false,
             passed: true,
             skipReason: testCase?.skipReason || 'tool_is_not_high_confidence_read_only',
@@ -7795,6 +7798,7 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
           const contractResult = validateGenerationPreviewOutput(output, testCase.contract || {});
           toolResults.push({
             toolName,
+            ...(testCase.caseId ? { caseId: testCase.caseId } : {}),
             attempted: true,
             durationMs: Date.now() - startedAt,
             passed: contractResult.passed,
@@ -7806,6 +7810,7 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
         } catch (error) {
           toolResults.push({
             toolName,
+            ...(testCase.caseId ? { caseId: testCase.caseId } : {}),
             attempted: true,
             durationMs: Date.now() - startedAt,
             passed: false,
@@ -7826,7 +7831,7 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
       ...toolResults.flatMap((item) => (item.warnings || []).map((warning) => ({ ...warning, toolName: item.toolName }))),
     ];
     for (const failure of failedToolResults) {
-      for (const error of failure.errors || []) errors.push({ ...error, toolName: failure.toolName });
+      for (const error of failure.errors || []) errors.push({ ...error, toolName: failure.toolName, ...(failure.caseId ? { caseId: failure.caseId } : {}) });
     }
     return {
       passed: errors.length === 0,
@@ -7924,12 +7929,14 @@ async function refreshAdapterTabs(adapterId) {
   }
 
   for (const tab of matchedTabs) {
-    clearTabDomainRegistration(tab.id);
-    clearTabInjectedAdapters(tab.id);
-    clearBadge(tab.id);
-    await sendTabMessage(tab.id, { type: "clear_tools", siteKey: adapterId });
-    await chrome.tabs.reload(tab.id);
-    await waitForTabLoad(tab.id, 15000);
+    await getHostAdapterRuntime().exclusive(tab.id, async () => {
+      clearTabDomainRegistration(tab.id);
+      clearTabInjectedAdapters(tab.id);
+      clearBadge(tab.id);
+      await sendTabMessage(tab.id, { type: "clear_tools", siteKey: adapterId });
+      await chrome.tabs.reload(tab.id);
+      await waitForTabLoad(tab.id, 15000);
+    });
   }
 
   for (const tab of matchedTabs) {

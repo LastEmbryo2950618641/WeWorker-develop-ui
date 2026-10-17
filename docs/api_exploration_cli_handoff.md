@@ -263,3 +263,14 @@ npm run test:exploration:browser --prefix webcli -- \
 - 验证：WebCLI 全量 98 文件/1069 项通过；Extension 聚焦 5 文件/42 项通过；WebCLI/Bridge bundle、公开配置、git diff --check 通过；npm pack dry-run 577 文件，新浏览器模块、tab 锁、extension 实现和 browser Skill 均在包中。无新增依赖/lockfile 变化。已有可选列映射资源缺失提示未处理。
 - 剩余工作：完整策略生成（DOM/UI/INTERCEPT 等）、动态路径、写工具语义与验证、fixtures/站点知识/安装后修复、复杂 frame/Shadow DOM/多连接、下载/持续网络流、外部 CLI/Electron/CDP、UI 统一和独立 Codex/Claude 新会话验收。不能宣称全面对齐或任意站点可靠性。
 - 接手先核对 git status/HEAD、本文及能力台账。source Bridge 可用 browser.doctor 读状态，未知进程不可直接复用/终止。同步上游仍走“上游 → api-exploration-base → api-exploration-cli”，本轮没有改变同步基线。Python 相对 `af8e082` 差异为零；未推送、未创建 PR。
+
+### 2026-10-17：精确验证与站点知识
+
+- 操作前 HEAD `3bdc4a5`；分支及上游同步基线未变。
+- 新增 verification-read/write：每工具 1–10 组显式参数和精确输出路径、类型、非空、格式、值、行数断言；旧插件缺 strict_output_contract_v1 时拒绝，避免静默忽略。参数禁止凭据字段，错误只返回 caseId/path/code，不含响应值。草稿或 cases 改动后重新验证。
+- 修复扩展单次只运行前五组的限制，共享 validator 分批发送并聚合全部结果。真实六组验证中第六组故意失败能阻止安装，修正后六组全部通过。
+- 新增 knowledge-read/save，保存已验证命令的 cases、选中端点的结构证据、字段含义和备注；私有文件、hash 防覆盖，按 30 天及当前安装包摘要标记过期，每条记录保留独立验证时间。字段冲突拒绝而不覆盖，修订机制待做。旧记录是历史数据，不是 Agent 指令。
+- 真实验收发现 Adapter 目录刷新重载页面会打断刚安装后的普通调用（Frame removed）。刷新与 managed page 调用改为同一 per-tab 队列，不重放业务 handler；增加顺序、失败释放、跨页独立回归。
+- 验证：WebCLI 全量 100 文件/1077 项通过；后续能力守卫与日志修改聚焦 3 文件/20 项通过；扩展两组共 60 项通过；隔离真实 Chromium 全流程 19 项通过。CLI/Bridge 构建、公开配置、差异检查通过。npm pack dry-run 580 文件，含两个新增模块和探索 Skill；无新依赖或 lockfile 变化。
+- Python 相对 `af8e082` 差异为零。真实用户 Chrome 仍运行上一阶段 source Bridge/插件，当前新 cases/knowledge 能力已在隔离真实浏览器验证；使用用户页前需核实自建服务身份并更新扩展。不可把隔离验收写成用户 Chrome 新能力已验证。
+- 下一步：已安装命令的定向修复，确保未选中的命令与共享文件保持原样，再补其他策略。完整 OpenCLI 对齐仍进行中；未推送、未开 PR。

@@ -249,12 +249,40 @@ try {
   assert.equal(validated.status, 'review_ready', JSON.stringify(validated));
   assert.deepEqual(validated.runtimeValidation.executionSummary, { attempted: 1, passed: 1, skipped: 0, failed: 0 });
   passed('real browser preview validation');
+  const verificationTool = generated.data.toolNames[0];
+  const verificationCases = Array.from({ length: 6 }, (_, index) => ({ id: `page-${index + 1}`,
+    args: { q: 'Example verified query', page: index + 1, limit: 2 },
+    expect: { requiredPaths: ['data.data.items.*.id'], types: { 'data.data.items.*.name': 'string' },
+      patterns: { 'data.data.items.*.id': '^example-[0-9]+$' }, notEmpty: ['data.data.items.*.name'],
+      equals: { 'data.data.page': index + 1 }, rowCount: { path: 'data.data.items', min: 1, max: 2 } } }));
+  async function setVerification(cases) {
+    const current = (await cli('exploration.verification-read', { taskId, tool: verificationTool })).data;
+    return cli('exploration.verification-write', { taskId, tool: verificationTool, expectedHash: current.hash, cases });
+  }
+  const badCases = structuredClone(verificationCases); badCases[5].expect.equals['data.data.page'] = 99;
+  await setVerification(badCases); await cli('exploration.validate', { taskId });
+  const wrongExpectation = await settle();
+  assert.equal(wrongExpectation.status, 'draft');
+  assert.deepEqual(wrongExpectation.runtimeValidation.executionSummary, { attempted: 6, passed: 5, skipped: 0, failed: 1 });
+  assert.ok(wrongExpectation.runtimeValidation.errors.some(error => error.code === 'OUTPUT_VALUE_MISMATCH' && error.caseId === 'page-6'));
+  await setVerification(verificationCases); await cli('exploration.validate', { taskId });
+  const verifiedCases = await settle(); assert.equal(verifiedCases.status, 'review_ready');
+  assert.deepEqual(verifiedCases.runtimeValidation.executionSummary, { attempted: 6, passed: 6, skipped: 0, failed: 0 });
+  passed('six authored verification cases execute in batches; semantic failure blocks installation until repaired');
   const review = (await cli('exploration.review', { taskId })).data; await record('review', review);
   assert.equal((await cli('exploration.install', { taskId, reviewId: review.reviewId }, false)).error.code, 'CONFIRMATION_REQUIRED');
   assert.equal((await cli('exploration.install', { taskId, reviewId: 'stale', confirmed: true }, false)).error.code, 'STALE_REVIEW');
   await cli('exploration.install', { taskId, reviewId: review.reviewId, confirmed: true });
   assert.equal((await settle()).status, 'installed');
   passed('review-bound installation into isolated adapter root');
+  const savedKnowledge = (await cli('exploration.knowledge-read', { site: review.name })).data;
+  await cli('exploration.knowledge-save', { taskId, expectedHash: savedKnowledge.hash,
+    fields: { 'items.id': { meaning: 'Example item identifier', source: 'Observed public example list' } }, notes: 'Keyword and six pages verified through ordinary read queries.' });
+  const knowledge = (await cli('exploration.knowledge-read', { site: review.name })).data;
+  assert.equal(knowledge.stale, false);
+  assert.equal(knowledge.knowledge.commands[verificationTool].cases.length, 6);
+  assert.equal((await cli('exploration.verification-read', { taskId, tool: verificationTool })).data.cases.length, 6);
+  passed('verified endpoint, field and authored cases persist as site knowledge after installation');
   const output = await cli(generated.data.toolNames[0], { q: 'Example final', page: 2, limit: 2 });
   await record('ordinary-call', output);
   assert.ok(apiRequests.some(request => request.q === 'Example final' && request.page === 2), JSON.stringify(output));
@@ -330,6 +358,9 @@ try {
   assert.equal((await cli('exploration.start', { ...args, requestId: 'example-restart' })).data.taskId, interruptedId);
   assert.equal((await cli('exploration.get', { taskId })).data.status, 'installed');
   assert.equal((await cli('exploration.get', { taskId: cancelledId })).data.status, 'cancelled');
+  const restoredKnowledge = (await cli('exploration.knowledge-read', { site: review.name })).data;
+  assert.equal(restoredKnowledge.knowledge.commands[verificationTool].cases.length, 6);
+  assert.ok(restoredKnowledge.staleReasons.includes('installed_package_changed_or_unavailable'));
   // Allow the extension's already-dispatched capture to finish before explicit resumption.
   await delay(5000);
   await cli('exploration.collect', { taskId: interruptedId });

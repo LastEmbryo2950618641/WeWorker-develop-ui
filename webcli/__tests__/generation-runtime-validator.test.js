@@ -103,3 +103,26 @@ describe('preview runtime validator', () => {
     expect(requestExtension.mock.calls[1][0].testCases).toHaveLength(restrictToExpectedTools ? 1 : 2);
   });
 });
+
+it('executes every case beyond the five-case extension limit and accumulates later failures', async () => {
+  const dir = makeTmpDir('example-batched-preview-');
+  fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ id: 'example.com', match: ['example.com'], support_files: [] }));
+  fs.writeFileSync(path.join(dir, 'index.js'), 'window.__webmcpRegister({tools: []});');
+  const toolNames = Array.from({ length: 7 }, (_, i) => `example.com.query_${i}`);
+  const registration = { passed: true, tools: toolNames.map(name => ({ name, parameters: { type: 'object', properties: {} } })) };
+  const requestExtension = vi.fn(async message => !message.testCases ? registration : {
+    passed: !message.testCases.some(test => test.toolName.endsWith('_6')),
+    executionSummary: { attempted: message.testCases.length, passed: message.testCases.filter(test => !test.toolName.endsWith('_6')).length, failed: message.testCases.filter(test => test.toolName.endsWith('_6')).length, skipped: 0 },
+    errors: message.testCases.some(test => test.toolName.endsWith('_6')) ? [{ code: 'EXAMPLE_LAST_CASE_FAILURE' }] : [],
+    toolResults: message.testCases.map(test => ({ toolName: test.toolName, attempted: true })),
+  });
+  const result = await createPreviewRuntimeValidator({ requestExtension })({
+    run: { id: 'example-batches', snapshot: { siteKey: 'example.com', input: { tabId: 7 } }, setArtifact() {} },
+    draft: { adapterDir: dir, toolNames }, signal: new AbortController().signal,
+    plan: { tools: toolNames.map(name => ({ name, risk: 'read' })) },
+    memory: { listApiCandidates: toolNames.map((_, i) => ({ url: `https://example.com/query/${i}`, responsePreview: '{"items":[]}' })) },
+  });
+  expect(requestExtension.mock.calls.filter(([message]) => message.testCases).map(([message]) => message.testCases.length)).toEqual([5, 2]);
+  expect(result.executionSummary).toEqual({ attempted: 7, passed: 6, failed: 1, skipped: 0 });
+  expect(result.passed).toBe(false); expect(result.errors[0].code).toBe('EXAMPLE_LAST_CASE_FAILURE');
+});

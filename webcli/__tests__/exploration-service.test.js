@@ -23,7 +23,7 @@ function setup(extra = {}) {
   const requestExtension = vi.fn(async message => message.type === 'exploration_list_tabs' ? { tabs: [{ id: 7, url: 'https://example.com/list?token=placeholder-secret', title: 'placeholder-person' }] } : capture);
   const runtimeValidator = vi.fn(async () => ({ passed: true, executionSummary: { attempted: 1, passed: 1, failed: 0, skipped: 0 } }));
   const options = { rootDir: path.join(root, 'tasks'), paths, requestExtension, runtimeValidator,
-    capabilities: () => ({ connected: true, capabilities: ['passive_exploration_v1'] }), ...extra };
+    capabilities: () => ({ connected: true, capabilities: ['passive_exploration_v1', 'strict_output_contract_v1'] }), ...extra };
   return { root, paths, requestExtension, runtimeValidator, options, service: new ExplorationService(options) };
 }
 async function start(service, requestId = 'example-request') {
@@ -274,4 +274,35 @@ it('adds authored helpers without overwriting files, invalidates approval and ex
   const trace = (await f.service.execute('trace', { taskId })).data;
   expect(trace.files).toContain(helper.file); expect(trace.structuralOnly).toBe(true);
   expect(JSON.stringify(trace)).not.toMatch(/window.exampleHelper|placeholder-secret|placeholder-person/);
+});
+
+it('persists hash-bound authored verification cases and invalidates previous approval', async () => {
+  const f = setup(); const taskId = await draft(f.service);
+  const tool = (await f.service.execute('get', { taskId })).data.toolNames[0];
+  const before = (await f.service.execute('verification-read', { taskId, tool })).data;
+  const cases = [{ id: 'example-page', args: { page: 2 }, expect: { rowCount: { path: 'data.items', min: 1 } } }];
+  expect((await f.service.execute('verification-write', { taskId, tool, expectedHash: 'stale', cases })).error.code).toBe('STALE_VERIFICATION');
+  expect((await f.service.execute('verification-write', { taskId, tool, expectedHash: before.hash, cases })).ok).toBe(true);
+  await f.service.execute('validate', { taskId }); await f.service.jobs.get(taskId);
+  expect(f.runtimeValidator.mock.calls[0][0].verification[tool][0].args).toEqual({ page: 2 });
+  const restored = new ExplorationService(f.options);
+  const current = (await restored.execute('verification-read', { taskId, tool })).data;
+  expect(current.cases[0].id).toBe('example-page');
+  const oldExtension = new ExplorationService({ ...f.options, capabilities: () => ({ connected: true, capabilities: ['passive_exploration_v1'] }) });
+  expect((await oldExtension.execute('validate', { taskId })).error.code).toBe('CAPABILITY_UNAVAILABLE');
+  expect((await oldExtension.execute('verification-write', { taskId, tool, expectedHash: current.hash, cases })).error.code).toBe('CAPABILITY_UNAVAILABLE');
+  await restored.execute('verification-write', { taskId, tool, expectedHash: current.hash, cases });
+  expect((await restored.execute('review', { taskId })).error.code).toBe('VALIDATION_REQUIRED');
+});
+
+it('promotes only validated structural evidence and authored cases into site knowledge', async () => {
+  const f = setup(); const taskId = await draft(f.service);
+  const known = (await f.service.execute('knowledge-read', { site: 'example.com' })).data;
+  expect((await f.service.execute('knowledge-save', { taskId, expectedHash: known.hash })).error.code).toBe('VALIDATION_REQUIRED');
+  await f.service.execute('validate', { taskId }); await f.service.jobs.get(taskId);
+  const saved = await f.service.execute('knowledge-save', { taskId, expectedHash: known.hash, notes: 'Example query verified.' });
+  expect(saved.ok).toBe(true); expect(saved.data.knowledge.endpoints).toHaveLength(1);
+  expect(JSON.stringify(saved)).not.toMatch(/placeholder-person|placeholder-id|placeholder-secret/);
+  const restored = new ExplorationService(f.options);
+  expect((await restored.execute('knowledge-read', { site: 'example.com' })).data.knowledge.notes[0].text).toBe('Example query verified.');
 });

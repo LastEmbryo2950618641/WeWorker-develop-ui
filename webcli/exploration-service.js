@@ -14,6 +14,9 @@ import { createPreviewRuntimeValidator } from './generation-harness/runtime-vali
 import { describeGeneratedInstall } from './generation-harness/install-review.js';
 import { createAdapterPublisher } from './generation-harness/adapter-publisher.js';
 import { TabOperationLocks } from './tab-operation-locks.js';
+import { normalizeVerificationCases } from './exploration-verification.js';
+import { ExplorationKnowledge } from './exploration-knowledge.js';
+import { buildAdapterCatalog } from './adapter-catalog.js';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const active = new Set(['collecting', 'validating', 'installing']);
@@ -28,6 +31,7 @@ export class ExplorationService {
     this.root = rootDir || path.join(this.paths.workspaceDir, 'exploration');
     assertManagedDirectory(this.root);
     fs.mkdirSync(this.root, { recursive: true, mode: 0o700 });
+    this.knowledge = new ExplorationKnowledge(path.join(this.root, 'knowledge'));
     this.request = requestExtension;
     this.tabLocks = tabLocks;
     this.capabilities = capabilities;
@@ -65,7 +69,7 @@ export class ExplorationService {
   summary(run) {
     const next = { collecting: ['get', 'cancel'], evidence_ready: ['evidence', 'actions', 'probe', 'generate', 'collect'], draft: ['draft-read', 'draft-write', 'validate'],
       validating: ['get', 'cancel'], installing: ['get'], review_ready: ['review', 'install'], failed: ['evidence', 'collect', 'draft-read', 'validate'], interrupted: ['get', 'collect', 'validate'] };
-    return { taskId: run.taskId, status: run.status, goal: run.goal, tabId: run.tabId, site: run.origin,
+    return { taskId: run.taskId, status: run.status, goal: run.goal, tabId: run.tabId, site: run.origin, adapter: run.siteKey,
       createdAt: run.createdAt, updatedAt: run.updatedAt, candidateCount: run.candidates.length,
       toolNames: run.draft?.toolNames || [], validation: run.validation || null, runtimeValidation: run.runtimeSummary || null,
       error: run.error || null, nextActions: (next[run.status] || []).map(name => `exploration.${name}`) };
@@ -124,6 +128,11 @@ export class ExplorationService {
     if (command === 'capabilities') return { ...this.capabilities(), desktopRequired: false, modelRequired: false, author: 'calling-agent', schemaVersion: 1 };
     if (command === 'tabs') return { tabs: await this.tabs() };
     if (command === 'list') return { tasks: [...this.runs.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map(run => this.summary(run)) };
+    if (command === 'knowledge-read') {
+      const site = textArg(args.site, 'site', 128);
+      const activePackage = buildAdapterCatalog({ paths: this.paths }).effective.find(item => item.name === site);
+      return this.knowledge.read(site, { activeDigest: activePackage?.digest || null });
+    }
     if (command === 'start') {
       const requestId = textArg(args.requestId, 'requestId', 100);
       const goal = textArg(args.goal, 'goal');
@@ -154,6 +163,16 @@ export class ExplorationService {
     const run = this.runs.get(taskId);
     if (!run) throw fail('TASK_NOT_FOUND', 'Task not found; use exploration.list.');
     if (command === 'get') return this.summary(run);
+    if (command === 'knowledge-save') {
+      if (!['review_ready', 'installed'].includes(run.status) || !run.runtimeDigest || readPackageDirectory(run.draft.adapterDir).digest !== run.runtimeDigest) throw fail('VALIDATION_REQUIRED', 'Knowledge requires a successfully validated current draft.');
+      const indexes = [...new Set((run.plan?.tools || []).flatMap(tool => tool.sourceApiIndexes || []))];
+      const endpoints = indexes.map(index => clone(run.candidates[index])).filter(Boolean);
+      const verifiedAt = run.verifiedAt || run.updatedAt;
+      const commands = Object.fromEntries(run.draft.toolNames.map(tool => [tool, { verifiedAt, packageDigest: run.runtimeDigest,
+        cases: clone(run.verification?.[tool] || []) }]));
+      return this.knowledge.save(run.siteKey, { expectedHash: args.expectedHash, verifiedAt, packageDigest: run.runtimeDigest,
+        endpoints, commands, notes: args.notes, fields: args.fields });
+    }
     if (command === 'trace') return { ...this.summary(run), events: clone(run.events),
       evidence: run.candidates.map(({ id, url, method, status, risk, requestSemantics }) => ({ id, url, method, status, risk, requestSemantics })),
       plannedTools: (run.plan?.tools || []).map(({ name, risk, sourceApiKind, sourceApiIndexes }) => ({ name, risk, sourceApiKind, sourceApiIndexes })),
@@ -172,7 +191,7 @@ export class ExplorationService {
     }
     if (command === 'install' && run.status === 'installed') return this.summary(run);
     if (active.has(run.status)) throw fail('TASK_BUSY', 'Wait for the current operation or cancel the task.');
-    if (terminal.has(run.status)) throw fail('INVALID_STATE', 'This task is terminal. Start a new task.');
+    if (terminal.has(run.status) && !['draft-read', 'verification-read'].includes(command)) throw fail('INVALID_STATE', 'This task is terminal. Start a new task.');
     if (['collect', 'actions', 'probe'].includes(command)) {
       if (run.draft) throw fail('INVALID_STATE', 'Start a new task to change source evidence after drafting.');
     }
@@ -207,6 +226,19 @@ export class ExplorationService {
     }
     if (command === 'generate') return this.generate(run, args.plan);
     if (!run.draft) throw fail('INVALID_STATE', 'Generate a draft first.');
+    if (command === 'verification-read' || command === 'verification-write') {
+      const tool = textArg(args.tool, 'tool', 200);
+      if (!run.draft.toolNames.includes(tool)) throw fail('INVALID_ARGUMENT', 'Select a tool generated by this task.');
+      const cases = run.verification?.[tool] || [];
+      if (command === 'verification-read') return { tool, cases: clone(cases), hash: hash(JSON.stringify(cases)) };
+      if (!this.capabilities().capabilities.includes('strict_output_contract_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension to enable authored output assertions.');
+      if (args.expectedHash !== hash(JSON.stringify(cases))) throw fail('STALE_VERIFICATION', 'Cases changed; read their current hash before editing.');
+      const normalized = normalizeVerificationCases(args.cases);
+      run.verification = { ...run.verification, [tool]: normalized };
+      run.validation = null; run.runtimeSummary = null; run.runtimeDigest = null; run.review = null;
+      this.update(run, 'draft', 'Verification cases changed; validate again.');
+      return { tool, caseCount: normalized.length, hash: hash(JSON.stringify(normalized)) };
+    }
     if (command === 'draft-add') {
       const file = textArg(args.file, 'file', 200);
       if (!(file === 'guidance.md' || /^extension\/(?:internal|commands)\/[a-zA-Z0-9][a-zA-Z0-9_/-]*\.js$/.test(file)) || file.includes('..') || path.basename(file) === 'index.js') throw fail('INVALID_ARGUMENT', 'Add guidance.md or a non-index JavaScript file under extension/internal or extension/commands.');
@@ -337,6 +369,7 @@ export class ExplorationService {
   }
 
   validate(run) {
+    if (Object.keys(run.verification || {}).length && !this.capabilities().capabilities.includes('strict_output_contract_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating authored assertions.');
     this.assertTabAvailable(run.tabId, run.taskId);
     run.review = null; run.runtimeDigest = null; run.runtimeSummary = null;
     return this.launch(run, 'validating', async signal => {
@@ -345,20 +378,24 @@ export class ExplorationService {
       run.validation = validateAdapterDraft({ adapterDir: run.draft.adapterDir, expectedSiteKey: run.siteKey, expectedToolNames: run.draft.toolNames });
       if (!run.validation.passed) { this.update(run, 'draft', 'Static validation failed; inspect validation errors.'); return; }
       this.assertReadDraft(run);
-      const runtime = await this.runtimeValidator({ run: this.facade(run), draft: run.draft, signal, plan: run.plan, memory: run.memory, validation: run.validation });
+      const runtime = await this.runtimeValidator({ run: this.facade(run), draft: run.draft, signal, plan: run.plan, memory: run.memory, validation: run.validation, verification: run.verification });
       if (signal.aborted) return;
       await this.checkTab(run);
       if (signal.aborted) return;
       // Persist only verifier summaries, never observed result bodies/test inputs.
       const counts = runtime.executionSummary;
       run.runtimeSummary = { passed: runtime.passed === true, executionSummary: counts ? { attempted: counts.attempted, passed: counts.passed, skipped: counts.skipped, failed: counts.failed } : null,
-        errors: (runtime.errors || []).slice(0, 20).map(error => ({ code: String(error.code || 'VALIDATION_FAILED') })) };
-      const count = run.draft.toolNames.length;
+        errors: (runtime.errors || []).slice(0, 20).map(error => ({ code: String(error.code || 'VALIDATION_FAILED'),
+          ...(error.toolName ? { tool: String(error.toolName).slice(0, 200) } : {}),
+          ...(error.caseId ? { caseId: String(error.caseId).slice(0, 64) } : {}),
+          ...(error.path ? { path: String(error.path).slice(0, 200) } : {}) })) };
+      const count = run.draft.toolNames.reduce((total, name) => total + (run.verification?.[name]?.length || 1), 0);
       if (!runtime.passed || !counts || counts.attempted !== count || counts.passed !== count || counts.skipped !== 0 || counts.failed !== 0) {
         this.update(run, 'draft', 'Runtime validation incomplete; repair the draft or page state and validate again.'); return;
       }
       if (readPackageDirectory(run.draft.adapterDir).digest !== run.validation.packageDigest) throw fail('STALE_DRAFT', 'Draft changed during verification.');
       run.runtimeDigest = run.validation.packageDigest;
+      run.verifiedAt = new Date().toISOString();
       this.update(run, 'review_ready', 'Read tools passed validation. Review before installation.');
     });
   }

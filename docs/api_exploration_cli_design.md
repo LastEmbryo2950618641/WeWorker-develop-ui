@@ -38,6 +38,8 @@ Codex / Claude / 其他 CLI Agent + Skill
 | cancel | 停止后续阶段，丢弃迟到结果；已经派发的浏览器操作可能完成 |
 | generate | 默认最多两个 GET；Agent plan 支持 1–50 个读取工具及 JSON/form POST、GraphQL query，POST 必须有 readReason |
 | draft-read / draft-write / draft-add | 列文件、读取内容和 hash、按 expectedHash 修改现有文件，或新增 helper/command/guidance 文件 |
+| verification-read / verification-write | 按工具读写带 hash 的 1–10 组真实参数及精确输出断言；修改后重新验证 |
+| knowledge-read / knowledge-save | 按 Adapter 名读取历史知识；从验证成功的任务保存选中端点、字段含义、作者测试用例和备注 |
 | validate | 静态检查及真实浏览器只读预览验证 |
 | review / install | 展示当前权限/工具/版本差异；以当前 reviewId 和用户确认安装本地 Adapter |
 
@@ -79,14 +81,20 @@ browser 命令返回任务需要的页面数据，不保存到探索记录；网
 
 验证复用现有 static validator、preview runtime validator 和 publisher。所有目标工具必须真实执行且通过，不能跳过。独立探索开启 `restrictToExpectedTools`，仅生成目标进入执行计数；脚手架登录检查和保留的已有工具不计入目标跳过数。共享验证器默认行为不变。任务仅保存验证计数/错误码，不保存预览结果值。安装是本地行为，不上架市场，也不等于授权执行业务写操作。
 
+Agent 可以为最终命令输出声明 requiredPaths、types、notEmpty、patterns、equals 和带明确路径的 rowCount。断言从输出根开始，按每一行精确检查，不回退到相似字段；空列表的行级类型检查为空集，存在性和非空需求单独声明。测试输入必须由作者明确提供，不从流量复制凭据或用户值。修改 cases 同样使验证/审阅失效。扩展须声明 strict_output_contract_v1，旧插件明确拒绝；超过五组用例分批执行并汇总，某批失败不能被其他批掩盖。
+
+站点知识存于当前 profile 的 exploration/knowledge 中，与旧 UI 的记忆分开。只提升该计划选中的结构证据和作者 cases，附可选字段解释及备注，不保存捕获正文。记录使用内容 hash 防止覆盖并发更新，同字段的不同含义拒绝覆盖。30 天有效期按每条记录检查，安装包摘要变化另行标记 stale；知识只作线索，复用前仍要检查当前页面。验证过但未安装的包会显示当前安装摘要不匹配，这不表示验证失败。
+
+目录变化触发的页面刷新与 managed page 调用共用扩展侧队列，等待在途调用完成后才清除注册和重载，后续调用等待刷新结束。它不重试已经执行的业务 handler。
+
 ## 后续 UI 统一
 
 本轮独立命令不经过 TypeScript Backend。后续由 Backend 的薄适配层调用相同 Bridge 命令，使 API 探索页面、内置聊天工具与外部 Agent 共用任务状态和校验。UI 不需要启动 shell；不得借此改动 Python 网站探索agent。
 
 ## 验证与未完成范围
 
-具体命令和数量见交接日志。当前 WebCLI 全量 98 文件、1069 项通过。真实 Chromium + 未打包插件 + 独立 CLI/Bridge + loopback 示例站点 17 项通过，新增浏览器操作及三个 POST/GraphQL 工具闭环。用户指定的真实公共视频搜索页已完成采集、生成、修复、验证、增量安装和普通 CLI 搜索/分页，结果结构和页面变化通过；原始页面/响应未进入仓库。
+具体命令和数量见交接日志。当前 WebCLI 全量 100 文件、1077 项通过。真实 Chromium + 未打包插件 + 独立 CLI/Bridge + loopback 示例站点 19 项通过，包含浏览器操作、三个 POST/GraphQL 工具闭环、六组精确断言以及知识持久化。用户指定的真实公共视频搜索页已完成采集、生成、修复、验证、增量安装和普通 CLI 搜索/分页，结果结构和页面变化通过；原始页面/响应未进入仓库。
 
 验收脚本为 `webcli/scripts/verify-exploration-browser.mjs`；使用临时副本改变连接端口及 CLI 配置目录，生产协议和默认端口未改。只启动/停止脚本自己创建的服务和浏览器，Adapter 安装、任务和浏览器配置均隔离。Playwright 只用于测试浏览器启动与示例页面导航，探索/生成/验证/安装和业务调用均经过真实 CLI 与插件，不 mock 扩展传输、fetch 或验证器。
 
-待做：纯 DOM/拦截等策略生成、动态路径、写命令、安全语义 fixtures、站点知识与安装后修复；Codex/Claude 各一次全新独立对话验收、各平台安装包；API 探索 UI/旧聊天入口统一，以及能力台账中的其他差距。当前证据不代表任意 Agent 在任意站点上的生成质量已验证。
+待做：纯 DOM/拦截等策略生成、动态路径、写命令、知识冲突修订与安装后修复；Codex/Claude 各一次全新独立对话验收、各平台安装包；API 探索 UI/旧聊天入口统一，以及能力台账中的其他差距。当前证据不代表任意 Agent 在任意站点上的生成质量已验证。

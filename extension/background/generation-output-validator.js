@@ -1,4 +1,5 @@
 import { isApiResponseFailure } from './api-response-failure.mjs';
+import { verifyStrictOutput } from './strict-output-contract.js';
 
 const SENSITIVE_OUTPUT_KEY_RE = /api[_-]?key|authorization|cookie|credential|password|passwd|secret|session|ticket|token|csrf/i;
 
@@ -242,6 +243,7 @@ export function validateGenerationPreviewOutputV2(output, contract = {}) {
     }
   }
   errors.push(...validateFixture(businessOutput, contract.verificationFixture));
+  errors.push(...verifyStrictOutput(output, contract.authoredFixture));
   return {
     passed: errors.length === 0,
     errors,

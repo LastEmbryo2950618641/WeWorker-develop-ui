@@ -13,6 +13,8 @@
     "exploration-client.js",
     "exploration-evidence.js",
     "exploration-service.js",
+    "exploration-verification.js",
+    "exploration-knowledge.js",
     "browser-commands.js",
     "browser-service.js",
     "tab-operation-locks.js",

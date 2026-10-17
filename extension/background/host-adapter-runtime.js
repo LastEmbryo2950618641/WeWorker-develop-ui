@@ -3,14 +3,21 @@ export function createHostAdapterRuntime({ bundle, prepare, clear, inject, navig
   const queues = new Map();
   const stamps = new Map();
   const documents = new Map();
+  function exclusive(tabId, operation) {
+    const task = (queues.get(tabId) || Promise.resolve()).catch(() => {}).then(operation);
+    queues.set(tabId, task);
+    void task.finally(() => { if (queues.get(tabId) === task) queues.delete(tabId); }).catch(() => {});
+    return task;
+  }
   return {
+    exclusive,
     invalidate(tabId) {
       stamps.delete(tabId);
       documents.set(tabId, (documents.get(tabId) || 0) + 1);
     },
     execute(tabId, manifest, url, operation = null, command = null, traceID = null) {
       const deadline = now() + timeoutMs;
-      const task = (queues.get(tabId) || Promise.resolve()).catch(() => {}).then(async () => {
+      return exclusive(tabId, async () => {
         const policy = command && manifest.commands?.find(entry => entry.id === command.id);
         let currentUrl = url;
         for (let step = 0; ; step++) {
@@ -56,9 +63,6 @@ export function createHostAdapterRuntime({ bundle, prepare, clear, inject, navig
           if (!next.resume) return next.result ?? { status: 'navigation_complete', url: currentUrl };
         }
       });
-      queues.set(tabId, task);
-      void task.finally(() => { if (queues.get(tabId) === task) queues.delete(tabId); }).catch(() => {});
-      return task;
     },
   };
 }

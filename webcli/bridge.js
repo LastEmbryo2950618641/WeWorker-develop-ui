@@ -1465,7 +1465,9 @@ export class WebSocketBridge extends EventEmitter {
       const timing = this._callTimings.get(msg.traceID);
       if (timing) timing.dispatchedAt = Date.now();
     }
-    const logMessage = msg.type === 'browser_execute' ? { type: msg.type, command: msg.command, id: msg.id, tabId: msg.tabId } : msg;
+    const logMessage = msg.type === 'browser_execute' ? { type: msg.type, command: msg.command, id: msg.id, tabId: msg.tabId }
+      : msg.type === 'validate_generation_preview' ? { type: msg.type, id: msg.id, tabId: msg.tabId,
+        expectedToolCount: msg.expectedToolNames?.length || 0, testCaseCount: msg.testCases?.length || 0 } : msg;
     process.stderr.write(`[${ts()}] [Bridge] -> extension: ${JSON.stringify(logMessage).substring(0, 200)}\n`);
     return true;
   }
