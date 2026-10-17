@@ -845,8 +845,9 @@ export class WebSocketBridge extends EventEmitter {
   async _routeClientRequest(msg, ws) {
     try {
       if (ws._browserConnection) throw profileError('LOCAL_CLIENT_REQUIRED', 'Extension connections cannot submit client commands.');
-      // Toolkit runs never select or depend on a browser.
-      if (msg.type === 'call_tool' && resolveAdapterCall(msg.toolName)?.command.runtime === 'wewright') return await this._handleClientRequest(msg, ws);
+      // Toolkit and public HTTP runs never select or depend on a browser.
+      const command = msg.type === 'call_tool' ? resolveAdapterCall(msg.toolName)?.command : null;
+      if (command?.runtime === 'wewright' || (command?.runtime === 'http' && command.http.strategy === 'PUBLIC_API')) return await this._handleClientRequest(msg, ws);
       return await this._runInProfile(msg, ws, () => this._handleClientRequest(msg, ws));
     } catch (error) { this._reply(ws, { type: 'call_tool_error', id: msg.id, error: error.message, code: error.code }); }
   }
@@ -1496,7 +1497,7 @@ export class WebSocketBridge extends EventEmitter {
       const timing = this._callTimings.get(msg.traceID);
       if (timing) timing.dispatchedAt = Date.now();
     }
-    const logMessage = ['browser_execute', 'exploration_observe_page', 'exploration_intercept_read', 'exploration_page_query'].includes(msg.type) ? { type: msg.type, command: msg.command, id: msg.id, tabId: msg.tabId }
+    const logMessage = ['http_credentials', 'browser_execute', 'exploration_observe_page', 'exploration_intercept_read', 'exploration_page_query'].includes(msg.type) ? { type: msg.type, command: msg.command, id: msg.id, tabId: msg.tabId }
       : msg.type === 'validate_generation_preview' ? { type: msg.type, id: msg.id, tabId: msg.tabId,
         expectedToolCount: msg.expectedToolNames?.length || 0, testCaseCount: msg.testCases?.length || 0 } : msg;
     process.stderr.write(`[${ts()}] [Bridge] -> extension: ${JSON.stringify(logMessage).substring(0, 200)}\n`);
@@ -1623,6 +1624,17 @@ export class WebSocketBridge extends EventEmitter {
       throw new Error('Adapter changed since this call started; refresh the catalog.');
     }
     if ((selected?.command.requires_confirmation ?? selected?.command.safety === 'write') && args?.__confirmed !== true) throw new Error('Explicit confirmation is required for this command.');
+    if (selected?.command.runtime === 'http') {
+      const { runHttpTool } = await import('./http-runner.js');
+      const completed = await runHttpTool(selected, args || {}, { traceID,
+        resolveCookies: async payload => {
+          if (!this._extensionCapabilities.includes('http_credentials_v1')) throw profileError('HTTP_CREDENTIALS_UNAVAILABLE', 'Reload the selected browser extension for HTTP credentials.');
+          const result = await this._request({ type: 'http_credentials', payload }, 10_000);
+          return result.cookies;
+        },
+      });
+      return completed.result;
+    }
     if (selected?.command.runtime === 'wewright') {
       const { runToolkitTool } = await import('./toolkit-runner.js');
       const completed = await runToolkitTool({

@@ -1,6 +1,8 @@
 # API 自动探索 CLI 开发设计与首版实现
 
-更新：2026-10-17。已继续当前分支实现多浏览器 profile；下文记录已验证契约与剩余范围。历史分支、同步步骤与验证结果见 [交接文档](api_exploration_cli_handoff.md)。
+更新：2026-10-17。多浏览器 profile 后已实现独立 HTTP Runner、PUBLIC_API/COOKIE_API 探索生成/验证/安装/调用与只读局部修复。具体版本契约、临时 Cookie/CSRF 与限制见 [HTTP Runtime](http_adapter_runtime.md)。历史分支、同步步骤与验证结果见 [交接文档](api_exploration_cli_handoff.md)。
+
+最新 HTTP 验证：WebCLI 1161 项、完整 Chromium 47 项、最终 HTTP 聚焦 6 项及打包 CLI 的 16 项 HTTP 测试通过；PUBLIC_API 普通调用无浏览器依赖，COOKIE_API 通过所选 profile 临时读取明确名称的 Cookie。原始占位凭据不在 Bridge 日志/任务/包中落盘。下文旧阶段的“PUBLIC_API/COOKIE_API 尚未实现”是历史边界，以本段与 HTTP 契约为准；通用签名/环境凭据、分区 Cookie、多步 UI/写命令及完整对齐仍未完成。
 
 ## 多浏览器 profile：已实现
 

@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-17（独立 HTTP Runner）：新增版本化 `http` runtime 与 PUBLIC_API/COOKIE_API，保持 Extension/Toolkit Runner 分离。公开命令无需 Bridge/浏览器，Cookie 命令固定 profile、按 URL/名称临时读取 HttpOnly Cookie 与 CSRF，精确 origin 授权、失败不重放；接入探索生成、作者 cases、安装、普通调用与只读定向修复。WebCLI 109 文件/1161 项、扩展聚焦 6 项、完整 Chromium 47 项、最终 HTTP 聚焦 6 项、打包 CLI HTTP 16 项通过；CLI/Bridge 构建与配置通过，日志/任务/安装目录无原始占位凭据。尚未实现通用签名/环境凭据、分区 Cookie、无页面 API 发现和多步 UI/写命令；整体 OpenCLI 对齐继续。Python 网站探索agent未改动。
+
 - 2026-10-17（多浏览器 profile）：稳定 contextId 与每连接身份、profile list/rename/use、flag/env/default 选择；普通调用/探索/Worker/trace/follow 固定路由，响应仅回请求者，断线不重放；会话/任务/知识/锁按浏览器隔离，旧根通过 legacy 只读保留。WebCLI 1145 项、扩展相关 85 项、完整真实 Chromium 44 项通过；日常 Chrome/B 站 Excel 第一页 24 卡片标题/链接逐项一致。最终 trace/打包检查见交接日志。完整 OpenCLI 对齐继续，Python 网站探索agent零改动。
 
 - 2026-10-17（CLI 会话交接）：应用户要求，在已完成上传功能 `3e9a7ff` 后暂停当前目标。完成多浏览器连接的源码路由核查与下一阶段设计记录，尚未实现 profile；本次仅更新文档，未重跑功能验收。交接文档顶部新增接手入口、当前状态、验证证据与同步边界。整体 OpenCLI 对齐未完成，Python 网站探索agent未动。

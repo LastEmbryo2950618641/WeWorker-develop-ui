@@ -454,7 +454,7 @@ async function cmdInfo(args) {
       console.log(`Adapter: ${managed.id}\nType: ${managed.adapter_type}\nVersion: ${managed.version}\nSource: ${managed.source}\nDigest: ${managed.digest}\n`);
       console.log(`Tools (${managed.tools.length}):`);
       for (const tool of managed.tools) {
-        console.log(`${tool.name} [${tool.runtime === 'wewright' ? 'Toolkit' : 'Extension'}] safety=${tool.safety}`);
+        console.log(`${tool.name} [${{ wewright: 'Toolkit', extension: 'Extension', http: 'HTTP' }[tool.runtime] || tool.runtime}] safety=${tool.safety}`);
         console.log(`  ${tool.description}`);
         if (tool.aliases.length) console.log('  Compatible names: ' + tool.aliases.join(', '));
         for (const param of tool.params) console.log(`  - ${param.name}: ${param.type}${param.required ? ' (required)' : ''}`);

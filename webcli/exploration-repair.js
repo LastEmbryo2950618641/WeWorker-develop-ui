@@ -14,7 +14,7 @@ export function repairTarget(site, paths) {
   if (catalog.diagnostics.some(item => !item.name || item.name === site)) throw fail('ADAPTER_CATALOG_REVIEW_REQUIRED', 'Resolve Adapter catalog conflicts before repair.');
   const target = catalog.effective.find(item => item.name === site);
   if (!target) throw fail('ADAPTER_NOT_FOUND', 'Select an active installed Adapter.');
-  if (target.commands.some(item => item.runtime !== 'extension')) throw fail('REPAIR_RUNTIME_UNSUPPORTED', 'This repair workflow supports Extension-only packages.');
+  if (target.commands.some(item => !['extension', 'http'].includes(item.runtime))) throw fail('REPAIR_RUNTIME_UNSUPPORTED', 'This repair workflow supports Extension and HTTP packages.');
   return { target, pkg: readPackageDirectory(target.root) };
 }
 
@@ -22,6 +22,10 @@ export function writeRepairDraft({ site, expectedDigest, plan, memory, candidate
   const { target, pkg } = repairTarget(site, paths);
   if (pkg.digest !== expectedDigest || memory.generationBaseline?.digest !== expectedDigest || memory.siteKey !== site) throw fail('ADAPTER_BASE_CHANGED', 'Read repair-info and collect current evidence before repairing this Adapter.');
   const commandIds = plan.tools.map(tool => tool.name);
+  for (const tool of plan.tools) {
+    const command = pkg.commands.find(item => item.id === tool.name);
+    if (command?.runtime === 'http' ? command.http.strategy !== tool.strategy : ['PUBLIC_API', 'COOKIE_API'].includes(tool.strategy)) throw fail('REPAIR_RUNTIME_MISMATCH', 'Repair must preserve the installed command runtime and strategy.');
+  }
   const scope = { name: site, digest: pkg.digest, commandIds };
   verifyRepairRetention(pkg, pkg, scope);
   const manifest = { ...pkg.manifest, version: pkg.manifest.version.replace(/^(\d+)\.(\d+)\.(\d+).*$/, (_m, a, b, c) => `${a}.${b}.${Number(c) + 1}`) };

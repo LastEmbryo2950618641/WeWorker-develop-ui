@@ -25,6 +25,7 @@ import { normalizePageSource, pageObservation, buildPageTool } from './explorati
 import { writePackageDraft } from './generation-harness/package-draft.js';
 import { normalizePathParameters } from './generation-harness/path-parameters.js';
 import { normalizeInterceptSource, interceptValues } from './exploration-intercept.js';
+import { isHttpStrategy, httpToolContract, buildHttpTool } from './exploration-http.js';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const active = new Set(['collecting', 'validating', 'installing']);
@@ -304,7 +305,7 @@ export class ExplorationService {
     if (command === 'draft-add') {
       if (run.repairScope) throw fail('REPAIR_SCOPE_CHANGED', 'Scoped repair cannot add shared or command files. Edit only the selected modules and their schema/description.');
       const file = textArg(args.file, 'file', 200);
-      if (!(file === 'guidance.md' || /^extension\/(?:internal|commands)\/[a-zA-Z0-9][a-zA-Z0-9_/-]*\.js$/.test(file)) || file.includes('..') || path.basename(file) === 'index.js') throw fail('INVALID_ARGUMENT', 'Add guidance.md or a non-index JavaScript file under extension/internal or extension/commands.');
+      if (!(file === 'guidance.md' || /^(?:extension|http)\/(?:internal|commands)\/[a-zA-Z0-9][a-zA-Z0-9_/-]*\.js$/.test(file)) || file.includes('..') || path.basename(file) === 'index.js') throw fail('INVALID_ARGUMENT', 'Add guidance.md or a non-index JavaScript file under extension/ or http/ commands/internal.');
       if (run.draftFiles.some(name => name.toLowerCase() === file.toLowerCase())) throw fail('FILE_EXISTS', 'File already exists; use draft-write with its current hash.');
       if (run.draftFiles.length >= 512 || typeof args.content !== 'string' || args.content.length > 250000) throw fail('INVALID_ARGUMENT', 'Draft file count or content size exceeds the package limit.');
       const target = assertManagedFile(run.draft.adapterDir, file);
@@ -419,8 +420,13 @@ export class ExplorationService {
       }
       const candidate = run.candidates[tool.sourceApiIndexes?.[0]];
       if (tool.risk !== 'read' || tool.sourceApiKind !== 'list' || !candidate || !candidates.some(item => item.id === candidate.id)) throw fail('INVALID_PLAN', 'Each tool must reference a successful observed read query by index.');
-      if (tool.strategy !== undefined && tool.strategy !== 'PAGE_FETCH') throw fail('STRATEGY_UNSUPPORTED', 'API generation currently uses PAGE_FETCH. Observe DOM/state or INTERCEPT sources for those strategies; PUBLIC_API/COOKIE_API execution is not yet implemented.');
-      tool.strategy = 'PAGE_FETCH';
+      if (tool.strategy !== undefined && tool.strategy !== 'PAGE_FETCH' && !isHttpStrategy(tool.strategy)) throw fail('STRATEGY_UNSUPPORTED', 'Choose PAGE_FETCH, PUBLIC_API or COOKIE_API for observed API sources.');
+      tool.strategy ||= 'PAGE_FETCH';
+      if (isHttpStrategy(tool.strategy)) {
+        httpToolContract(tool, candidate);
+        textArg(tool.readReason, 'readReason');
+        if (!tool.strategyNote) throw fail('STRATEGY_PLAN_REQUIRED', 'Host HTTP requires an explicit source rationale and limitations.');
+      }
       tool.strategyNote = normalizeStrategyNote(tool, tool.strategy);
       try { normalizePathParameters(candidate, tool.pathParameters); }
       catch (error) { throw fail('INVALID_PLAN', error.message); }
@@ -447,8 +453,11 @@ export class ExplorationService {
     }
     run.plan = allocateGenerationPlan(run.memory, plan);
     const outputRoot = path.join(this.root, run.taskId, randomUUID());
-    const apiTools = run.plan.tools.filter(tool => !tool.sourcePageId);
-    const pageTools = run.plan.tools.filter(tool => tool.sourcePageId).map(tool => buildPageTool(run.siteKey, tool, run.pageSources.find(item => item.id === tool.sourcePageId)));
+    const apiTools = run.plan.tools.filter(tool => !tool.sourcePageId && !isHttpStrategy(tool.strategy));
+    const pageTools = [
+      ...run.plan.tools.filter(tool => tool.sourcePageId).map(tool => buildPageTool(run.siteKey, tool, run.pageSources.find(item => item.id === tool.sourcePageId))),
+      ...run.plan.tools.filter(tool => isHttpStrategy(tool.strategy)).map(tool => buildHttpTool(run.siteKey, tool, run.candidates[tool.sourceApiIndexes[0]])),
+    ];
     const draft = apiTools.length
       ? writeAdapterPackageFromSiteMemory(run.memory, { outputRoot, plan: { ...run.plan, tools: apiTools }, additionalTools: pageTools, adapterPaths: this.paths })
       : writePackageDraft({ memory: run.memory, adapterDir: path.join(outputRoot, run.siteKey), supportBundle: { toolFiles: pageTools }, paths: this.paths });
@@ -472,7 +481,7 @@ export class ExplorationService {
   assertReadDraft(run) {
     const pkg = readPackageDirectory(run.draft.adapterDir);
     const retained = verifyRetainedPackage(pkg, readGenerationEvidence(run.draft.adapterDir), { paths: this.paths, repairScope: run.repairScope });
-    if (pkg.manifest.commands.some(command => !retained.has(command.id) && (command.safety !== 'read' || command.runtime !== 'extension'))) throw fail('READ_ONLY_REQUIRED', 'This standalone workflow only validates new read-only Extension commands.');
+    if (pkg.manifest.commands.some(command => !retained.has(command.id) && (command.safety !== 'read' || !['extension', 'http'].includes(command.runtime)))) throw fail('READ_ONLY_REQUIRED', 'This standalone workflow only validates new read-only Extension or HTTP commands.');
     return pkg;
   }
 
@@ -495,9 +504,10 @@ export class ExplorationService {
       }
     }
     if ((run.pageSources || []).some(item => item.source.mode === 'query') && !this.capabilities().capabilities.includes('page_query_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating navigation-aware page queries.');
-    const pageTools = (run.plan?.tools || []).filter(tool => tool.sourcePageId).map(tool => `${run.siteKey}.${tool.name.replace(/_/g, '-')}`);
+    const pageTools = (run.plan?.tools || []).filter(tool => tool.sourcePageId || isHttpStrategy(tool.strategy)).map(tool => `${run.siteKey}.${tool.name.replace(/_/g, '-')}`);
+    if (run.plan?.tools?.some(tool => tool.strategy === 'COOKIE_API') && !this.capabilities().capabilities.includes('http_credentials_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating COOKIE_API credentials.');
     if (run.plan?.tools?.some(tool => tool.strategy === 'INTERCEPT') && !this.capabilities().capabilities.includes('intercept_read_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating intercepted queries.');
-    if (pageTools.length && !this.capabilities().capabilities.includes('page_sources_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating page sources.');
+    if (run.plan?.tools?.some(tool => tool.sourcePageId) && !this.capabilities().capabilities.includes('page_sources_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating page sources.');
     if ((run.repairScope ? run.draft.toolNames : pageTools).some(tool => !run.verification?.[tool]?.length)) throw fail('VERIFICATION_REQUIRED', 'Every repaired or page-based command needs authored verification cases; read or write cases before validation.');
     if (Object.keys(run.verification || {}).length && !this.capabilities().capabilities.includes('strict_output_contract_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating authored assertions.');
     this.assertTabAvailable(run.tabId, run.taskId);

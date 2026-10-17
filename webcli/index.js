@@ -466,6 +466,20 @@ async function cmdCall(toolName, argsStr, options = {}) {
   const v2Match = resolveAdapterCall(toolName);
   if (v2Match) {
     if ((v2Match.command.requires_confirmation ?? v2Match.command.safety === "write") && args.__confirmed !== true) throw new Error("Explicit confirmation is required for this command.");
+    if (v2Match.command.runtime === 'http' && v2Match.command.http.strategy === 'PUBLIC_API') {
+      try {
+        const { runHttpTool } = await import('./http-runner.js');
+        const completed = await runHttpTool(v2Match, args);
+        const value = completed.result;
+        const output = value && typeof value === 'object' && !Array.isArray(value)
+          ? { ...value, trace_id: completed.traceID } : { result: value, trace_id: completed.traceID };
+        console.log(formatCallOutput(output, outputFormat, { mapping: columnMapping }));
+      } catch (error) {
+        console.log(formatCallOutput({ error: error.message, code: error.code || 'HTTP_COMMAND_FAILED', trace_id: null }, outputFormat));
+        process.exitCode = 1;
+      }
+      return;
+    }
     if (v2Match.command.runtime === "wewright") {
       // v2 wewright 命令：内嵌 Runtime --internal-script，入口取 manifest module（现有合同不变）
       try {

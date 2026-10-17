@@ -17,6 +17,7 @@ import { verifyBrowserShadow } from './browser-shadow-acceptance.mjs';
 import { verifyBrowserCompounds } from './browser-compound-acceptance.mjs';
 import { verifyBrowserUploads } from './browser-upload-acceptance.mjs';
 import { verifyBrowserProfiles } from './browser-profile-acceptance.mjs';
+import { verifyHostHttp } from './http-acceptance.mjs';
 
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'webcli-browser-acceptance-'));
@@ -255,6 +256,11 @@ try {
     startBridge: async () => { await startBridge(); await connected(); },
   });
   if (process.argv.includes('--profiles-only')) { await profiles(); return; }
+  const hostHttp = () => verifyHostHttp({ browser, cliEntry, env, root, record, passed,
+    launchSecond: () => chromium.launchPersistentContext(path.join(root, 'http-profile-second'), { channel: 'chromium', executablePath, headless: true,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] }),
+  });
+  if (process.argv.includes('--http-only')) { await hostHttp(); return; }
 
   const tabs = (await cli('exploration.tabs')).data.tabs;
   const tabId = tabs.find(tab => tab.url === origin + '/').id;
@@ -944,6 +950,7 @@ try {
   assert.equal((await cli(generated.data.toolNames[0], { page: 2 })).ok, true);
   passed('Bridge restart restores tasks, marks interruption and permits explicit resumption');
   await profiles();
+  await hostHttp();
   })();
 } catch (error) {
   await record('failure', { message: error.message, stack: error.stack, browserEvents });

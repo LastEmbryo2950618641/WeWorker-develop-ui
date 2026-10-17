@@ -1,4 +1,5 @@
 import { browserContextId } from './browser-profile.js';
+import { readHttpCookies } from './http-credentials.js';
 import { scopedGenerationPreviewScripts } from './generation-preview-bundle.js';
 import { buildV2Bootstrap, v2InjectionFiles } from "./v2-loader.js";
 import { injectAdapterSources } from './adapter-script-loader.js';
@@ -45,6 +46,7 @@ const EXTENSION_CAPABILITIES = [
   'runtime_validation_v1',
   'browser_commands_v1',
   'browser_profiles_v1',
+  'http_credentials_v1',
   'browser_frames_v1',
   'browser_downloads_v1',
   'browser_frame_pointer_v1',
@@ -2598,7 +2600,9 @@ function connectToNativeHost() {
 // ─── 处理来自 Native Host 的消息 ───────────────────────────────────────────
 
 async function handleNativeMessage(msg) {
-  if (msg.type === 'validate_generation_preview') {
+  if (msg.type === 'http_credentials') {
+    console.log('[WebMCP] <- native: http_credentials', { id: msg.id });
+  } else if (msg.type === 'validate_generation_preview') {
     console.log('[WebMCP] <- native: validate_generation_preview', {
       id: msg.id,
       previewAdapterId: msg.previewAdapterId,
@@ -2860,6 +2864,13 @@ async function handleNativeMessage(msg) {
       traceLog(traceID, `[ServiceWorker] call_tool 错误: ${err.message}`);
     }
 
+  } else if (msg.type === 'http_credentials') {
+    try {
+      const result = await readHttpCookies(chrome, msg.payload);
+      sendToNative({ type: 'call_tool_result', id: msg.id, result }, true);
+    } catch {
+      sendToNative({ type: 'call_tool_error', id: msg.id, code: 'HTTP_CREDENTIALS_UNAVAILABLE', error: 'Cannot read declared HTTP credentials from this browser.' });
+    }
   } else if (msg.type === 'exploration_list_tabs') {
     try {
       const tabs = await chrome.tabs.query({});
@@ -3431,13 +3442,13 @@ async function handleNativeMessage(msg) {
   }
 }
 
-function sendToNative(msg) {
+function sendToNative(msg, sensitive = false) {
   logCallToolTiming(msg);
   if (!ws || ws.readyState !== WebSocket.OPEN) {
     console.warn("[WebMCP] Cannot send to native: not connected");
     return false;
   }
-  console.log("[WebMCP] -> native:", msg);
+  console.log("[WebMCP] -> native:", sensitive ? { type: msg.type, id: msg.id } : msg);
   try {
     ws.send(JSON.stringify(msg));
     return true;

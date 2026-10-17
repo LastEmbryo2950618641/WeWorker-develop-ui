@@ -26,7 +26,7 @@ it('auth failure recommends restoring access, while document changes point to qu
   expect(auth.nextActions.some(item => item.action === 'exploration.replan')).toBe(false);
   const navigation = analyzeExploration({ ...base, error: { code: 'INTERCEPT_DOCUMENT_CHANGED' } });
   expect(navigation.nextActions[0].action).toBe('exploration.query');
-  expect(navigation.strategies.find(item => item.strategy === 'PUBLIC_API').available).toBe(false);
+  expect(navigation.strategies.find(item => item.strategy === 'PUBLIC_API').available).toBe(true);
 });
 it('strategy rationale requires alternatives for internal endpoints and rejects unsupported fields', () => {
   expect(() => normalizeStrategyNote({ strategyNote: { reason: 'Public item query' } }, 'PAGE_FETCH')).toThrow(/Explain why/);

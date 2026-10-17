@@ -46,17 +46,19 @@ export function writePackageDraft({ memory, adapterDir, supportBundle, paths }) 
     if (!tool?.name?.startsWith(name + '.') || !file.v2Content) throw new Error('Generated command has no package definition.');
     const local = tool.name.slice(name.length + 1), id = draftCommandId(local);
     if (retainedIds.has(id)) throw new Error('Generated command would replace an existing command; choose an additive name.');
-    const module = `extension/commands/${id}.js`;
+    const runtime = tool.runtime || 'extension';
+    const module = `${runtime}/commands/${id}.js`;
     if (files.has(module)) throw new Error('Generated command file conflicts with an existing file.');
     files.set(module, file.v2Content);
     // Evidence belongs to the generation task; it never participates in package installation.
     evidence.commands[id] = { originalName: tool.name, safety: tool.access === 'write' ? 'write' : 'read', generationSource: tool.generationSource || null };
-    return { id, ...(local !== id ? { aliases: [local] } : {}), runtime: 'extension', module,
+    return { id, ...(local !== id ? { aliases: [local] } : {}), runtime, module,
+      ...(tool.http ? { http: tool.http } : {}),
       description: tool.description, schema: tool.parameters, safety: tool.access === 'write' ? 'write' : 'read',
       ...(tool.pageRoute ? { pageRoute: tool.pageRoute } : {}),
       ...(tool.pageStrategy ? { pageStrategy: tool.pageStrategy } : {}),
       ...(tool.pageWorkflow ? { pageWorkflow: true } : {}),
-      ...(retained ? { routeDomain: memory.siteHost || name, tabDomain: memory.siteHost || name } : {}),
+      ...(retained && runtime === 'extension' ? { routeDomain: memory.siteHost || name, tabDomain: memory.siteHost || name } : {}),
     };
   });
   const manifest = { ...(retained?.manifest || {}), schema_version: 2, name, version,

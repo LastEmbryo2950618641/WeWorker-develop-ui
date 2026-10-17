@@ -5,6 +5,7 @@ import { verifyGeneratedWriteTools } from './write-tool-verifier.js';
 import { isPackageDraft, packageDraftBundle, readGenerationEvidence } from './package-inspection.js';
 import { verifyRetainedPackage } from './existing-site.js';
 import { applyVerificationCases } from '../exploration-verification.js';
+import { verifyHttpDraft } from '../http-preview.js';
 
 const MAX_PREVIEW_SCRIPT_CHARS = 1_000_000;
 const SAFE_PREVIEW_SCRIPT_RE = /^[a-zA-Z0-9][a-zA-Z0-9._/-]*\.js$/;
@@ -58,6 +59,20 @@ export function createPreviewRuntimeValidator({ requestExtension, restrictToExpe
   if (typeof requestExtension !== 'function') throw new Error('runtime validator requires requestExtension');
   return async ({ run, draft, signal, plan, memory, validation, verification }) => {
     if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
+    if (isPackageDraft(draft.adapterDir)) {
+      const { pkg } = packageDraftBundle(draft.adapterDir);
+      const httpCommands = pkg.commands.filter(command => command.runtime === 'http' && draft.toolNames.includes(command.name));
+      if (httpCommands.length) {
+        if (validation?.packageDigest && pkg.digest !== validation.packageDigest) throw new Error('Draft changed after static validation.');
+        const httpResult = await verifyHttpDraft({ pkg, adapterDir: draft.adapterDir, commands: httpCommands, verification, requestExtension, signal });
+        const otherNames = draft.toolNames.filter(name => !httpCommands.some(command => command.name === name));
+        if (!otherNames.length) return httpResult;
+        const browserResult = await createPreviewRuntimeValidator({ requestExtension, restrictToExpectedTools: true, paths })({
+          run, draft: { ...draft, toolNames: otherNames }, signal, plan, memory, validation, verification });
+        return { passed: httpResult.passed && browserResult.passed, errors: [...httpResult.errors, ...(browserResult.errors || [])],
+          executionSummary: Object.fromEntries(['attempted', 'passed', 'failed', 'skipped'].map(key => [key, httpResult.executionSummary[key] + (browserResult.executionSummary?.[key] || 0)])) };
+      }
+    }
     const preview = {
       previewAdapterId: createPreviewAdapterId(run.id),
       transport: 'inline_bundle',

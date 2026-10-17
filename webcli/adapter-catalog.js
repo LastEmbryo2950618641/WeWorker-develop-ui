@@ -23,6 +23,11 @@ export function adapterPermissions(manifest) {
     ...(manifest.match || []).map((host) => 'host:' + String(host).toLowerCase().replace(/\.$/, '')),
     ...(manifest.runtime_allowed_hosts || []).map((host) => 'host:' + String(host).toLowerCase().replace(/\.$/, '')),
     ...manifest.commands.map((command) => 'runtime:' + command.runtime),
+    ...manifest.commands.flatMap(command => (command.http?.origins || []).map(origin => 'http-origin:' + origin)),
+    ...manifest.commands.flatMap(command => command.http?.cookies ? [
+      ...command.http.cookies.names.map(name => 'http-cookie:' + command.http.cookies.origin + ':' + name),
+      ...(command.http.cookies.csrf ? ['http-csrf:' + JSON.stringify(command.http.cookies.csrf)] : []),
+    ] : []),
     ...manifest.commands.filter((command) => command.execution?.runtime === 'background').map(() => 'execution:background'),
     ...manifest.commands.filter((command) => command.safety === 'write').map((command) => 'write:' + command.id),
     ...manifest.commands.filter((command) => command.safety === 'write' && command.requires_confirmation === false).map((command) => 'unconfirmed-write:' + command.id),

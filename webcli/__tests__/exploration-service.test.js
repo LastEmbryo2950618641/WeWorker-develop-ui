@@ -564,7 +564,7 @@ it('draft hash includes authored cases and raw malformed manifest, and replan re
 
 it('does not accept strategy labels whose execution the generator does not implement', async () => {
   const f = setup(); const taskId = await start(f.service);
-  const plan = { tools: [{ name: 'search', risk: 'read', sourceApiKind: 'list', sourceApiIndexes: [0], strategy: 'PUBLIC_API' }] };
+  const plan = { tools: [{ name: 'search', risk: 'read', sourceApiKind: 'list', sourceApiIndexes: [0], strategy: 'UNKNOWN_API' }] };
   expect((await f.service.execute('generate', { taskId, plan })).error.code).toBe('STRATEGY_UNSUPPORTED');
 });
 

@@ -81,8 +81,8 @@ export function analyzeExploration(run, capabilities = []) {
       : nextActions;
   return { taskId: run.taskId, author: 'calling-agent', candidates, pages, selected, failures: { codes, authenticationRequired: auth }, nextActions: actions,
     strategies: [
-      { strategy: 'PUBLIC_API', available: false, reason: 'Credential-free host HTTP execution and replay evidence are not implemented in this generator.' },
-      { strategy: 'COOKIE_API', available: false, reason: 'Host HTTP with declared runtime authentication is not implemented in this generator.' },
+      { strategy: 'PUBLIC_API', available: true, reason: 'Independent host HTTP. Requires explicit rationale and authored cases proving credential-free execution.' },
+      { strategy: 'COOKIE_API', available: capabilities.includes('http_credentials_v1'), reason: 'Independent host HTTP with explicitly named browser cookies and optional CSRF mapping. Requires http_credentials_v1 and authored cases.' },
       ...['UI_SELECTOR', 'DOM_STATE', 'PAGE_FETCH', 'INTERCEPT'].map(strategy => ({ strategy, available: true })),
     ],
     guidance: 'Recommendations are structural hints, not semantic proof. Choose by the task and verified contract, not API count. No source is executed or silently substituted by analyze.' };

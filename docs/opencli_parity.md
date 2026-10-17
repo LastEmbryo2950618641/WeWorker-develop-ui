@@ -2,7 +2,7 @@
 
 更新：2026-10-17。用户要求尽力实现与 OpenCLI 完全相同的能力；本文件保留完整目标，不把当前首版或单个测试站点视为完成标准。分支历史与同步约束见 [CLI 跟进文档](api_exploration_cli_handoff.md)。Python 网站探索agent全程排除。
 
-当前进展：已从交接提交 `0f085ce` 继续，实现多浏览器 profile 和连接路由隔离；完整 Chromium 44 项、日常 Chrome/B 站 24 卡片回归通过。最后检查点与分发证据见交接日志；其余未完成项保持未完成。
+当前进展：在多浏览器 profile 检查点 `81b4fd0` 上新增独立 HTTP Runner、PUBLIC_API/COOKIE_API 生成/严格验证/安装/调用与只读定向修复。WebCLI 1161 项、完整 Chromium 47 项通过，双真实 profile 的 HttpOnly Cookie/CSRF 隔离及最终 6 项 HTTP 检查通过；完整目标仍未完成。
 
 对照基线包括本机 OpenCLI 1.8.6 的实际命令帮助、本地技能与 npm 官方 1.8.8 发布包静态接口审计，见 [1.8.8 核查](opencli_1_8_8_audit.md)。静态接口不等于上游实机验收。按能力实现，保留本项目统一 `webcli call <namespace>.<command>` 入口和 Extension / Toolkit 分离边界，不复制上游业务实现。
 
@@ -12,8 +12,8 @@
 | 浏览器会话 | open/bind/unbind/close/tab、profile、多连接管理、doctor；用户页不误关闭、跨 CLI/重启恢复 | 命名会话、owned/bound 关闭规则、doctor、持久绑定、Chrome 会话身份守卫已实现；新增稳定 contextId、profile list/rename/use、flag/env/default、双连接隔离与断线不重放；双真实浏览器及重启/重载验收通过，旧历史只读保留；桌面选择 UI/其他浏览器品牌及平台分发未验收 |
 | 页面操作 | state/find/get/extract、click/dblclick/fill/type/select/check/uncheck/focus/hover/scroll/keys/drag/upload/dialog；过期引用和模糊定位报错 | 主/子 frame 原生指针、同 frame 拖拽、输入/弹窗已真实验收；AX 引用支持开放/关闭/嵌套 Shadow DOM 控件及准确文档；DOM 显式 shadow 查询、树内标签及嵌套引用已实现；原生复合字段、HTML 树、明确选项匹配/保留校验已真实验收；隐藏/Shadow/AX/嵌套跨源原生文件输入上传与验证通过；自定义控件、目录输入与跨 frame/DataTransfer 拖拽待补 |
 | 页面观察 | frames/screenshot/console/eval/wait、网络摘要/detail/filter/follow、有界响应读取、失效错误 | frame eval/身份、完整截图、下载续等、console/network JSONL 与游标已真实验收；state source=ax、DOM/AX 指标比较、跨 frame 引用及部分结果/超时通过；截图主文档 DOM 编号、临时 CSS 尺寸、新文件保存及恢复通过，AX/子 frame 编号与任意设备模拟恢复未覆盖 |
-| 探索策略 | PUBLIC/COOKIE/PAGE_FETCH/INTERCEPT/DOM_STATE/UI_SELECTOR；接口/页面状态/脚本发现与策略理由 | PAGE_FETCH、声明式 UI_SELECTOR/DOM_STATE、单步 INTERCEPT 与跨文档页面查询已真实验收。analyze 提供结构分类/契约/错误建议，strategyNote 保存理由；Agent 可 replan 保留旧方案再换来源，API 失败→DOM 全流程通过。PUBLIC_API/COOKIE_API 独立 host HTTP runner、多步 UI 未实现；无运行时静默回退 |
-| 请求和鉴权 | POST 只读查询、GraphQL、动态路径、跨源、Cookie/CSRF/runtime 签名、写操作语义与确认 | 显式 API origin 授权、Agent 计划的 JSON/form POST 与 GraphQL query、API 路径参数已实现；动态 GET/POST 四组真实用例及安装后调用通过，固定域名/路径其余段，ID 不转数字；真实 B 站 PAGE_FETCH 关键词/分页完整闭环通过；INTERCEPT 可由页面生成临时请求头/签名；通用 CSRF/签名算法、动态页面路由和写命令待补 |
+| 探索策略 | PUBLIC/COOKIE/PAGE_FETCH/INTERCEPT/DOM_STATE/UI_SELECTOR；接口/页面状态/脚本发现与策略理由 | PUBLIC_API/COOKIE_API 独立 HTTP Runner 已接入显式计划、作者 cases、安装、调用与只读 repair；真实 PUBLIC 全闭环、双 profile COOKIE/CSRF 普通调用通过。PAGE_FETCH、声明式页面来源、单步 INTERCEPT 与受约束跨文档查询已验证。无需页面的 API 发现、多步 UI 仍待做；无静默回退 |
+| 请求和鉴权 | POST 只读查询、GraphQL、动态路径、跨源、Cookie/CSRF/runtime 签名、写操作语义与确认 | 显式 origin 授权、JSON/form POST、GraphQL query、API 路径参数已有验证；新增按准确请求 URL/声明名称临时读取 Cookie，CSRF Cookie→X-header 映射。通用签名、环境/Bearer 凭据、分区 Cookie、动态页面路由和写命令生成验证仍待做；INTERCEPT 的页面签名不能等同通用鉴权 |
 | 生成与验证 | 任意目标数量、草稿文件编辑、字段映射、语义/样例验证、同站增量保留、审阅安装 | Agent 计划支持 1–50 工具，draft-add 支持新文件；每工具 1–10 组作者参数和精确路径/类型/非空/格式/值/数量断言，超过五组分批执行；六组真实用例含最后一组故意失败与修复已验收；更大计划需分任务 |
 | 维护与知识 | 站点 endpoints/field-map/notes/fixtures、有效期、trace、安装后自动修复、重试界限 | 已有任务历史、结构 trace、站点知识/过期标记；repair-info/repair 支持 Agent 定向修复已安装的只读命令，带入历史 cases 并重新验证、审阅安装；真实字段漂移后六组失败→修复通过已验收。知识冲突修订、共享文件/写命令修复待做；Agent 依 Skill 最多三轮修复 |
 | 分发与工具生态 | 对应 plugin / adapter 管理能力、输出格式、补全、现有 Adapter 能力对照 | 复用已有 v2/AdapterHub；逐项差异和覆盖率待核对 |
@@ -21,6 +21,8 @@
 | 产品复用 | API 探索 UI 和内置对话复用同一命令服务 | 待接入；不涉及 Python 模块 |
 
 验收记录要求：每项提供代码位置、自动化用例、真实运行证据和剩余限制。没有证据的项保持未完成。真实站点使用用户指定的 B 站 `https://search.bilibili.com/all?keyword=excel`；仓库内只保存公开占位示例与验证摘要，不保存用户页面、登录信息或网络原始响应。
+
+HTTP 增量（2026-10-17）：`http-contract/runner/worker/preview.js`、`exploration-http.js` 与 `extension/background/http-credentials.js`，运行时 `http` + version 1，原 Extension/Toolkit Runner 不变。测试覆盖真实宿主请求、字符串 ID、JSON POST、权限升级、精确 origin、受限重定向与逐跳凭据匹配、超时/取消不重放、Node 能力隔离、凭据回显脱敏、7 组断言末组失败阻止安装及局部修复。完整 Chromium 47 项含 PUBLIC 捕获→生成→宿主断言→安装→关闭目标页后普通调用，双浏览器 HttpOnly/CSRF 与缺失凭据不回退。最终 6 项聚焦另确认原始占位凭据未进入 Bridge 日志、任务或安装目录。HTTP 实测为 loopback 示例，不代表外部站点通用鉴权验收。详细协议与限制见 [HTTP Runtime](http_adapter_runtime.md)。
 
 2026-10-17 本轮证据：`webcli/browser-service.js`、`extension/background/browser-*.js`、`webcli/exploration-service.js` 及共享 plan/scaffold；WebCLI 98 文件/1069 项，Extension 聚焦 42 项；`webcli/scripts/verify-exploration-browser.mjs` 17 项真实检查通过。外部搜索页三次普通 CLI 调用（两页及不同关键词）各返回 20 条、页码正确、ID 集合发生变化、标题/链接等字段有效。API 为内部接口，仍需维护，不能据此推断长期稳定性。
 

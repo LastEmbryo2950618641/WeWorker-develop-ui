@@ -13,9 +13,10 @@
 
 import { existsSync, lstatSync, readdirSync, readFileSync } from "fs";
 import { basename, join, resolve, sep } from "path";
+import { validateHttpContract } from './http-contract.js';
 
 
-const RUNTIMES = ["extension", "wewright"];
+const RUNTIMES = ["extension", "wewright", "http"];
 const COMMAND_ID_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const FORBIDDEN_MANIFEST_FIELDS = [
   "adapter_type",
@@ -149,7 +150,8 @@ export function validateV2Manifest(manifest, directoryName = "?") {
       }
       legacyCallNames.add(normalized);
     }
-    if (!RUNTIMES.includes(command?.runtime)) fail(adapterName, `command "${id}": runtime must be extension|wewright.`);
+    if (!RUNTIMES.includes(command?.runtime)) fail(adapterName, `command "${id}": runtime must be extension|wewright|http.`);
+    validateHttpContract(command);
     if (command.execution !== undefined && (command.runtime !== 'extension' || !command.execution
       || command.execution.type !== 'api' || command.execution.runtime !== 'background'
       || Object.keys(command.execution).some((key) => !['type', 'runtime'].includes(key)))) {
@@ -186,7 +188,7 @@ export function validateV2Manifest(manifest, directoryName = "?") {
     if (command.pageWorkflow !== undefined && (command.pageWorkflow !== true || command.pageStrategy !== 'UI_SELECTOR' || !command.pageRoute)) fail(adapterName, 'pageWorkflow requires a UI_SELECTOR pageRoute.');
     if (command.pageStrategy !== undefined && (!command.pageRoute || !['UI_SELECTOR', 'DOM_STATE', 'INTERCEPT'].includes(command.pageStrategy))) fail(adapterName, 'pageStrategy must name a supported strategy with pageRoute.');
     runtimesPresent.add(command.runtime);
-    const ext = command.runtime === "extension" ? "js" : "py";
+    const ext = command.runtime === "wewright" ? "py" : "js";
     const expectedModule = `${command.runtime}/commands/${id}.${ext}`;
     if (command?.module !== expectedModule) {
       fail(adapterName, `command "${id}": module must be "${expectedModule}".`);
@@ -215,8 +217,10 @@ export function validateV2Manifest(manifest, directoryName = "?") {
     if (!Array.isArray(match) || match.length === 0 || match.some((d) => typeof d !== "string" || !d.trim())) {
       fail(adapterName, "match (non-empty domain array) is required when extension commands exist.");
     }
-  } else if (match != null && (!Array.isArray(match) || match.length > 0)) {
+  } else if (!runtimesPresent.has('http') && match != null && (!Array.isArray(match) || match.length > 0)) {
     fail(adapterName, "match is forbidden for pure wewright adapters.");
+  } else if (match != null && (!Array.isArray(match) || match.some(host => typeof host !== 'string' || !host.trim()))) {
+    fail(adapterName, 'match must be a domain array.');
   }
 
   return { name: manifest.name, manifest, commands };

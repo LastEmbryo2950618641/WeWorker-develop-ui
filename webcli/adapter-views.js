@@ -7,6 +7,7 @@ function toolView(manifest, command) {
     id: command.id, name: manifest.name + '.' + command.id, adapterId: manifest.name,
     aliases: [...(command.aliases || []).map((alias) => manifest.name + '.' + alias), ...(command.legacyNames || [])],
     description: command.description, runtime: command.runtime, safety: command.safety || 'read',
+    ...(command.http ? { strategy: command.http.strategy, http: command.http } : {}),
     parameters: command.schema,
     requires_confirmation: command.requires_confirmation ?? command.safety === 'write',
     ...(command.execution?.runtime === 'background' ? { execution: command.execution, directCapable: true, executionMode: 'direct' } : {}),
@@ -28,7 +29,7 @@ export function managedAdapterViews(options = {}) {
       const adapter = {
         ...metadata, id: manifest.name, source: manifest._hostSnapshot.source,
         digest: manifest._hostSnapshot.digest, profile: manifest._hostSnapshot.profile,
-        adapter_type: runtimes.length > 1 ? 'mixed' : runtimes[0] === 'wewright' ? 'toolkit' : 'extension',
+        adapter_type: runtimes.length > 1 ? 'mixed' : runtimes[0] === 'wewright' ? 'toolkit' : runtimes[0],
         tools: manifest.commands.map((command) => toolView(manifest, command)),
       };
       return Object.defineProperty(adapter, 'guidance', { value: _hostGuidance || '', enumerable: false });
@@ -66,7 +67,8 @@ export function managedAdapterSkill(adapter) {
     'Use --key=value flags first for ordinary string, number and boolean arguments. Quote the complete flag when its value contains spaces (for example, "--query=New York"). Do not wrap ordinary arguments in --args JSON.',
     'Use JSON literals only for individual object/array parameters. Whole-object --args is a compatibility fallback, not the default. In PowerShell, JSON quoting may be altered when invoking native programs; do not retry the same broken quoting.', '');
   for (const tool of adapter.tools) {
-    lines.push('## ' + tool.name, '', tool.description, '', 'Runtime: ' + (tool.runtime === 'wewright' ? 'Toolkit' : 'Extension'), '');
+    lines.push('## ' + tool.name, '', tool.description, '', 'Runtime: ' + ({ wewright: 'Toolkit', extension: 'Extension', http: 'HTTP' }[tool.runtime]), '');
+    if (tool.http) lines.push('Strategy: ' + tool.http.strategy + '. ' + (tool.http.strategy === 'PUBLIC_API' ? 'Runs without a browser or desktop.' : 'Uses only declared cookies from the selected browser profile; never provide cookie values in arguments.'), '');
     if (tool.aliases.length) lines.push('Compatible names: ' + tool.aliases.map((name) => '`' + name + '`').join(', '), '');
     if (tool.execution?.runtime === 'background') lines.push('Execution: background API. A matching website tab is needed only when a runtime helper explicitly requests page context.', '');
     if (tool.requires_confirmation) lines.push('Confirmation: required. Ask the user to confirm this action before submission, then pass `__confirmed: true`.', '');

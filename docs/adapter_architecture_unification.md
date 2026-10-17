@@ -40,6 +40,8 @@ Adapter 是唯一分发和安装单位。浏览器扩展承担浏览器执行与
 
 ## 包、名称与命令契约
 
+2026-10-17 增量：v2 增加独立 `http` runtime，以 `commands[].http.version=1` 明确能力版本，模块路径为 `http/commands/<id>.js`。旧宿主拒绝未知 runtime；Extension/Toolkit 枚举和执行器不变。PUBLIC_API/COOKIE_API 的请求、凭据、权限、打包与验证契约见 [HTTP Adapter](http_adapter_runtime.md)。下文双运行时描述为原迁移基线。
+
 - manifest 为包描述、版本、域名、命令 Schema、风险与权限的唯一源；生成器、加载器、Hub 校验器共用规范。
 - name 是稳定调用标识，显示名称和 match 是不同职责。暂不为追求短名批量改名；保留已发布标识，并建立旧名称到新名称的显式映射。
 - 调用保持 webcli call <name>.<command-id>。name 包含点号时使用最长已注册名称匹配，不能按最后一个域名段猜测。

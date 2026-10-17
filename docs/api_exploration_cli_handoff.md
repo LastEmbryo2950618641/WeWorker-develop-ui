@@ -1,16 +1,16 @@
 # API 自动探索 CLI 改造跟进与交接
 
-> 更新日期：2026-10-17。当前阶段已继续并完成多浏览器 profile：稳定身份、显式选择、请求/响应隔离、按浏览器持久会话/任务/锁、断线不重放。WebCLI 1145 项、扩展相关 85 项、完整真实 Chromium 44 项及最终 profile/trace 聚焦通过；日常 Chrome/B 站 Excel 第一页 24 卡片回归通过。整体 OpenCLI 对齐仍未完成，Python 网站探索agent全程未动。
+> 更新日期：2026-10-17。最新阶段已新增独立 HTTP Runner、PUBLIC_API/COOKIE_API 生成/验证/安装/普通调用及只读局部修复，基于已完成的多浏览器 profile。WebCLI 1161 项、完整 Chromium 47 项、最终 HTTP 聚焦 6 项和打包 CLI HTTP 16 项通过；双 profile 的 HttpOnly/CSRF 隔离、缺失凭据不回退及凭据不进入日志/任务/安装目录已验证。整体 OpenCLI 对齐仍未完成，Python 网站探索agent全程未动。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
 
 ## 新会话从这里接手
 
-- 继续当前分支 `codex/api-exploration-cli`，本轮起点 `0f085ce`；本轮检查点 SHA 见 Git 最新提交。先核对工作区/日志，不重建分支或重复实现 profile。根 AGENTS.md、ROADMAP.md、本文末尾、[开发设计](api_exploration_cli_design.md) 和 [能力台账](opencli_parity.md) 为接手入口。
+- 继续当前分支 `codex/api-exploration-cli`，HTTP 阶段起点 `81b4fd0`；检查点 SHA 见 Git 最新提交。先核对工作区/日志，不重建分支或重复实现 profile/HTTP Runner。根 AGENTS.md、ROADMAP.md、本文末尾、[开发设计](api_exploration_cli_design.md)、[HTTP 契约](http_adapter_runtime.md) 和 [能力台账](opencli_parity.md) 为接手入口。
 - 已完成多浏览器 profile，使用 `webcli call profile.list` 和 `--profile=<contextId|alias>`；唯一在线可自动选择，显式/default 离线不回退。旧 browser/exploration 根通过 `--profile=legacy` 只读访问，新 profile 不继承旧 tabId。桌面尚无 profile 选择 UI，多连接时需 CLI 保存默认或由调用方显式传路由。
-- 下一步优先设计并实现独立 PUBLIC_API/COOKIE_API runner 和显式凭据契约，保持 Extension/Toolkit Runner 边界；通用自定义控件、动态页面/多步 UI/写命令、知识修订/共享修复、API 探索 UI/内置对话复用、独立 Agent 对话及平台分发仍在台账。多 profile 完成不等于完整对齐完成。
+- 独立 PUBLIC_API/COOKIE_API runner 和显式 Cookie/CSRF 契约已实现，保持 Extension/Toolkit Runner 边界。下一步补环境/Bearer/签名等通用鉴权、分区 Cookie 和无需页面的 API 发现；之后推进动态页面/多步 UI/写命令、知识修订/共享修复、其他 CDP/外部 CLI/插件生态与站点覆盖。API 探索 UI/内置对话复用、独立 Agent 对话及平台分发仍在台账；不能把本阶段当作完整对齐完成。
 - WebCLI + 插件继续面向任意能执行 CLI 的 Agent，调用方处理自然语言，不依赖桌面或第二模型 Key。Python 网站探索agent源码、环境、测试、生命周期和数据全程不动。
 - 集成基线 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`；本轮没有 fetch/merge/push/PR。后续同步按第 4 节“上游 → 集成基线 → 功能分支”，这些 SHA 仅是已纳入快照。
-- 用户已安装工作区 extension-dist，本轮已重载，无需重装。真实目标仍是用户指定 B 站 Excel 搜索页，重新 doctor/tabs/bind 后使用；不要照抄历史 tab/document/profile/PID。当前 source Bridge 快照 PID 47386、日志 `/tmp/weworker-profile-live-bridge.log`；重启前再核对完整命令和归属。
+- 用户已安装工作区 extension-dist，无需重装。HTTP 阶段仅重建资源，在隔离浏览器实测，没有重载日常 Chrome 或重启用户 Bridge；使用新 Cookie 能力前需核对 `http_credentials_v1` 并重载已安装扩展/本工作区 Bridge。真实外部目标仍为 B 站 Excel 搜索页，重新 doctor/tabs/bind；不要照抄历史身份/PID。历史 source Bridge 快照 PID 47386、日志 `/tmp/weworker-profile-live-bridge.log`，本阶段未重新核实，重启前必须检查完整命令和归属。
 - 本轮临时报告：完整 `webcli-browser-acceptance-pwbLA3/report.json`（44 项），最终 profile/trace 聚焦 `webcli-browser-acceptance-5UiXsh/report.json`（8 项），日常 Chrome `/tmp/weworker-profile-bilibili-regression.json`。前两项位于系统临时根，可被清理；缺失时用已提交脚本复跑，不把旧报告当作最新测试。
 
 ## 最新状态
@@ -558,3 +558,14 @@ npm run test:exploration:browser --prefix webcli -- \
 - 下一阶段仍是 PUBLIC_API/COOKIE_API 与显式鉴权契约，以及能力台账的其余项；不将本阶段完成标为完整目标完成。最终构建/打包检查结果见本节后续记录。
 
 - 最终收尾：补齐离线 cancel 与 legacy 活跃任务草稿读取，聚焦 41 项及完整 WebCLI 1145 项再次通过；禁止 alias 使用 UUID 形状，避免别名与当前/未来 contextId 冲突。CLI/Bridge bundle、打包 CLI profile.help 和普通 profile 调用/verbose trace、公开配置均通过；npm pack dry-run 600 文件，含 browser-profiles.js、扩展 browser-profile.js 和两份 Skill。22 个 JS/MJS 语法、Git 差异格式、改动内容凭据/私网地址检查通过；已有可选列映射资源警告保留。最终 source Bridge 重启后旧绑定恢复且打包 CLI B 站仍返回 24 卡片。没有新依赖、未推送或创建 PR；本地功能检查点见 Git 日志。
+
+## 2026-10-17：独立 HTTP Runner 阶段检查点
+
+- 从 `81b4fd0` 继续，未 fetch/merge/push/PR。新增 v2 `http` + `http.version=1`，PUBLIC_API 直接 CLI/宿主 HTTP，无需浏览器或 Bridge；COOKIE_API 经选定连接临时读取精确 URL/声明名称的 Cookie 与可选 CSRF。Extension/Toolkit Runner 和 Python 网站探索agent均未修改。
+- 实现文件：`http-contract.js`、`http-runner.js`、`http-worker.js`、`http-preview.js`、`exploration-http.js`，扩展 `http-credentials.js`；接入包校验/权限/目录/Skill/普通调用、探索计划/草稿/作者断言/安装与局部 repair。新权限包括精确 HTTP origin、Cookie 名称和 CSRF 映射，更新不能静默扩权。
+- Worker 无 Node 模块/环境/文件能力暴露，API/参数/URL 均使用 realm 内对象；无限循环与挂起请求可终止。Node VM 不被宣称为运行任意恶意软件的系统级安全沙箱。每命令 30 秒/50 请求，单体 4 MiB；标准重定向限已声明 origin、五跳，每跳重新匹配 Cookie。没有失败重试或 profile 回退。
+- 验证：WebCLI 109 文件 / 1161 项；扩展聚焦 6 项；完整真实 Chromium 47 项；最终 HTTP 聚焦 6 项；打包 CLI HTTP 16 项；CLI/Bridge 构建、26 个 JS/MJS 语法、公开配置及差异格式通过。`npm pack --dry-run` 606 文件含全部新增模块、扩展 helper 与 Skill。构建继续用 `NODE_PATH="$PWD/weworker/backend-ts/node_modules"`，没有新增依赖或修改 lockfile。
+- 浏览器验收脚本新增 `--http-only`：PUBLIC 真实捕获→生成→两组独立 HTTP 断言→安装→关闭目标页后直接调用，双 Chromium 的不同 HttpOnly Cookie + CSRF 分别到达正确请求，缺失凭据零请求，原始占位凭据不进入 Bridge 日志、任务、安装目录。完整报告 `webcli-browser-acceptance-z6kGtC/report.json`；最终聚焦 `webcli-browser-acceptance-fzTCZ1/report.json`，均位于系统临时根。本轮未重载日常 Chrome、未重启日常 Bridge、未重跑 B 站；不把 loopback 鉴权验收当作所有外部站点通过。
+- 安装权限测试首次把 `paths` 误放入 input，创建了本轮的 `example-http` 占位安装；发现后核对唯一 digest，已通过安装器仅移除该测试安装，测试修正为第二个 options 参数并再次通过。用户其他安装未修改，后续测试继续用隔离根。
+- 重新核对本机 `opencli --version` 为 1.8.6，`opencli list -f json` 1275 条；官方 1.8.8 的 1366 条/179 分组仍为上一阶段审计基线，两个版本数量不能混用。本轮未安装/更新 OpenCLI。
+- 剩余：环境/Bearer/HMAC/站点签名、分区 Cookie、无页面 API 发现；复杂控件、多步 UI/写命令生成验证、知识冲突和共享/写命令修复；CDP/Electron、external/plugin/补全等工具生态、业务命令覆盖、跨 Agent/跨平台/实际安装包验收及产品复用。HTTP 的完整 source-level trace/跨源重定向实机验收也未覆盖。整体目标保持进行中。
