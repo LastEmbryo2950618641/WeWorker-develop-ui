@@ -30,7 +30,7 @@ export const browserCommands = {
   keys: { description: 'Send a keyboard key or modifier combination to the focused page.', params: ['session', 'key'] },
   frames: { description: 'List accessible page frames, including cross-origin frames, with Chrome frameId and documentId for navigation-safe selection.', params: ['session'] },
   eval: { description: 'Evaluate JavaScript in MAIN world; optional frameId/documentId selects a specific frame, including nested cross-origin frames.', params: ['session', 'expression', 'frameId?', 'documentId?'] },
-  screenshot: { description: 'Capture the selected tab using CDP; returns base64 PNG.', params: ['session', 'fullPage?'] },
+  screenshot: { description: 'Capture PNG with optional numbered DOM references and temporary CSS viewport width/height. fullPage ignores height. Optional absolute path saves a new local file without overwriting. Returns dimensions, annotation refs and restoration status.', params: ['session', 'fullPage?', 'annotate?', 'width?', 'height?', 'path?'] },
   console: { description: 'Read bounded console messages; CLI follow=true emits JSON Lines from main and child frames.', params: ['session', 'after?', 'level?', 'limit?', 'since?', 'until?', 'match?', 'follow?', 'cursor?', 'durationMs?', 'maxEvents?', 'intervalMs?'] },
   dialog: { description: 'Inspect or accept/dismiss a JavaScript dialog.', params: ['session', 'action?', 'text?'] },
   network: { description: 'Read captured network traffic or inspect a key; CLI follow=true emits new completed/failed/redirected requests as JSON Lines.', params: ['session', 'detail?', 'all?', 'failed?', 'since?', 'until?', 'limit?', 'match?', 'follow?', 'cursor?', 'durationMs?', 'maxEvents?', 'intervalMs?'] },

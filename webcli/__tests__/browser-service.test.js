@@ -160,3 +160,20 @@ it('requires AX capability for source flags and opaque AX refs, then forwards th
   expect((await capable.execute('click',{session:'work',ref})).ok).toBe(true);
   expect(requestExtension.mock.calls.at(-1)[0].args).toEqual({ref});
 });
+
+it('guards new screenshot options and saves PNG only to a new explicit local file, never passing its path to Chrome',async()=>{
+  const {service,options,requestExtension}=setup();await service.execute('bind',{session:'work',tabId:7});
+  expect((await service.execute('screenshot',{session:'work',annotate:true})).error.code).toBe('EXTENSION_UPGRADE_REQUIRED');
+  const capable=new BrowserService({...options,capabilities:()=>({connected:true,capabilities:['browser_commands_v1','browser_screenshot_v1']})});
+  const data=Buffer.alloc(24);Buffer.from([137,80,78,71,13,10,26,10]).copy(data);data.writeUInt32BE(1,16);data.writeUInt32BE(1,20);
+  const original=requestExtension.getMockImplementation();
+  requestExtension.mockImplementation(msg=>msg.command==='screenshot'?{ok:true,data:{mimeType:'image/png',data:data.toString('base64'),annotations:[{label:'1',ref:'example-ref'}]}}:original(msg));
+  const destination=path.join(options.rootDir,'example.png');
+  const result=await capable.execute('screenshot',{session:'work',annotate:true,path:destination});
+  expect(result.ok).toBe(true);expect(result.data.path).toBe(destination);expect(result.data.data).toBeUndefined();expect(fs.readFileSync(destination)).toEqual(data);
+  expect(requestExtension.mock.calls.at(-1)[0].args.path).toBeUndefined();
+  const count=requestExtension.mock.calls.length;
+  expect((await capable.execute('screenshot',{session:'work',path:destination})).error.code).toBe('SCREENSHOT_FILE_EXISTS');expect(requestExtension.mock.calls.length).toBe(count+1); // Read-only tab inventory only.
+  expect((await capable.execute('screenshot',{session:'work',path:'relative.png'})).error.code).toBe('INVALID_ARGUMENT');
+  expect((await capable.execute('screenshot',{session:'work',path:path.join(options.rootDir,'missing','example.png')})).error.code).toBe('SCREENSHOT_PATH_UNAVAILABLE');
+});

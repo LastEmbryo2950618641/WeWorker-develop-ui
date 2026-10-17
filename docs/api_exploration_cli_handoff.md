@@ -1,6 +1,6 @@
 # API 自动探索 CLI 改造跟进与交接
 
-> 更新日期：2026-10-17。当前阶段：AX 语义快照、DOM/AX 覆盖对比及跨 frame/Shadow DOM 引用已实现；WebCLI 1129 项、扩展相关 98 项、隔离真实浏览器完整 34 项及最终 AX 聚焦通过。日常 Chrome 同类原生操作、悬停名称变化拒绝和 B 站主文档 AX/24 卡片回归通过。完整 OpenCLI 对齐继续进行；截图高级选项、多连接、独立 Agent 对话、UI 统一与平台安装包验收尚未完成。
+> 更新日期：2026-10-17。当前阶段：截图主文档 DOM 编号、临时 CSS 尺寸、恢复与本地新文件保存已实现；WebCLI 1130 项、扩展相关 105 项、隔离真实浏览器完整 35 项通过。日常 Chrome 高 DPR 截图与 B 站主文档 AX/24 卡片回归通过。完整 OpenCLI 对齐继续进行；深层定位/复杂控件、多连接、独立 HTTP runner、独立 Agent 对话、UI 统一与平台安装包验收尚未完成。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
 
 ## 最新状态
@@ -11,7 +11,7 @@
 - 功能分支在集成提交后创建为 `codex/api-exploration-cli`，最终操作结果见文末。未推送或创建 PR，最终发布目标仍待明确。
 - [开发设计](api_exploration_cli_design.md) 为本次审阅入口。
 - [OpenCLI 能力对齐台账](opencli_parity.md) 为最新范围与缺口清单；用户要求尽力对齐完整能力，不能把当前 36 个 browser 命令或单站点验收视为目标完成。
-- 首版功能实现提交为 `821a7df`，本轮从持续观察检查点 `ae8640c` 继续；后续实现、真实验收与本地检查点见文末和 Git 日志。集成基线仍为 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`。这些是已纳入快照，后续同步前应重新 fetch，不能据此推断远端未变化。
+- 首版功能实现提交为 `821a7df`，本轮从 AX 检查点 `b89654e` 继续；后续实现、真实验收与本地检查点见文末和 Git 日志。集成基线仍为 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`。这些是已纳入快照，后续同步前应重新 fetch，不能据此推断远端未变化。
 > 后续每次建分支、同步上游、解决冲突、实现功能或验证后，都应更新本文和 ROADMAP.md。未验证事项不得标为完成。
 
 ## 1. 目标与范围
@@ -468,3 +468,16 @@ npm run test:exploration:browser --prefix webcli -- \
 - Python 网站探索agent相对功能起点 `af8e082` 差异为零，源码/环境/测试/生命周期/数据未触碰。未改 CI/发布/schema/.env，未推送或创建 PR。构建/打包与最终差异检查追加于后，本轮保存本地检查点，SHA 以 Git 日志为准。
 
 - 最终分发检查：CLI/Bridge 构建与公开配置通过；npm pack dry-run 596 文件，包含 browser-ax.js 和最新 browser Skill；构建帮助正确声明 state source/compareSources。11 个 JS/MJS 语法、Git 差异格式与新增内容凭据/私网地址检查通过，无新增依赖，原有可选列映射资源警告保留。工作区只含本阶段源码、测试和上述文档；下一位接手从最新本地提交继续完整目标。
+
+### 截图编号、临时尺寸与本地文件（2026-10-17）
+
+- 从 AX 检查点 `b89654e` 继续，分支仍为 `codex/api-exploration-cli`，没有同步/推送上游。新增 browser-screenshot.js / browser_screenshot_v1；统一 `browser.screenshot` 支持 annotate、width、height、path，fullPage 忽略 height。尺寸为实际 CSS 视口，按 zoom/DPR 计算；完整图与视口均限制 4000 万像素。
+- 编号使用新主文档 DOM 快照，返回 label/ref/role/name/frame/document/bounds，图像侧合成，不插入页面覆盖层。最大 200 refs，尚未为 AX、Shadow DOM 或子 frame 编号。path 只在 Bridge 处理：绝对新文件、已有目录、PNG 签名校验、wx/0600，不覆盖已有文件，不把本地路径发给扩展。
+- 真实测试发现两个生产问题并修复：executeScript 不接受 undefined 参数；Chrome 截图可能重置其他 CDP 客户端的尺寸模拟，曾产生 1280×581 图片配 1280×720 几何，红框因此偏离按钮。现在核对 PNG 尺寸和截图前后视口/元素几何，异常首图丢弃，明确固定测量尺寸后只重拍一次；持续错配返回错误，不拉伸图片掩盖偏差。
+- finally 校验恢复：清除临时 override，若原观测视口仍未恢复则显式设置 measured desktop override，结果声明 restoration.mode；恢复失败不得返回成功。截图期间导航恢复当前文档视口，但不把旧滚动应用到新文档，返回 SCREENSHOT_DOCUMENT_CHANGED。不能读取另一客户端完整设备模拟配置，所以只保证桌面观测尺寸/DPR/scale 与原文档滚动，不承诺任意手机/方向模拟配置或 resize 业务副作用的回滚。
+- WebCLI 106 文件/1130 项与扩展相关 105 项通过；截图单测 7 项涵盖恢复失败、像素上限、已有 override、捕获尺寸漂移后的重拍、持续错配和导航。Bridge 单测覆盖旧插件拒绝、本地路径不外发、保存与禁止覆盖。完整隔离 Chromium 35 项通过 `webcli-browser-acceptance-gkzqCm/report.json`，探索/生成/验证/安装/修复/知识/重启均回归。新增 browser-screenshot-acceptance.mjs / --screenshots-only 可复跑。
+- 图片检查促成更严格的真实像素断言，早期 `webcli-browser-acceptance-NR7IYQ` 虽绿但有标注偏移，不作为有效视觉证据。修复后 `OpAnvV` 聚焦和上述完整流程通过；最后增加 125% zoom 的按钮像素断言，截图聚焦 `webcli-browser-acceptance-A7CHZ9/report.json` 再次通过。未把最后聚焦写为再次完整运行。
+- 日常 Chrome 首轮 fixture 发现原生页面颜色与测试 Chromium 相差 1–2 个色阶，按钮颜色改为每通道最多 3/255 容差，红色标注仍精确断言，未降低位置检查。最终 `weworker-screenshot-live-iqPaQK/report.json` 通过：DPR 2 默认图 3024×1430，500×360 CSS 输出 1000×720，完整页 1000×4306，编号点击、无 DOM overlay、保存/拒绝覆盖、超限恢复与导航恢复通过。人工查看编号图/完整图，隔离图另查看 125% zoom。临时示例页面与自建服务器已关闭。
+- 新扩展已由本任务重载，无需用户重新安装。重新 tabs 选择并绑定 B 站 excel 页，主文档 AX 和 current-video-links 24 张可见卡片标题/规范化链接逐项回归通过，页面仍在第一页。真实页面/结果未保存到仓库。当前 source Bridge 快照 PID 31129，日志 `/tmp/weworker-screenshot-live-bridge.log`；下次先核实完整命令归属与 doctor，再操作，不能照抄历史 tab/document/PID。
+- CLI/Bridge 构建、公开配置、Git 差异格式、10 个 JS/MJS 语法与新增内容凭据/私网地址检查通过。npm pack dry-run 597 文件，包含 screenshot 模块及更新 browser Skill；无新增依赖，既有可选列映射资源警告保留。Python 网站探索agent相对 `af8e082` 差异为零，源码/环境/测试/数据未动；CI/发布/schema/.env 未改。
+- 下一步优先深层 selector/复杂控件，再处理 profile/多连接、独立 PUBLIC_API/COOKIE_API 执行与鉴权契约；完整台账中的动态页面/多步 UI/写命令、知识修订/共享修复、UI/内置聊天复用、独立 Agent 新对话、平台分发等仍未完成。整体 goal 保持 active，本地检查点 SHA 以 Git 日志为准。

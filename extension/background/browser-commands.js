@@ -6,6 +6,7 @@ import { beginBrowserDownloads, clearBrowserDownloads, markBrowserDownloadAction
 import { executeFramePointer } from './browser-pointer.js';
 import { beginBrowserEvents, clearBrowserEvents, readBrowserEvents, readNetworkEventDetail, browserTimeWindow } from './browser-events.js';
 import { browserStateOptions, browserAxReference, readBrowserAxState, validateBrowserAxReference } from './browser-ax.js';
+import { captureBrowserScreenshot } from './browser-screenshot.js';
 
 const pageCommands = new Set(['state', 'find', 'get', 'extract', 'click', 'dblclick', 'fill', 'type', 'select', 'check', 'uncheck', 'focus', 'hover', 'scroll']);
 const fail = (code, message) => Object.assign(new Error(message), { code });
@@ -124,14 +125,7 @@ export async function executeBrowserCommand({ command, tabId, args = {}, identit
       await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', { ...params, type: 'keyDown', ...(key === 'Enter' ? { text: '\r' } : key.length === 1 && !modifiers ? { text: key } : {}) });
       await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', { ...params, type: 'keyUp' }); data = { sent: true };
     } else if (command === 'screenshot') {
-      await ensureCdpAttached(tabId);
-      const fullPage = args.fullPage === true || args.fullPage === 'true';
-      const metrics = fullPage ? await chrome.debugger.sendCommand({ tabId }, 'Page.getLayoutMetrics') : null;
-      const size = metrics?.cssContentSize || metrics?.contentSize;
-      if (size && size.width * size.height > 40000000) throw fail('SCREENSHOT_TOO_LARGE', 'Full page exceeds 40 million pixels. Use a viewport screenshot.');
-      const shot = await chrome.debugger.sendCommand({ tabId }, 'Page.captureScreenshot', { format: 'png', captureBeyondViewport: fullPage,
-        ...(size ? { clip: { x: 0, y: 0, width: size.width, height: size.height, scale: 1 } } : {}) });
-      data = { mimeType: 'image/png', data: shot.data };
+      data = await captureBrowserScreenshot(chrome,tabId,args,ensureCdpAttached);
     } else if (command === 'console') {
       await ensureCdpAttached(tabId); beginBrowserObservations(tabId);
       await chrome.debugger.sendCommand({ tabId }, 'Runtime.enable');

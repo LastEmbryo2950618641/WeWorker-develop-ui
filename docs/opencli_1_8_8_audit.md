@@ -6,7 +6,7 @@
 
 - cli-manifest.json 包含 1366 个命令条目、179 个 site 分组（包括桌面应用，不能全部称为网站）。策略字段计数：cookie 778、public 345、ui 195、local 26、intercept 22。这个枚举比作者技能中的六种策略更粗；不能只按标签数宣称能力相等。
 - 作者技能仍按 PUBLIC_API / COOKIE_API / PAGE_FETCH / INTERCEPT / DOM_STATE / UI_SELECTOR 选择，要求来源证据、契约与替代策略理由。analyze 对实际响应做业务数据、噪声、权限阻塞判别；页面请求多不等于接口可复用。WebCLI 本轮加入结构分析与保留失败 revision 后显式重做计划，未实现自动运行时静默回退。
-- 浏览器接口除既有基本操作外，仍包含 state 的 AX 对比选项、截图标注与临时视口尺寸、console/network since/until/follow、跨源 frame eval、download 等待。WebCLI 已补嵌套跨源 eval、download 等待、console/network 持续输出及 AX/DOM 来源对比，并经真实 Chromium 与日常 Chrome 检查；截图高级选项仍待补，不能由普通截图通过推断已具备。
+- 浏览器接口除既有基本操作外，仍包含 state 的 AX 对比选项、截图标注与临时视口尺寸、console/network since/until/follow、跨源 frame eval、download 等待。WebCLI 已补嵌套跨源 eval、download 等待、console/network 持续输出、AX/DOM 来源对比及编号/临时尺寸截图，并经真实 Chromium 与日常 Chrome 检查；各项覆盖与限制分别记录，不由普通截图通过推断全部能力。
 - profile list/rename/use 与全局 --profile、环境 OPENCLI_PROFILE 支持多个扩展连接，不明确时选择 profile；另有 OPENCLI_CDP_ENDPOINT / OPENCLI_CDP_TARGET 和 Electron 应用适配。WebCLI 当前只验收一个 Chrome 插件连接和命名标签会话，不应把 session 当作多 profile 实现。
 - 其他接口包括 skills list/read、validate/verify、convention-audit、adapter status/eject/reset、plugin create/install/update/uninstall、daemon status/stop/restart、external register/install/list 和 shell completion。WebCLI 部分已有相近的 Adapter 管理/服务/Skill 分发能力，仍需逐命令核对输出、错误、覆盖和差异；不能直接按名字视为完成。
 - PUBLIC_API 可在没有浏览器时通过 host HTTP 执行；COOKIE_API 使用明确的运行时鉴权。WebCLI 当前自动生成的 API 命令仍是 Extension PAGE_FETCH，独立 host HTTP/通用鉴权能力待设计，同时必须遵守本项目 Extension 与 Toolkit Runner 边界。
@@ -21,3 +21,7 @@
 持续观察对照增量：核对发布包 cli.js 中 console/network 的 since/until/follow（console 约 1216 行，network 约 2376/2480 行）。本项目继续使用统一 call 命令，CLI 输出 JSONL，其他调用方使用 browser.events 非锁定轮询；主/子 target 分开记录，不按时间戳去重，过期游标或容量缺口明确失败。时间裸数沿用本项目历史秒单位，OpenCLI 默认为毫秒，故推荐显式 ms/s/m/h；本项目轮询默认 500ms，可调 100–5000ms。真实验证包括两个独立订阅者、原生输入、子 frame、详情脱敏、信号、管道关闭和 Bridge 重启续接。一次性旧 console/network 保持主 target 缓存形态，流式正文、持久流量回放和 Worker target 订阅未实现。
 
 AX 对照增量：核对 cli.js state 的 --source 与 --compare-sources，以及公开 ax-snapshot 类型声明和 BasePage 的 source 分派。OpenCLI 的比较是 DOM/AX 快照覆盖与耗时指标，并非前后历史差异；本项目以 browser.state source=ax / compareSources=true 实现，不复制上游快照或引用实现。默认 AX 汇总可访问 frame，显式 frame/document 限定范围；ref 绑定实际节点，名称变化、节点替换或文档过期明确拒绝，不按相同 role/name 重绑定。已实测开放/关闭/嵌套 Shadow DOM 原生点击与输入、重复名称、两个同 URL 子 frame、悬停名称变化以及比较后继续使用旧引用。输入 value 不进入 AX 输出，限额/部分 frame 明确标记。深层 selector、全部自定义组件和截图高级选项尚未等同。
+
+截图对照增量：核对发布包 cli.js screenshot 的 full-page/annotate/width/height 与 visual-refs 类型说明。WebCLI 用 annotate/width/height/path 参数，width/height 为真实 CSS 视口尺寸，fullPage 忽略 height。上游说明通过临时 DOM 覆盖层标注，本项目在 PNG 合成，实际 MutationObserver 证明无覆盖层 DOM 变动；刷新主文档 DOM refs 后返回编号映射，暂不编号 AX/Shadow DOM/子 frame。默认返回 base64，保存只接受绝对新路径且不覆盖；与 OpenCLI 的任意输出路径策略有意保留差异。
+
+真实 Chromium 与日常 Chrome 均覆盖标注/ref 点击、响应式视口、完整页面、滚动恢复、像素上限、失败/导航恢复及保存文件；隔离浏览器另测 125% zoom，日常 Chrome 验证原生高 DPR。截图时 Chrome 重置已有 emulation 导致像素/视口错配，已通过丢弃后一次重拍处理，并以实际按钮颜色/框线像素验证，未用图片缩放伪造布局。恢复报告明确是否保留 measured desktop override；其他客户端的完整手机模拟配置无法读取，因此未声称精确还原任意设备模拟。

@@ -40,7 +40,7 @@ export async function runBrowserPageCommand(command, args = {}) {
         roles:Object.fromEntries([...new Set(nodes.map(role))].map(value=>[value,nodes.filter(node=>role(node)===value).length])),truncated:nodes.length>limit||(document.body?.innerText.length||0)>12000}}};
       const snapshotId = crypto.randomUUID(); const refs = new Map();
       const elements = nodes.slice(0, limit).map((node, index) => { const ref = `${snapshotId}:${index + 1}`; refs.set(ref, { node, label: label(node) }); return describe(node, ref); });
-      globalThis.__weworkerBrowserSnapshot = { refs, url: location.href };
+      globalThis.__weworkerBrowserSnapshot = { refs, url: location.href, snapshotId, source: 'dom' };
       return { ok: true, data: { url: location.href, title: document.title, snapshotId, matches: nodes.length, elements,
         ...(command === 'state' ? { text: document.body?.innerText.slice(0, 12000) || '' } : {}) } };
     }
