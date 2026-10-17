@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-17（OpenCLI 能力对齐进行中）：新增 34 个独立 browser 命令及 Skill，命名会话/身份守卫、主 frame 原生鼠标/拖拽、文件输入、弹窗、console、完整截图、网络过滤/JSON 详情；browser 与 exploration 共用 tab 锁。探索支持显式 API origin 授权、Agent 计划的 JSON/form POST 与 GraphQL query、1–50 工具、draft-add 和结构 trace。用户指定公共视频搜索页已完成采集→生成→真实验证→增量安装→普通关键词/分页调用，三次查询均返回 20 条且分页/关键词改变结果；无原始用户数据入库到仓库。隔离真实 Chromium 17 项通过，WebCLI 全量 98 文件/1069 项、Extension 聚焦 42 项、CLI/Bridge 构建与公开配置通过，npm pack dry-run 577 文件含新模块/Skill。Python 网站探索agent零改动。完整策略生成、动态路径、写工具、站点知识/安装后修复、多连接、外部 CLI/CDP、UI 统一和跨 Agent 新对话仍待做，详见 `docs/opencli_parity.md` 和跟进文档。
+
 - 2026-10-17（独立探索 CLI 真实验收）：真实 Chromium + 插件 + 独立 CLI/Bridge + loopback 示例站点全流程 15 项通过，覆盖采集/搜索探测、草稿编辑与修复、真实验证、审阅安装、普通搜索/分页调用、空态/HTTP 错误、同站点增量保留、取消和重启恢复。修复登录辅助工具跳过数误阻止安装的问题，仅独立流程限定目标工具统计，共享验证器默认行为不变。新增可复跑浏览器验收脚本；WebCLI 全量 97 文件/1056 项、CLI/Bridge 构建、公开配置及语法检查通过。原有全局 Bridge/用户浏览器未动，Python 网站探索agent无改动；真实登录业务站点、独立 Claude/Codex 对话和各平台安装包仍未验收。记录见 `docs/api_exploration_cli_handoff.md`。
 
 - 2026-10-17（独立 API 探索 CLI）：按用户修正移除桌面 Backend 前置条件，WebCLI Bridge 新增无模型探索任务、结构证据、安全探测、Agent 草稿读写、验证与审阅安装命令，提供外部 Agent Skill。当前首版范围为同源只读 GET；UI 统一、POST/跨源/写工具及真实外部 Agent 对话验收待后续。WebCLI 97 文件/1055 项通过，CLI/Bridge 构建、npm prepack dry-run、公开配置及语法检查通过；真实浏览器/模型未验收。详细记录见 `docs/api_exploration_cli_handoff.md`；本轮未修改 Python 网站探索agent。

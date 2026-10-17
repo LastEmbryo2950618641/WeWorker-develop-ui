@@ -13,6 +13,7 @@ import { validateAdapterDraft } from './generation-harness/static-validator.js';
 import { createPreviewRuntimeValidator } from './generation-harness/runtime-validator.js';
 import { describeGeneratedInstall } from './generation-harness/install-review.js';
 import { createAdapterPublisher } from './generation-harness/adapter-publisher.js';
+import { TabOperationLocks } from './tab-operation-locks.js';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const active = new Set(['collecting', 'validating', 'installing']);
@@ -22,12 +23,13 @@ const clone = value => JSON.parse(JSON.stringify(value));
 /** Owned by the existing Bridge. No desktop Backend, Python, or model credentials. */
 export class ExplorationService {
   constructor({ rootDir, paths, requestExtension, capabilities = () => ({ connected: false, capabilities: [] }),
-    runtimeValidator, publisher } = {}) {
+    runtimeValidator, publisher, tabLocks = new TabOperationLocks() } = {}) {
     this.paths = paths || resolveAdapterPaths();
     this.root = rootDir || path.join(this.paths.workspaceDir, 'exploration');
     assertManagedDirectory(this.root);
     fs.mkdirSync(this.root, { recursive: true, mode: 0o700 });
     this.request = requestExtension;
+    this.tabLocks = tabLocks;
     this.capabilities = capabilities;
     this.runtimeValidator = runtimeValidator || createPreviewRuntimeValidator({ requestExtension, restrictToExpectedTools: true });
     this.publisher = publisher || createAdapterPublisher({ paths: this.paths });
@@ -102,15 +104,17 @@ export class ExplorationService {
   }
 
   launch(run, status, fn) {
+    const release = this.tabLocks.acquire(run.tabId);
     run.error = null;
     const controller = new AbortController();
     this.controllers.set(run.taskId, controller);
-    this.update(run, status, status);
+    try { this.update(run, status, status); }
+    catch (error) { this.controllers.delete(run.taskId); release(); throw error; }
     const job = Promise.resolve().then(() => fn(controller.signal)).catch(error => {
       if (controller.signal.aborted) return;
       run.error = { code: error.code || 'EXPLORATION_FAILED', message: this.safeError(error) };
       this.update(run, 'failed', run.error.message);
-    }).finally(() => { this.controllers.delete(run.taskId); this.jobs.delete(run.taskId); });
+    }).finally(() => { this.controllers.delete(run.taskId); this.jobs.delete(run.taskId); release(); });
     this.jobs.set(run.taskId, job);
     return this.summary(run);
   }
@@ -124,7 +128,14 @@ export class ExplorationService {
       const requestId = textArg(args.requestId, 'requestId', 100);
       const goal = textArg(args.goal, 'goal');
       const tabId = integerArg(args.tabId, 'tabId');
-      const signature = hash(JSON.stringify({ goal, tabId }));
+      const allowedOrigins = args.allowedOrigins === undefined ? [] : args.allowedOrigins;
+      if (!Array.isArray(allowedOrigins) || allowedOrigins.length > 20) throw fail('INVALID_ARGUMENT', 'allowedOrigins must be an array of at most 20 HTTP(S) origins.');
+      const origins = [...new Set(allowedOrigins.map(value => {
+        try { const url = new URL(value); if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.origin !== value) throw new Error(); return url.origin; }
+        catch { throw fail('INVALID_ARGUMENT', 'Each allowedOrigins entry must be an exact HTTP(S) origin without a path or credentials.'); }
+      }))].sort();
+      // Preserve request signatures for existing same-origin tasks.
+      const signature = hash(JSON.stringify({ goal, tabId, ...(origins.length ? { allowedOrigins: origins } : {}) }));
       const previous = [...this.runs.values()].find(run => run.requestId === requestId);
       if (previous) {
         if (previous.signature !== signature) throw fail('REQUEST_CONFLICT', 'requestId was already used with different arguments.');
@@ -135,7 +146,7 @@ export class ExplorationService {
         if (pending.signature !== signature) throw fail('REQUEST_CONFLICT', 'requestId is in use.');
         return pending.promise;
       }
-      const promise = this.start({ requestId, goal, tabId, signature });
+      const promise = this.start({ requestId, goal, tabId, signature, allowedOrigins: origins });
       this.starting.set(requestId, { signature, promise });
       try { return await promise; } finally { this.starting.delete(requestId); }
     }
@@ -143,11 +154,15 @@ export class ExplorationService {
     const run = this.runs.get(taskId);
     if (!run) throw fail('TASK_NOT_FOUND', 'Task not found; use exploration.list.');
     if (command === 'get') return this.summary(run);
+    if (command === 'trace') return { ...this.summary(run), events: clone(run.events),
+      evidence: run.candidates.map(({ id, url, method, status, risk, requestSemantics }) => ({ id, url, method, status, risk, requestSemantics })),
+      plannedTools: (run.plan?.tools || []).map(({ name, risk, sourceApiKind, sourceApiIndexes }) => ({ name, risk, sourceApiKind, sourceApiIndexes })),
+      files: run.draftFiles || [], structuralOnly: true };
     if (command === 'events') {
       const cursor = integerArg(args.cursor, 'cursor', 0);
       return { taskId, events: run.events.filter(event => event.cursor > cursor), cursor: run.sequence, truncated: cursor < (run.events[0]?.cursor || 1) - 1 };
     }
-    if (command === 'evidence') return { taskId, candidates: clone(run.candidates), policy: 'same-origin structure only; captured scalar values omitted' };
+    if (command === 'evidence') return { taskId, candidates: clone(run.candidates), allowedOrigins: run.allowedOrigins || [], policy: 'page origin and explicitly allowed API origins; structure only; captured scalar values omitted' };
     if (command === 'cancel') {
       if (terminal.has(run.status)) return this.summary(run);
       if (run.status === 'installing') throw fail('INVALID_STATE', 'Installation has started; inspect its outcome before making another change.');
@@ -165,7 +180,10 @@ export class ExplorationService {
       await this.checkTab(run);
       if (active.has(run.status) || terminal.has(run.status) || run.draft) throw fail('INVALID_STATE', 'Task state changed.');
       if (!this.capabilities().capabilities.includes('safe_api_probe_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension to enable safe API probes.');
-      const result = await this.request({ type: 'exploration_safe_actions_inspect', tabId: run.tabId }, 15000);
+      const release = this.tabLocks.acquire(run.tabId);
+      let result;
+      try { result = await this.request({ type: 'exploration_safe_actions_inspect', tabId: run.tabId }, 15000); }
+      finally { release(); }
       await this.checkTab(run);
       if (active.has(run.status) || terminal.has(run.status) || run.draft) throw fail('INVALID_STATE', 'Task state changed.');
       run.actions = (result.candidates || []).filter(item => item.risk === 'read' && ['search', 'filter', 'pagination'].includes(item.kind))
@@ -189,6 +207,19 @@ export class ExplorationService {
     }
     if (command === 'generate') return this.generate(run, args.plan);
     if (!run.draft) throw fail('INVALID_STATE', 'Generate a draft first.');
+    if (command === 'draft-add') {
+      const file = textArg(args.file, 'file', 200);
+      if (!(file === 'guidance.md' || /^extension\/(?:internal|commands)\/[a-zA-Z0-9][a-zA-Z0-9_/-]*\.js$/.test(file)) || file.includes('..') || path.basename(file) === 'index.js') throw fail('INVALID_ARGUMENT', 'Add guidance.md or a non-index JavaScript file under extension/internal or extension/commands.');
+      if (run.draftFiles.some(name => name.toLowerCase() === file.toLowerCase())) throw fail('FILE_EXISTS', 'File already exists; use draft-write with its current hash.');
+      if (run.draftFiles.length >= 512 || typeof args.content !== 'string' || args.content.length > 250000) throw fail('INVALID_ARGUMENT', 'Draft file count or content size exceeds the package limit.');
+      const target = assertManagedFile(run.draft.adapterDir, file);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, args.content, { flag: 'wx', mode: 0o600 });
+      run.draftFiles = [...run.draftFiles, file].sort();
+      run.validation = null; run.runtimeSummary = null; run.runtimeDigest = null; run.review = null;
+      this.update(run, 'draft', 'Draft file added; validate again.');
+      return { file, hash: hash(args.content) };
+    }
     if (command === 'draft-read') {
       if (args.file === undefined) return { files: run.draftFiles };
       const file = textArg(args.file, 'file', 200);
@@ -230,7 +261,7 @@ export class ExplorationService {
     }
   }
 
-  async start({ requestId, goal, tabId, signature }) {
+  async start({ requestId, goal, tabId, signature, allowedOrigins }) {
     if (this.runs.size >= 200) throw fail('TASK_LIMIT', 'Exploration task limit reached; archive task data before creating more.');
     const caps = this.capabilities();
     if (!caps.capabilities.includes('passive_exploration_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension to enable passive API exploration.');
@@ -238,10 +269,11 @@ export class ExplorationService {
     if (!tab) throw fail('TAB_CHANGED', 'Select a tab from exploration.tabs.');
     this.assertTabAvailable(tabId);
     const now = new Date().toISOString();
-    const run = { schemaVersion: 1, taskId: randomUUID(), requestId, signature, goal, tabId, origin: new URL(tab.url).origin,
+    const run = { schemaVersion: 1, taskId: randomUUID(), requestId, signature, goal, tabId, allowedOrigins, origin: new URL(tab.url).origin,
       siteKey: new URL(tab.url).hostname, createdAt: now, updatedAt: now, status: 'created', candidates: [], events: [], sequence: 0 };
     this.runs.set(run.taskId, run);
-    return this.collect(run, true);
+    try { return this.collect(run, true); }
+    catch (error) { this.runs.delete(run.taskId); throw error; }
   }
 
   collect(run, reload, probe) {
@@ -253,28 +285,29 @@ export class ExplorationService {
       if (signal.aborted) return;
       await this.checkTab(run);
       if (signal.aborted) return;
-      const found = extractExplorationEvidence(capture, run.origin);
+      const found = extractExplorationEvidence(capture, run.origin, run.allowedOrigins || []);
       run.candidates = [...new Map([...run.candidates, ...found].map(item => [item.id, item])).values()].slice(-100);
-      this.update(run, 'evidence_ready', found.length ? 'Structural evidence collected; calling agent may select APIs.' : 'No usable same-origin evidence; interact with the page and collect again.');
+      this.update(run, 'evidence_ready', found.length ? 'Structural evidence collected; calling agent may select APIs.' : 'No usable evidence from permitted origins; interact with the page and collect again.');
     });
   }
 
   generate(run, proposedPlan) {
     if (run.draft) return this.summary(run); // Repeated generation never overwrites an authored draft.
-    const candidates = run.candidates.filter(item => item.method === 'GET' && !new URL(item.url).pathname.includes(':id')
+    const candidates = run.candidates.filter(item => (item.method === 'GET' || (item.method === 'POST' && ['json', 'form'].includes(item.requestEvidence.bodyKind))) && !new URL(item.url).pathname.includes(':id')
       && item.risk.level === 'read' && item.status >= 200 && item.status < 300);
-    if (!candidates.length) throw fail('NO_READ_EVIDENCE', 'Collect a successful same-origin GET query before generating.');
+    if (!candidates.length) throw fail('NO_READ_EVIDENCE', 'Collect a successful read query from a permitted origin before generating.');
     // Keep original evidence indexes stable for agent-authored plans.
     run.memory = { siteKey: run.siteKey, siteHost: new URL(run.origin).hostname, siteOrigin: run.origin, canonicalEntryUrl: run.origin + '/',
       listApiCandidates: run.candidates.map(item => clone(item)), actionApiCandidates: [] };
     const facade = this.facade(run);
     prepareGenerationRun(facade, { paths: this.paths });
     run.siteKey = facade.snapshot.siteKey; run.memory = facade.snapshot.input.memory;
-    const plan = proposedPlan || buildQuickGenerationPlan({ ...run.memory, listApiCandidates: run.memory.listApiCandidates.map(item => candidates.some(candidate => candidate.id === item.id) ? item : { ...item, url: '' }) });
-    if (!Array.isArray(plan.tools) || !plan.tools.length || plan.tools.length > 2) throw fail('INVALID_PLAN', 'Provide one or two read tools.');
+    const plan = proposedPlan || buildQuickGenerationPlan({ ...run.memory, listApiCandidates: run.memory.listApiCandidates.map(item => item.method === 'GET' && candidates.some(candidate => candidate.id === item.id) ? item : { ...item, url: '' }) });
+    if (!Array.isArray(plan.tools) || !plan.tools.length || plan.tools.length > 50) throw fail('INVALID_PLAN', 'Provide 1–50 read tools per draft. Split larger plans into incremental tasks.');
     for (const tool of plan.tools) {
       const candidate = run.candidates[tool.sourceApiIndexes?.[0]];
-      if (tool.risk !== 'read' || tool.sourceApiKind !== 'list' || !candidate || !candidates.some(item => item.id === candidate.id)) throw fail('INVALID_PLAN', 'Each tool must reference a successful observed read-only GET candidate by index.');
+      if (tool.risk !== 'read' || tool.sourceApiKind !== 'list' || !candidate || !candidates.some(item => item.id === candidate.id)) throw fail('INVALID_PLAN', 'Each tool must reference a successful observed read query by index.');
+      if (candidate.method !== 'GET' && (typeof tool.readReason !== 'string' || !tool.readReason.trim() || tool.readReason.length > 2000)) throw fail('INVALID_PLAN', 'POST queries require an authored readReason explaining their read semantics.');
     }
     run.plan = allocateGenerationPlan(run.memory, plan);
     const outputRoot = path.join(this.root, run.taskId, randomUUID());

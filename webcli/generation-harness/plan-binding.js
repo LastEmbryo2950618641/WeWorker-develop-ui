@@ -33,8 +33,7 @@ export function bindGenerationPlan(memory, plan) {
       sourceToolName = candidate.toolName;
       actions.push(candidate);
     } else {
-      if (lists.length >= 2) throw new Error('generation plan supports at most two read API tools');
-      sourceToolName = `${memory.siteKey}.${lists.length ? 'fetch_summary_groups' : 'search_records'}`;
+      sourceToolName = `${memory.siteKey}.${lists.length === 0 ? 'search_records' : lists.length === 1 ? 'fetch_summary_groups' : `query_read_${lists.length + 1}`}`;
       lists.push(candidate);
     }
     if (overrides.some((item) => item.sourceToolName === sourceToolName)) {

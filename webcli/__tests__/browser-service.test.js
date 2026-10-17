@@ -1,0 +1,102 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import { afterEach, expect, it, vi } from 'vitest';
+import { BrowserService } from '../browser-service.js';
+import { WebSocketBridge } from '../bridge.js';
+import { spawnSync } from 'node:child_process';
+
+const roots = [];
+afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
+function setup() {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'browser-service-')); roots.push(rootDir);
+  const requestExtension = vi.fn(async message => message.type === 'exploration_list_tabs'
+    ? { tabs: [{ id: 7, url: 'https://example.com/' }, { id: 8, url: 'https://example.org/' }] }
+    : { ok: true, data: message.command === 'open' ? { tabId: 8, url: message.args.url, identity: 'example-tab-identity' } : { completed: true, identity: 'example-tab-identity' } });
+  const options = { rootDir, requestExtension, capabilities: () => ({ connected: true, capabilities: ['browser_commands_v1'] }) };
+  return { options, requestExtension, service: new BrowserService(options) };
+}
+it('persists bound sessions across instances and does not close or navigate user tabs', async () => {
+  const { service, options, requestExtension } = setup();
+  expect((await service.execute('bind', { session: 'work', tabId: 7 })).ok).toBe(true);
+  const restored = new BrowserService(options);
+  expect((await restored.execute('sessions')).data.sessions).toMatchObject([{ session: 'work', tabId: 7, owned: false }]);
+  expect((await restored.execute('open', { session: 'work', url: 'https://example.org/' })).error.code).toBe('BOUND_TAB_NAVIGATION');
+  expect((await restored.execute('back', { session: 'work' })).error.code).toBe('BOUND_TAB_NAVIGATION');
+  expect((await restored.execute('close', { session: 'work' })).data.tabClosed).toBe(false);
+  expect(requestExtension.mock.calls.some(([msg]) => msg.command === 'close')).toBe(false);
+});
+it('owns newly opened tabs and closes only owned tabs', async () => {
+  const { service, requestExtension } = setup();
+  const opened = await service.execute('open', { session: 'new', url: 'https://example.org/' });
+  expect(opened.data).toMatchObject({ tabId: 8, owned: true });
+  expect((await service.execute('state', { session: 'new' })).ok).toBe(true);
+  expect((await service.execute('close', { session: 'new' })).data.tabClosed).toBe(true);
+  expect(requestExtension.mock.calls.some(([msg]) => msg.command === 'close' && msg.tabId === 8)).toBe(true);
+});
+it('prevents ambiguous bindings, invalid inputs and non-web URLs', async () => {
+  const { service } = setup();
+  await service.execute('bind', { session: 'one', tabId: 7 });
+  expect((await service.execute('bind', { session: 'two', tabId: 7 })).error.code).toBe('TAB_BUSY');
+  expect((await service.execute('bind', { session: '../escape', tabId: 7 })).error.code).toBe('INVALID_ARGUMENT');
+  expect((await service.execute('state', { session: 'one', unexpected: true })).error.code).toBe('INVALID_ARGUMENT');
+  expect((await service.execute('open', { session: 'two', url: 'file:///example' })).error.code).toBe('INVALID_ARGUMENT');
+  expect((await service.execute('fill', { session: 'one', selector: '#search' })).error.code).toBe('INVALID_ARGUMENT');
+});
+it('serializes work per session without one rejected operation unlocking another', async () => {
+  const { service, requestExtension } = setup(); await service.execute('bind', { session: 'work', tabId: 7 });
+  let finish;
+  const original = requestExtension.getMockImplementation();
+  requestExtension.mockImplementation(message => message.command === 'state' ? new Promise(resolve => { finish = resolve; }) : original(message));
+  const running = service.execute('state', { session: 'work' });
+  await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+  for (let i = 0; i < 2; i++) expect((await service.execute('state', { session: 'work' })).error.code).toBe('SESSION_BUSY');
+  finish({ ok: true, data: { title: 'Example' } }); expect((await running).ok).toBe(true);
+});
+it('reports capability gaps and preserves typed page failures', async () => {
+  const { options, service, requestExtension } = setup(); await service.execute('bind', { session: 'work', tabId: 7 });
+  expect((await service.execute('doctor')).data.ready).toBe(true);
+  const outdated = new BrowserService({ ...options, capabilities: () => ({ connected: true, capabilities: [] }) });
+  expect((await outdated.execute('doctor')).data.ready).toBe(false);
+  expect((await outdated.execute('state', { session: 'work' })).error.code).toBe('EXTENSION_UPGRADE_REQUIRED');
+  const original = requestExtension.getMockImplementation();
+  requestExtension.mockImplementation(message => message.type === 'browser_execute' ? { ok: false, error: { code: 'STALE_REF', message: 'Refresh state.' } } : original(message));
+  expect((await service.execute('click', { session: 'work', ref: 'old' })).error.code).toBe('STALE_REF');
+});
+it('only local RPC callers receive browser results; extension peers cannot invoke it', async () => {
+  const bridge = Object.create(WebSocketBridge.prototype);
+  const execute = vi.fn(async () => ({ ok: true, data: { title: 'Example' } }));
+  bridge._browserServicePromise = Promise.resolve({ execute }); bridge._broadcast = vi.fn();
+  const ws = { _explorationLocal: true, readyState: 1, send: vi.fn() };
+  await bridge._handleBrowserCommand({ id: 'one', command: 'state', args: {} }, ws);
+  expect(execute).toHaveBeenCalledOnce(); expect(bridge._broadcast).not.toHaveBeenCalled();
+  expect(JSON.parse(ws.send.mock.calls[0][0])).toMatchObject({ id: 'one', type: 'browser_command_result', result: { ok: true } });
+  await bridge._handleBrowserCommand({ id: 'two', command: 'state' }, { ...ws, _explorationLocal: false });
+  expect(execute).toHaveBeenCalledOnce();
+});
+it('actual CLI exposes browser discovery without a service or model', () => {
+  const cli = new URL('../index.js', import.meta.url);
+  const result = spawnSync(process.execPath, [cli.pathname, 'call', 'browser.help'], { encoding: 'utf8' });
+  expect(result.status).toBe(0);
+  expect(JSON.parse(result.stdout).commands.map(item => item.name)).toContain('browser.network');
+});
+
+it('permits dialog responses while a browser operation is blocked, without releasing its lock', async () => {
+  const { service, requestExtension } = setup(); await service.execute('bind', { session: 'work', tabId: 7 });
+  let finish; const original = requestExtension.getMockImplementation();
+  requestExtension.mockImplementation(message => message.command === 'click' ? new Promise(resolve => { finish = resolve; }) : original(message));
+  const pending = service.execute('click', { session: 'work', selector: '#prompt' });
+  await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+  expect((await service.execute('dialog', { session: 'work', action: 'accept' })).ok).toBe(true);
+  expect((await service.execute('state', { session: 'work' })).error.code).toBe('SESSION_BUSY');
+  finish({ ok: true, data: {} }); await pending;
+});
+it('validates upload files locally and preserves expired browser session identity errors', async () => {
+  const { service, requestExtension, options } = setup(); await service.execute('bind', { session: 'work', tabId: 7 });
+  expect((await service.execute('upload', { session: 'work', selector: 'input', paths: ['relative.txt'] })).error.code).toBe('INVALID_ARGUMENT');
+  expect((await service.execute('upload', { session: 'work', selector: 'input', paths: [options.rootDir] })).error.code).toBe('INVALID_ARGUMENT');
+  const original = requestExtension.getMockImplementation();
+  requestExtension.mockImplementation(message => message.type === 'browser_execute' ? { ok: false, error: { code: 'SESSION_EXPIRED', message: 'Rebind intended tab.' } } : original(message));
+  expect((await service.execute('state', { session: 'work' })).error.code).toBe('SESSION_EXPIRED');
+  expect(requestExtension.mock.calls.at(-1)[0].identity).toBe('example-tab-identity');
+});

@@ -170,7 +170,7 @@ export function suggestAdapters(models, keyword) {
 export async function runAdapterHelp(args) {
   const { loadAdapterViews } = await import('./adapter-cli.js');
   const models = (await loadAdapterViews()).map((adapter) => toAdapterHelpModel(adapter));
-  if (args.length === 1) return renderGlobalHelp(models) + '\n\nAPI exploration: webcli call exploration.help (standalone; current agent authors the Adapter).';
+  if (args.length === 1) return renderGlobalHelp(models) + '\n\nBrowser: webcli call browser.help\nAPI exploration: webcli call exploration.help (standalone; current agent authors the Adapter).';
   const adapter = models.find((model) => model.id === args[0])
     || models.find((model) => model.commands.some((command) => command.aliases?.includes(args[0])));
   if (!adapter) throw new Error('Adapter unavailable: ' + args[0]);

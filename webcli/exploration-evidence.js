@@ -41,14 +41,29 @@ function listPath(shape, prefix = '', depth = 0) {
   return '';
 }
 
-export function extractExplorationEvidence(capture, origin) {
+// Persist only operation semantics, never a captured GraphQL document/variables.
+function requestSemantics(entry, pathname) {
+  let body = entry.requestBodyPreview ?? entry.requestBody;
+  try { if (typeof body === 'string') body = JSON.parse(body); } catch { body = null; }
+  const graph = /graphql/i.test(pathname) || (body && typeof body.query === 'string' && /^\s*(query\b|mutation\b|subscription\b|\{)/.test(body.query));
+  if (graph) {
+    if (!body || typeof body.query !== 'string' || entry.requestBodyTruncated) return { kind: 'graphql', operation: 'unknown' };
+    const document = body.query.replace(/"""[\s\S]*?"""|"(?:\\.|[^"\\])*"|#[^\n]*/g, ' ');
+    const operation = /\bmutation\b/.test(document) ? 'mutation' : /\bsubscription\b/.test(document) ? 'subscription' : /^\s*(query\b|\{)/.test(document) ? 'query' : 'unknown';
+    return { kind: 'graphql', operation };
+  }
+  if (body && ['action', 'operation', 'op'].some(key => typeof body[key] === 'string' && /delete|remove|update|create|submit|publish|save|cancel|approve|reject/i.test(body[key]))) return { kind: 'rpc', operation: 'mutation' };
+  return { kind: 'http', operation: 'unknown' };
+}
+
+export function extractExplorationEvidence(capture, origin, allowedOrigins = []) {
   const entries = [...(capture.initialNetwork?.entries || []), ...(capture.network?.entries || []), ...(capture.networkDelta?.entries || []), ...(capture.entries || [])];
   const candidates = new Map();
   for (const entry of entries.slice(0, 300)) {
     try {
       const raw = new URL(entry.url);
       // Cross-origin APIs need an explicit reviewed grant; never infer it from traffic.
-      if (raw.origin !== origin) continue;
+      if (raw.origin !== origin && !allowedOrigins.includes(raw.origin)) continue;
       const url = structuralUrl(raw.href);
       const method = String(entry.method || 'GET').toUpperCase();
       const responseEvidence = cleanBody(normalizeResponseBodyEvidence(entry));
@@ -57,6 +72,12 @@ export function extractExplorationEvidence(capture, origin) {
         responseContentType: String(entry.responseContentType || entry.contentType || '').split(';')[0].slice(0, 80),
         requestEvidence, responseEvidence };
       candidate.risk = classifyApiCandidateRisk(candidate);
+      candidate.requestSemantics = requestSemantics(entry, raw.pathname);
+      const semantics = candidate.requestSemantics;
+      if (semantics.operation === 'mutation') candidate.risk = { level: 'write', confidence: 0.99, evidence: ['observed_mutation_operation'] };
+      else if (semantics.kind === 'graphql' && candidate.risk.level !== 'write') candidate.risk = semantics.operation === 'query'
+        ? { level: 'read', confidence: 0.92, evidence: ['observed_graphql_query'] }
+        : { level: 'unknown', confidence: 0.2, evidence: ['unresolved_graphql_operation'] };
       candidate.responseHints = { listPath: listPath(responseEvidence.bodyShape) };
       candidate.id = createHash('sha256').update(`${method} ${url}`).digest('hex').slice(0, 16);
       candidates.set(candidate.id, candidate);

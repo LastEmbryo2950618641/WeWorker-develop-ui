@@ -1,0 +1,107 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { browserCommands, browserHelp } from './browser-commands.js';
+import { resolveAdapterPaths } from './paths.js';
+import { assertManagedDirectory, assertManagedFile } from './adapter-package-files.js';
+import { explorationError as fail, integerArg, textArg } from './exploration-commands.js';
+import { TabOperationLocks } from './tab-operation-locks.js';
+
+export class BrowserService {
+  constructor({ rootDir, requestExtension, tabLocks = new TabOperationLocks(), capabilities = () => ({ connected: false, capabilities: [] }) } = {}) {
+    this.root = rootDir || path.join(resolveAdapterPaths().workspaceDir, 'browser');
+    assertManagedDirectory(this.root); fs.mkdirSync(this.root, { recursive: true, mode: 0o700 });
+    this.file = assertManagedFile(this.root, 'sessions.json');
+    this.bindings = fs.existsSync(this.file) ? JSON.parse(fs.readFileSync(this.file, 'utf8')) : {};
+    this.request = requestExtension; this.capabilities = capabilities; this.busy = new Set(); this.tabLocks = tabLocks;
+  }
+  save() {
+    const temp = assertManagedFile(this.root, 'sessions.json.tmp');
+    fs.writeFileSync(temp, JSON.stringify(this.bindings), { mode: 0o600 }); fs.renameSync(temp, this.file);
+  }
+  async execute(command, args = {}) {
+    let session, ownsSession = false;
+    try {
+      const spec = Object.hasOwn(browserCommands, command) ? browserCommands[command] : null;
+      if (!spec) throw fail('UNKNOWN_COMMAND', 'Use webcli call browser.help.');
+      if (!args || typeof args !== 'object' || Array.isArray(args)) throw fail('INVALID_ARGUMENT', 'Arguments must be an object.');
+      for (const key of Object.keys(args)) if (!spec.params.some(param => param.replace(/\?$/, '') === key)) throw fail('INVALID_ARGUMENT', `Unknown argument: ${key}`);
+      for (const param of spec.params.filter(param => !param.endsWith('?'))) if (args[param] === undefined) throw fail('INVALID_ARGUMENT', `Missing argument: ${param}`);
+      if (spec.params.includes('session')) {
+        session = textArg(args.session, 'session', 80);
+        if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(session) || ['__proto__', 'constructor', 'prototype'].includes(session)) throw fail('INVALID_ARGUMENT', 'Use an alphanumeric session name.');
+        // Dialog replies must remain available while a click/eval waits for it.
+        if (command !== 'dialog') {
+          if (this.busy.has(session)) throw fail('SESSION_BUSY', 'Another operation is using this session.');
+          this.busy.add(session); ownsSession = true;
+        }
+      }
+      const data = await this.dispatch(command, args, session);
+      return { schemaVersion: 1, ok: true, command: `browser.${command}`, data };
+    } catch (error) {
+      return { schemaVersion: 1, ok: false, command: `browser.${command}`, error: { code: error.code || 'BROWSER_OPERATION_FAILED',
+        message: error.code ? String(error.message).slice(0, 1000) : 'Browser operation failed. Inspect connection and current tab state.' } };
+    } finally { if (ownsSession) this.busy.delete(session); }
+  }
+  async tabs() {
+    if (!this.capabilities().connected) throw fail('EXTENSION_UNAVAILABLE', 'Connect the WeWorker extension.');
+    const result = await this.request({ type: 'exploration_list_tabs' }, 15000);
+    return (result.tabs || []).filter(tab => /^https?:\/\//.test(tab.url));
+  }
+  async send(command, args, tabId, identity) {
+    if (!this.capabilities().capabilities.includes('browser_commands_v1')) throw fail('EXTENSION_UPGRADE_REQUIRED', 'Reload the extension built from this branch to enable browser commands.');
+    const release = command === 'dialog' ? () => {} : this.tabLocks.acquire(tabId);
+    try {
+      const result = await this.request({ type: 'browser_execute', command, args, tabId, identity }, 45000);
+      if (!result?.ok) throw fail(result?.error?.code || 'BROWSER_OPERATION_FAILED', result?.error?.message || 'Browser operation failed.');
+      return result.data;
+    } finally { release(); }
+  }
+  async dispatch(command, args, session) {
+    if (command === 'help') return browserHelp();
+    if (command === 'sessions') return { sessions: Object.values(this.bindings) };
+    if (command === 'doctor') {
+      const state = this.capabilities(); let tabQuery = false;
+      if (state.connected) { await this.tabs(); tabQuery = true; }
+      return { ...state, tabQuery, browserCommands: state.capabilities.includes('browser_commands_v1'),
+        ready: tabQuery && state.capabilities.includes('browser_commands_v1'), desktopRequired: false };
+    }
+    if (command === 'tabs') return { tabs: await this.tabs() };
+    const binding = Object.hasOwn(this.bindings, session) ? this.bindings[session] : null;
+    if (command === 'unbind') { delete this.bindings[session]; this.save(); return { session, released: true, tabClosed: false }; }
+    if (command === 'bind') {
+      if (binding) throw fail('SESSION_BOUND', 'Unbind or close this session before rebinding.');
+      const tabId = integerArg(args.tabId, 'tabId');
+      if (!(await this.tabs()).some(tab => tab.id === tabId)) throw fail('TAB_NOT_FOUND', 'Choose an HTTP(S) tab from browser.tabs.');
+      if (Object.values(this.bindings).some(item => item.tabId === tabId)) throw fail('TAB_BUSY', 'This tab belongs to another session.');
+      const { identity } = await this.send('bind', {}, tabId);
+      if (Object.values(this.bindings).some(item => item.tabId === tabId)) throw fail('TAB_BUSY', 'This tab was bound by another session.');
+      this.bindings[session] = { session, tabId, identity, owned: false, createdAt: new Date().toISOString() }; this.save();
+      return this.bindings[session];
+    }
+    if (command === 'open') {
+      let url; try { url = new URL(args.url); } catch { throw fail('INVALID_ARGUMENT', 'Provide an HTTP(S) URL.'); }
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw fail('INVALID_ARGUMENT', 'Provide an HTTP(S) URL without embedded credentials.');
+      if (binding && !binding.owned) throw fail('BOUND_TAB_NAVIGATION', 'Use a separate session to open a page; this session is bound to a user tab.');
+      const result = await this.send('open', { url: url.href, background: args.background === true || args.background === 'true' }, binding?.tabId, binding?.identity);
+      this.bindings[session] = { session, tabId: result.tabId, identity: result.identity, owned: true, createdAt: binding?.createdAt || new Date().toISOString() }; this.save();
+      return { ...this.bindings[session], ...result };
+    }
+    if (!binding) throw fail('SESSION_NOT_FOUND', 'Use browser.open or browser.bind first.');
+    if (command === 'close') {
+      if (binding.owned && (await this.tabs()).some(tab => tab.id === binding.tabId)) await this.send('close', {}, binding.tabId, binding.identity);
+      delete this.bindings[session]; this.save(); return { session, released: true, tabClosed: binding.owned };
+    }
+    if (!(await this.tabs()).some(tab => tab.id === binding.tabId)) throw fail('TAB_NOT_FOUND', 'The session tab was closed. Unbind and choose another tab.');
+    if (command === 'back' && !binding.owned) throw fail('BOUND_TAB_NAVIGATION', 'Back is available only for session-owned tabs.');
+    if (command === 'upload') {
+      if (!Array.isArray(args.paths) || !args.paths.length || args.paths.length > 20) throw fail('INVALID_ARGUMENT', 'paths must contain 1–20 absolute file paths.');
+      for (const file of args.paths) {
+        if (typeof file !== 'string' || !path.isAbsolute(file)) throw fail('INVALID_ARGUMENT', 'Each upload path must be absolute.');
+        let stat; try { stat = fs.statSync(file); } catch { throw fail('FILE_UNAVAILABLE', 'An upload file is unavailable.'); }
+        if (!stat.isFile()) throw fail('INVALID_ARGUMENT', 'Upload paths must point to regular files.');
+      }
+    }
+    const { session: ignored, ...params } = args;
+    return { session, tabId: binding.tabId, ...await this.send(command, params, binding.tabId, binding.identity) };
+  }
+}

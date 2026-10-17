@@ -1,6 +1,6 @@
 # API 自动探索 CLI 改造跟进与交接
 
-> 更新日期：2026-10-17。当前阶段：独立 WebCLI 探索首版已实现；真实 Chromium、插件与本地示例站点的 CLI 全流程通过。真实登录站点、Claude 独立对话与安装包验收尚未完成。
+> 更新日期：2026-10-17。当前阶段：已扩展通用 browser CLI、跨源授权、POST/GraphQL 读取与多工具草稿；本地真实浏览器 17 项、用户指定公共视频搜索站点的 CLI 完整闭环通过。OpenCLI 全能力对齐仍进行中，Claude 独立对话与安装包验收尚未完成。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
 
 ## 最新状态
@@ -10,6 +10,7 @@
 - 本次使用原工作目录，无新 worktree。切换时 ROADMAP.md 阻止 checkout，具名 stash 保存两份文档后切换并 apply，保留双方路线图。stash 仍保留作备份。
 - 功能分支在集成提交后创建为 `codex/api-exploration-cli`，最终操作结果见文末。未推送或创建 PR，最终发布目标仍待明确。
 - [开发设计](api_exploration_cli_design.md) 为本次审阅入口。
+- [OpenCLI 能力对齐台账](opencli_parity.md) 为最新范围与缺口清单；用户要求尽力对齐完整能力，不能把当前 34 个 browser 命令或单站点验收视为目标完成。
 - 功能实现提交为 `821a7df`；本轮真实浏览器验收与修复见文末。上游整合 SHA 没有变化，仍从 develop `4c3d5bd` / dev-1.1.0 `dae8932` 继续同步。
 > 后续每次建分支、同步上游、解决冲突、实现功能或验证后，都应更新本文和 ROADMAP.md。未验证事项不得标为完成。
 
@@ -244,3 +245,20 @@ npm run test:exploration:browser --prefix webcli -- \
 若本地已有可导入的 Playwright 和匹配的浏览器，上述两个参数可以省略。脚本输出临时产物路径，`report.json` 中 `passed: true` 才代表完整通过。
 
 下一位 Agent 先核对分支和最新提交，再阅读当前设计与产品 Skill。上游同步仍按“上游 → codex/api-exploration-base → codex/api-exploration-cli”；新 dev 改动不要直接覆盖功能分支，Python 冲突交对应负责人。本轮真实浏览器缺口已补上，下一步可选真实登录站点/独立 Agent 验收或 API 探索 UI 接入。未推送、未创建 PR。
+
+### 2026-10-17：OpenCLI 对齐第一轮与真实站点验收
+
+- 操作前 HEAD `a5e04d2`，分支仍为 `codex/api-exploration-cli`，没有新增上游合并。完整目标记录在 `docs/opencli_parity.md`；当前结果只是已完成的一批能力，目标保持进行中。
+- 用户已安装当前工作区 public 扩展并指定公共视频搜索页验收。本轮核实原全局 Bridge 的 PID/启动命令后切换为本分支 source Bridge；后续只重启本轮自己启动的已确认进程。扩展从 `weworker/build/extension-dist` 构建并通过既有协议重载。未访问/终止未知 8766 进程，未修改 Python 模块。
+- 34 个 browser.* 命令与独立 Skill：持久命名会话、owned/bound 标签管理、doctor；CSS/role/name/text/ref 定位和陈旧/歧义错误；表单与键盘；主 frame 原生指针/拖拽、文件输入；网络摘要/过滤/有界 JSON 详情；frames、eval、完整截图、console、dialog、wait。Bridge 日志只记浏览器命令元数据，不记脚本、参数或输入值。
+- 会话用 Chrome storage.session 身份防止 tabId 回收误操作；浏览器重启或扩展重载后身份可能过期，需要重新选择并绑定。用户绑定页 close 不关闭标签，open/back 不导航该页。browser 与探索采集/验证共享 tab 锁；取消不提前释放尚未完成的浏览器请求，dialog 可解除正在执行命令等待的弹窗。
+- start 增加 allowedOrigins 精确授权，额外域不从流量自动取得。大响应在截断预览前生成类型结构，修复真实站点超过 4KB 响应丢失列表形状问题。
+- Agent 计划支持 1–50 读取工具（默认自动计划仍最多两个 GET）；支持 JSON/form POST 和显式 GraphQL query，POST 必须有 readReason。mutation、subscription、未解析持久查询及已识别业务写信号不进入读取生成。GraphQL 文档/变量值不写入证据。
+- 新增 draft-add 创作 helper/command/guidance 文件和 trace 结构诊断；现有文件仍走 expectedHash 修改。草稿改变使验证和审阅失效，同站点保留命令不重写、不执行。
+- 真实站点：捕获搜索分页接口并确定 PAGE_FETCH 策略，最小 keyword/page 请求返回成功，不复制 Cookie 或捕获签名。通过 draft-write 编写参数与结果映射，新命令以 explored 前缀避开内置搜索命令；静态检查及真实预览均通过，再按用户全流程验收授权本地增量安装。两页相同关键词和一页不同关键词三次普通 CLI 调用各返回 20 条，页码正确、ID 集合变化，标题/作者/链接/播放量/时长类型检查通过；后续 source Bridge/扩展更新后普通调用复验仍通过。真实页面内容、响应样本、会话 ID 和捕获值未提交。
+- 实际运行本地安装位于既有用户 profile；无内置源码改动，无业务写操作。下一次可通过 exploration.list/get/trace 找到任务，不把本地安装视为公开内置 Adapter 交付。
+- 隔离真实 Chromium 147 + 插件 + CLI/Bridge 验收从 15 项扩展为 17 项：浏览器命令组、三工具 JSON/form/GraphQL 生成及真实验证/安装/调用、helper 新增/trace，以及原有错误修复、增量保留、取消/重启恢复均通过。临时完整报告保持本机，不提交。
+- 验收发现并修复弹窗期间再次 Page.enable 会阻塞的问题；测试禁用 Playwright 自动关闭弹窗，由产品 CLI 处理。最终测试没有模拟 CDP、网络或验证器。
+- 验证：WebCLI 全量 98 文件/1069 项通过；Extension 聚焦 5 文件/42 项通过；WebCLI/Bridge bundle、公开配置、git diff --check 通过；npm pack dry-run 577 文件，新浏览器模块、tab 锁、extension 实现和 browser Skill 均在包中。无新增依赖/lockfile 变化。已有可选列映射资源缺失提示未处理。
+- 剩余工作：完整策略生成（DOM/UI/INTERCEPT 等）、动态路径、写工具语义与验证、fixtures/站点知识/安装后修复、复杂 frame/Shadow DOM/多连接、下载/持续网络流、外部 CLI/Electron/CDP、UI 统一和独立 Codex/Claude 新会话验收。不能宣称全面对齐或任意站点可靠性。
+- 接手先核对 git status/HEAD、本文及能力台账。source Bridge 可用 browser.doctor 读状态，未知进程不可直接复用/终止。同步上游仍走“上游 → api-exploration-base → api-exploration-cli”，本轮没有改变同步基线。Python 相对 `af8e082` 差异为零；未推送、未创建 PR。

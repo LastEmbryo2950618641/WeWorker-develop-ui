@@ -11,6 +11,8 @@ allowed-tools: Bash(webcli *), Bash(npm install *), Bash(npm view *)
 
 需要探索新网站 API 或生成 Adapter 时，使用随包提供的 `webcli-api-exploration` Skill，并先运行 `webcli call exploration.help`。该链路由当前 Agent 分析和编写代码，只需 WebCLI + 浏览器插件，不依赖桌面客户端或额外模型 Key。
 
+需要直接操作或检查页面时，使用随包提供的 `webcli-browser` Skill，先运行 `webcli call browser.help`。命名 session 在多个 CLI 进程之间共享绑定，浏览器命令与探索任务共用同一 Bridge。
+
 ## 环境准备（agent 自动完成，无需让用户操作）
 
 **第一步——每次使用前先确保 `webcli` 是最新版**。旧版本可能缺少适配器或修复，必须先比对版本、落后则更新：

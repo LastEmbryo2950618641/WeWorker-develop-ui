@@ -40,6 +40,7 @@ import { GenerationWorkerController } from './generation-worker-controller.js';
 import { buildApiSourceEvidence, normalizeRequestBodyEvidence, normalizeResponseBodyEvidence } from './generation-harness/source-evidence.js';
 import { buildPreviousFailureContext } from './generation-harness/failure-attribution.js';
 import { modelOutputErrorDetails } from './generation-harness/model-output-policy.js';
+import { TabOperationLocks } from './tab-operation-locks.js';
 
 const execFileAsync = promisify(execFile);
 const WS_PORT = 3711;
@@ -647,6 +648,8 @@ export class WebSocketBridge extends EventEmitter {
               // Reply only to the requesting local client. Task evidence must not
               // be broadcast to the extension or unrelated CLI connections.
               this._handleExplorationCommand(msg, ws);
+            } else if (msg.type === 'browser_command') {
+              this._handleBrowserCommand(msg, ws);
             } else if (msg.type === 'write_adapter_file') {
               // 来自扩展的文件写入请求
               this._handleWriteAdapterFile(msg, ws);
@@ -812,13 +815,31 @@ export class WebSocketBridge extends EventEmitter {
 
   // ─── 处理来自CLI客户端的请求 ─────────────────────────────────────────────────
 
+  async _handleBrowserCommand(msg, ws) {
+    let result;
+    try {
+      if (ws === this._extensionWs || ws._explorationLocal !== true) throw new Error('Local CLI required.');
+      if (!this._browserServicePromise) {
+        this._browserServicePromise = import('./browser-service.js').then(({ BrowserService }) => new BrowserService({
+          tabLocks: this._tabOperationLocks ||= new TabOperationLocks(),
+          requestExtension: (message, timeout) => this._request(message, timeout),
+          capabilities: () => ({ connected: Boolean(this.isExtensionConnected()), extensionVersion: this._extensionVersion,
+            capabilities: [...this._extensionCapabilities], protocolVersion: 1 }),
+        })).catch(error => { this._browserServicePromise = null; throw error; });
+      }
+      result = await (await this._browserServicePromise).execute(msg.command, msg.args);
+    } catch { result = { schemaVersion: 1, ok: false, error: { code: 'BROWSER_UNAVAILABLE', message: 'Browser commands require a local CLI and a valid Adapter profile.' } }; }
+    if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'browser_command_result', id: msg.id, result }));
+  }
+
   async _handleExplorationCommand(msg, ws) {
     try {
       if (ws === this._extensionWs || ws._explorationLocal !== true) throw new Error('Exploration commands require a local CLI connection.');
       if (!this._explorationServicePromise) {
         this._explorationServicePromise = import('./exploration-service.js').then(({ ExplorationService }) => new ExplorationService({
+          tabLocks: this._tabOperationLocks ||= new TabOperationLocks(),
           requestExtension: (message, timeout) => this._request(message, timeout),
-          capabilities: () => ({ connected: this.isExtensionConnected(), capabilities: [...this._extensionCapabilities] }),
+          capabilities: () => ({ connected: Boolean(this.isExtensionConnected()), capabilities: [...this._extensionCapabilities] }),
         })).catch(error => { this._explorationServicePromise = null; throw error; });
       }
       const service = await this._explorationServicePromise;
@@ -1444,7 +1465,8 @@ export class WebSocketBridge extends EventEmitter {
       const timing = this._callTimings.get(msg.traceID);
       if (timing) timing.dispatchedAt = Date.now();
     }
-    process.stderr.write(`[${ts()}] [Bridge] -> extension: ${JSON.stringify(msg).substring(0, 200)}\n`);
+    const logMessage = msg.type === 'browser_execute' ? { type: msg.type, command: msg.command, id: msg.id, tabId: msg.tabId } : msg;
+    process.stderr.write(`[${ts()}] [Bridge] -> extension: ${JSON.stringify(logMessage).substring(0, 200)}\n`);
     return true;
   }
 

@@ -51,6 +51,10 @@ export function writeScaffoldFromSiteMemory(memory, options = {}) {
     const actionCandidates = applySemanticToolNamesToCandidates(initialActionCandidates, semanticConfig);
     const primaryToolName = primary ? semanticConfig.getToolName(`${memory.siteKey}.search_records`) : '';
     const secondaryToolName = primary && secondary ? semanticConfig.getToolName(`${memory.siteKey}.fetch_summary_groups`) : '';
+    const additionalLists = memory.generationPlanBound ? memory.listApiCandidates.slice(2).map((candidate, index) => {
+        const sourceToolName = `${memory.siteKey}.query_read_${index + 3}`;
+        return { candidate, sourceToolName, toolName: semanticConfig.getToolName(sourceToolName) };
+    }) : [];
     const detailToolName = semanticConfig.getToolName(`${memory.siteKey}.list_detail_candidates`);
     if (!primary && actionCandidates.length === 0) {
         throw new Error(`no reusable list or action api candidates available for ${memory.siteKey}`);
@@ -61,6 +65,7 @@ export function writeScaffoldFromSiteMemory(memory, options = {}) {
     const semanticToolNames = collectSemanticReadToolNames(memory.siteKey, actionCandidates);
     const toolNames = buildGeneratedToolNames(memory.siteKey, {
         allowedToolNames: memory.generationPlanToolNames,
+        additionalLists,
         hasPrimary: Boolean(primary),
         hasSecondary: Boolean(primary && secondary),
         includeDetailHints,
@@ -72,6 +77,7 @@ export function writeScaffoldFromSiteMemory(memory, options = {}) {
         detailToolName
     });
     const supportBundle = buildSupportBundle(memory, {
+        additionalLists,
         adapterDir,
         sharedRuntimeRel,
         supportFileRel,
@@ -534,6 +540,7 @@ function buildSupportBundle(memory, context) {
     const actionHintRegistry = buildActionHintRegistry(memory.siteKey, context.actionCandidates, semanticReadCandidate);
     const toolNames = buildGeneratedToolNames(memory.siteKey, {
         allowedToolNames: memory.generationPlanToolNames,
+        additionalLists: context.additionalLists,
         hasPrimary: Boolean(context.primary),
         hasSecondary: Boolean(context.primary && context.secondary),
         includeDetailHints: context.includeDetailHints,
@@ -564,6 +571,12 @@ function buildSupportBundle(memory, context) {
             parameterDescriptions: context.semanticConfig.getToolOverride(`${memory.siteKey}.fetch_summary_groups`)?.parameterDescriptions || {},
             parameterUiHints: context.semanticConfig.getToolOverride(`${memory.siteKey}.fetch_summary_groups`)?.parameterUiHints || {}
         }));
+    }
+    for (const { candidate, sourceToolName, toolName } of context.additionalLists || []) {
+        const override = context.semanticConfig.getToolOverride(sourceToolName) || {};
+        toolModules.push(buildListToolModule({ siteKey: memory.siteKey, candidate, toolName,
+            description: override.description || '查询已观察到的接口',
+            parameterDescriptions: override.parameterDescriptions, parameterUiHints: override.parameterUiHints }));
     }
     for (const candidate of context.actionCandidates){
         toolModules.push(...buildActionToolModules(memory.siteKey, candidate, context.semanticConfig));
@@ -2519,6 +2532,7 @@ function buildGeneratedToolNames(siteKey, context) {
     ];
     if (context.hasPrimary) names.push(context.primaryToolName || `${siteKey}.search_records`);
     if (context.hasSecondary) names.push(context.secondaryToolName || `${siteKey}.fetch_summary_groups`);
+    for (const item of context.additionalLists || []) names.push(item.toolName);
     for (const candidate of context.actionCandidates){
         names.push(candidate.toolName);
     }

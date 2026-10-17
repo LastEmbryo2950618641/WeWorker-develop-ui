@@ -4,6 +4,9 @@ import { injectAdapterSources } from './adapter-script-loader.js';
 import { createHostAdapterClient } from './host-adapter-client.js';
 import { createHostAdapterRuntime, assertAdapterNavigationUrl, createNavigationGuard, navigateAdapterTab } from './host-adapter-runtime.js';
 import { createManagedBackgroundRuntime, MANAGED_RUNNER_PATH } from './managed-background-runtime.js';
+import { executeBrowserCommand } from './browser-commands.js';
+import { browserResponseEvidence } from './browser-network.js';
+import { recordBrowserObservation, clearBrowserObservations } from './browser-observations.js';
 
 /**
  * Background Service Worker
@@ -33,6 +36,7 @@ const EXTENSION_CAPABILITIES = [
   'action_capture_analysis_retry_v1',
   'generation_harness_v1',
   'runtime_validation_v1',
+  'browser_commands_v1',
 ];
 
 function buildExtensionHello(extra = {}) {
@@ -2208,6 +2212,7 @@ async function sendExplorationMessage(tabId, payload) {
 chrome.debugger.onEvent.addListener(async (source, method, params) => {
   const tabId = source?.tabId;
   if (!tabId || !cdpAttachedTabs.has(tabId)) return;
+  recordBrowserObservation(tabId, method, params);
 
   if (method === 'Runtime.executionContextCreated') {
     const context = params?.context;
@@ -2312,6 +2317,7 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
 
       pushCdpNetworkEntry(tabId, {
         kind: 'cdp',
+        requestId: params.requestId,
         url: pending.url,
         method: pending.method,
         timestamp: pending.timestamp,
@@ -2324,6 +2330,7 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
         responseHeaders: pending.responseHeaders,
         responseContentType: pending.responseContentType || pending.mimeType || '',
         responsePreview,
+        responseEvidence: browserResponseEvidence(responseBody),
         encodedDataLength: params.encodedDataLength || 0,
       });
       const adapterSession = adapterNetworkCaptureSessions.get(tabId);
@@ -2358,6 +2365,7 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
       if (!pending) return;
       pushCdpNetworkEntry(tabId, {
         kind: 'cdp',
+        requestId: params.requestId,
         url: pending.url,
         method: pending.method,
         timestamp: pending.timestamp,
@@ -2392,6 +2400,7 @@ chrome.debugger.onDetach.addListener((source, reason) => {
   const tabId = source?.tabId;
   if (!tabId) return;
   cdpAttachedTabs.delete(tabId);
+  clearBrowserObservations(tabId);
   cdpExecutionContexts.delete(tabId);
   adapterNetworkCaptureSessions.delete(tabId);
   const state = cdpNetworkState.get(tabId);
@@ -3251,6 +3260,9 @@ async function handleNativeMessage(msg) {
     } catch (err) {
       sendToNative({ type: "call_tool_error", id: msg.id, error: err.message });
     }
+  } else if (msg.type === 'browser_execute') {
+    const result = await executeBrowserCommand(msg, { chrome, ensureCdpAttached, cdpEvaluate, getCdpNetworkSnapshot });
+    sendToNative({ type: 'call_tool_result', id: msg.id, result });
   } else if (msg.type === 'browser_state') {
     try {
       const tabId = await getExplorationTabId(msg.tabId);
@@ -6871,6 +6883,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  clearBrowserObservations(tabId);
+  chrome.storage.session.remove(`webcli-browser-tab-${tabId}`).catch(() => {});
   const actionCaptureSession = cdpActionCaptureSessions.get(tabId);
   if (actionCaptureSession && typeof actionCaptureSession.requestStop === 'function') {
     actionCaptureSession.errors.push('TARGET_TAB_NOT_FOUND');

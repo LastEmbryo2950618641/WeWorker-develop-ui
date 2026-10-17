@@ -69,19 +69,39 @@ try {
     try { result = await exec(process.execPath, [path.join(copy, 'index.js'), 'call', command, '--args', JSON.stringify(args), '--output-format=json'], { env, timeout: 95000, maxBuffer: 3_000_000 }); }
     catch (error) { if (expectedOk) throw error; result = error; }
     const output = JSON.parse(result.stdout);
-    if (command.startsWith('exploration.')) assert.equal(output.ok, expectedOk, JSON.stringify(output));
+    if (command.startsWith('exploration.') || command.startsWith('browser.')) assert.equal(output.ok, expectedOk, JSON.stringify(output));
     return output;
   }
   const html = `<!doctype html><title>Example inventory</title><h1>Example inventory</h1>
     <form role="search"><input id="query" type="search" placeholder="Search items" aria-label="Search items"><button type="submit">Search</button></form>
     <button id="next" aria-label="Next page">Next page</button><pre id="items"></pre>
+    <label><input id="checked" type="checkbox">Example checkbox</label>
+    <select id="options"><option value="one">One</option><option value="two">Two</option></select>
+    <button class="duplicate">Duplicate</button><button class="duplicate">Duplicate</button>
+    <input id="upload" type="file" style="display:none"><button id="trusted" onclick="window.exampleTrusted=event.isTrusted">Trusted click</button>
+    <div id="drag" style="display:inline-block;width:60px;height:40px;background:lightblue">Drag</div>
+    <div id="drop" style="display:inline-block;width:60px;height:40px;background:lightgreen">Drop</div>
+    <script>document.querySelector('#drag').onpointerdown=()=>window.exampleDragging=true;document.querySelector('#drop').onpointerup=()=>window.exampleDropped=window.exampleDragging;</script>
     <script>let page=1; async function load(){const response=await fetch('/api/items?q='+encodeURIComponent(document.querySelector('#query').value)+'&page='+page+'&limit=2');document.querySelector('#items').textContent=JSON.stringify(await response.json());}
-    document.querySelector('form').onsubmit=e=>{e.preventDefault();page=1;load()};document.querySelector('#next').onclick=()=>{page++;load()};load();</script>`;
+    document.querySelector('form').onsubmit=e=>{e.preventDefault();page=1;load()};document.querySelector('#next').onclick=()=>{page++;load()};load();
+    fetch('/api/post-search',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({keyword:'Example'})});
+    fetch('/api/form-query',{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:'keyword=Example'});
+    fetch('/graphql',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({query:'query Items { items { id } }',variables:{keyword:'Example'}})});
+    </script>`;
   const apiRequests = [];
+  const postRequests = [];
   let failApi = false;
   server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
-    if (url.pathname === '/api/items') {
+    if (['/api/post-search', '/api/form-query', '/graphql'].includes(url.pathname)) {
+      let body = ''; req.on('data', chunk => body += chunk); req.on('end', () => {
+        const data = url.pathname === '/api/form-query' ? Object.fromEntries(new URLSearchParams(body)) : JSON.parse(body);
+        postRequests.push({ path: url.pathname, data });
+        const valid = url.pathname === '/graphql' ? /^query/.test(data.query || '') : typeof data.keyword === 'string';
+        res.writeHead(valid ? 200 : 400, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(valid ? { data: { items: [{ id: 'example-post', title: data.keyword || data.variables?.keyword || 'Example' }] } } : { error: 'Expected authored query parameters' }));
+      });
+    } else if (url.pathname === '/api/items') {
       const q = url.searchParams.get('q') || ''; const page = Number(url.searchParams.get('page') || 1);
       apiRequests.push({ q, page });
       const unavailable = failApi || q === 'example-http-error';
@@ -95,6 +115,7 @@ try {
   browser = await chromium.launchPersistentContext(path.join(root, 'browser-profile'), { channel: 'chromium', executablePath, headless: true,
     args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
   const page = await browser.newPage();
+  page.on('dialog', () => {}); // The extension handles dialogs; disable Playwright's automatic dismissal.
   await page.goto(origin);
   async function connected() {
     for (let i = 0; i < 30; i++) {
@@ -107,6 +128,61 @@ try {
   await connected(); passed('standalone extension connected');
   const tabs = (await cli('exploration.tabs')).data.tabs;
   const tabId = tabs.find(tab => tab.url === origin + '/').id;
+  assert.equal((await cli('browser.doctor')).data.ready, true);
+  await cli('browser.bind', { session: 'acceptance', tabId });
+  const browserCall = (command, args = {}, expectedOk = true) => cli(`browser.${command}`, { session: 'acceptance', ...args }, expectedOk);
+  await browserCall('network');
+  const state = (await browserCall('state')).data;
+  assert.ok(state.elements.some(element => element.role === 'searchbox'));
+  const staleRef = state.elements[0].ref;
+  await browserCall('find', { selector: '#query' });
+  assert.equal((await browserCall('click', { ref: staleRef }, false)).error.code, 'STALE_REF');
+  assert.equal((await browserCall('click', { selector: '.duplicate' }, false)).error.code, 'AMBIGUOUS_TARGET');
+  await browserCall('fill', { role: 'searchbox', name: 'Search items', value: 'Example browser' });
+  await browserCall('type', { selector: '#query', value: ' append' });
+  assert.equal((await browserCall('get', { selector: '#query', property: 'value' })).data.value, 'Example browser append');
+  await browserCall('check', { selector: '#checked' }); await browserCall('uncheck', { selector: '#checked' });
+  await browserCall('select', { selector: '#options', value: 'Two' });
+  assert.equal((await browserCall('get', { selector: '#options', property: 'value' })).data.value, 'two');
+  await browserCall('focus', { selector: '#query' }); await browserCall('keys', { key: 'Enter' });
+  await browserCall('wait', { kind: 'xhr', value: '/api/items' });
+  const browserNetwork = (await browserCall('network')).data;
+  const entry = browserNetwork.entries.find(entry => new URL(entry.url).pathname === '/api/items');
+  assert.ok(entry);
+  assert.ok((await browserCall('network', { detail: entry.key })).data.entry.response.data.items.length);
+  assert.ok((await browserCall('extract')).data.text.includes('Example inventory'));
+  assert.ok((await browserCall('frames')).data.frames.some(frame => frame.frameId === 0));
+  assert.equal((await browserCall('eval', { expression: 'document.title' })).data.value, 'Example inventory');
+  assert.ok((await browserCall('screenshot')).data.data.length > 100);
+  await browserCall('hover', { selector: '#next' }); await browserCall('scroll', { direction: 'down' });
+  await browserCall('click', { selector: '#trusted' });
+  assert.equal((await browserCall('eval', { expression: 'window.exampleTrusted' })).data.value, true);
+  await browserCall('drag', { selector: '#drag', toSelector: '#drop' });
+  assert.equal((await browserCall('eval', { expression: 'window.exampleDropped' })).data.value, true);
+  const uploadPath = path.join(root, 'example-upload.txt'); await fs.writeFile(uploadPath, 'Public example upload');
+  await browserCall('upload', { selector: '#upload', paths: [uploadPath] });
+  assert.equal((await browserCall('eval', { expression: "document.querySelector('#upload').files[0].name" })).data.value, 'example-upload.txt');
+  await browserCall('eval', { expression: "console.info('Example console message'); true" });
+  assert.ok((await browserCall('console', { level: 'info' })).data.entries.some(entry => entry.text === 'Example console message'));
+  const pendingPrompt = browserCall('eval', { expression: "window.exampleDialog=prompt('Example prompt')" });
+  // Reply through a second CLI process while the first still owns the session.
+  let dialog;
+  for (let i = 0; i < 20; i++) { dialog = (await browserCall('dialog')).data.dialog; if (dialog) break; await delay(100); }
+  assert.equal(dialog?.type, 'prompt');
+  await browserCall('dialog', { action: 'accept', text: 'Example answer' });
+  assert.equal((await pendingPrompt).data.value, 'Example answer');
+  assert.equal((await browserCall('eval', { expression: 'window.exampleDialog' })).data.value, 'Example answer');
+  await browserCall('eval', { expression: "document.body.style.minHeight='2200px';true" });
+  const screenshot = Buffer.from((await browserCall('screenshot', { fullPage: true })).data.data, 'base64');
+  assert.ok(screenshot.readUInt32BE(20) >= 2200, 'Full-page PNG covers page height');
+  await browserCall('eval', { expression: "document.body.style.minHeight='';true" });
+  assert.ok((await browserCall('network', { match: '/api/items' })).data.entries.every(entry => entry.url.includes('/api/items')));
+  assert.equal((await browserCall('open', { url: origin }, false)).error.code, 'BOUND_TAB_NAVIGATION');
+  await browserCall('close'); assert.equal(page.isClosed(), false);
+  await cli('browser.open', { session: 'owned', url: origin });
+  assert.equal((await cli('browser.state', { session: 'owned' })).data.title, 'Example inventory');
+  assert.equal((await cli('browser.close', { session: 'owned' })).data.tabClosed, true);
+  passed('browser sessions, trusted pointer and drag, upload, dialogs, console, locators, forms, keyboard, network, frames, eval and full-page screenshot');
   const args = { tabId, goal: '查询示例列表，支持关键词和分页', requestId: 'example-browser-acceptance' };
   const start = await cli('exploration.start', args); const taskId = start.data.taskId;
   assert.equal((await cli('exploration.start', args)).data.taskId, taskId);
@@ -209,6 +285,36 @@ try {
   assert.equal((await cli(generated.data.toolNames[0], { q: 'Example retained', page: 2 })).ok, true);
   assert.equal((await cli(incremental.data.toolNames[0], { page: 1 })).ok, true);
   passed('incremental generation preserves authored tool and both installed commands run');
+
+  const postTaskId = (await cli('exploration.start', { ...args, requestId: 'example-post-queries' })).data.taskId;
+  await settle(postTaskId);
+  const postEvidence = (await cli('exploration.evidence', { taskId: postTaskId })).data.candidates;
+  const postPaths = ['/api/post-search', '/api/form-query', '/graphql'];
+  const postTools = postPaths.map((pathname, i) => {
+    const sourceIndex = postEvidence.findIndex(candidate => new URL(candidate.url).pathname === pathname);
+    assert.ok(sourceIndex >= 0, `Captured ${pathname}`);
+    return { name: `post_query_${i}`, purpose: 'Read example inventory', risk: 'read', readReason: 'Observed inventory query with no mutation operation.', sourceApiKind: 'list', sourceApiIndexes: [sourceIndex] };
+  });
+  const postDraft = (await cli('exploration.generate', { taskId: postTaskId, plan: { tools: postTools } })).data;
+  await cli('exploration.draft-add', { taskId: postTaskId, file: 'extension/internal/example-query-helper.js', content: 'window.exampleQueryHelper = value => value;' });
+  for (const [i] of postPaths.entries()) {
+    const file = `extension/commands/post-query-${i}.js`;
+    const current = (await cli('exploration.draft-read', { taskId: postTaskId, file })).data;
+    const defaults = i === 2 ? 'query: "query Items { items { id } }", variables: {keyword: "Example authored"},' : 'keyword: "Example authored",';
+    await cli('exploration.draft-write', { taskId: postTaskId, file, expectedHash: current.hash, content: current.content.replace('...{},', defaults) });
+  }
+  await cli('exploration.validate', { taskId: postTaskId });
+  const postValidation = await settle(postTaskId);
+  assert.equal(postValidation.status, 'review_ready', JSON.stringify(postValidation));
+  assert.deepEqual(postValidation.runtimeValidation.executionSummary, { attempted: 3, passed: 3, failed: 0, skipped: 0 });
+  const postReview = (await cli('exploration.review', { taskId: postTaskId })).data;
+  await cli('exploration.install', { taskId: postTaskId, reviewId: postReview.reviewId, confirmed: true }); await settle(postTaskId);
+  for (const tool of postDraft.toolNames) assert.equal((await cli(tool)).ok, true);
+  assert.ok(postRequests.some(entry => entry.path === '/api/post-search' && entry.data.keyword === 'Example authored'));
+  assert.ok(postRequests.some(entry => entry.path === '/api/form-query' && entry.data.keyword === 'Example authored'));
+  assert.ok(postRequests.some(entry => entry.path === '/graphql' && entry.data.variables?.keyword === 'Example authored'));
+  assert.equal((await cli('exploration.trace', { taskId: postTaskId })).data.structuralOnly, true);
+  passed('three authored JSON/form/GraphQL read queries, new helper, real validation, installation and ordinary calls');
 
   const cancelledId = (await cli('exploration.start', { ...args, requestId: 'example-cancel' })).data.taskId;
   await cli('exploration.cancel', { taskId: cancelledId });

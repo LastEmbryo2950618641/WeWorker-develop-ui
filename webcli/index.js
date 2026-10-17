@@ -62,6 +62,7 @@ Service:
 
 API exploration (standalone, no desktop/model key required):
   call exploration.help                    探索、草稿编辑、验证与安装命令
+  call browser.help                        浏览器会话、页面操作与网络检查
 
 Adapters:
   list                                     列出已安装的 adapter（adapter list 的简写）
@@ -405,6 +406,22 @@ async function cmdCall(toolName, argsStr, options = {}) {
   catch (error) { console.error(`Error: ${error.message}`); process.exit(1); }
   // 合并 --key=value 标志参数（优先级低于 --args 中的同名字段）
   args = { ...flagArgs, ...args };
+
+  if (toolName.startsWith('browser.')) {
+    const command = toolName.slice('browser.'.length);
+    const { browserCommands, browserHelp } = await import('./browser-commands.js');
+    if (command === 'help') { console.log(JSON.stringify(browserHelp(), null, 2)); return; }
+    if (!Object.hasOwn(browserCommands, command)) {
+      console.log(JSON.stringify({ schemaVersion: 1, ok: false, error: { code: 'UNKNOWN_COMMAND', message: 'Use webcli call browser.help.' } }));
+      process.exitCode = 1; return;
+    }
+    await ensureBridgeRunning();
+    const { callLocalCommand } = await import('./exploration-client.js');
+    const result = await callLocalCommand('browser', command, args, { timeoutMs: 50000 });
+    console.log(JSON.stringify(result, null, 2));
+    if (!result.ok) process.exitCode = 1;
+    return;
+  }
 
   // Reserved management namespace. It never resolves a website/Toolkit package.
   if (toolName.startsWith('exploration.')) {
@@ -852,6 +869,12 @@ async function main() {
   const cmd  = args[0];
   const sub  = args[1];
   const invocation = resolveCliInvocation(args);
+
+  if ((cmd === 'browser' && (sub === 'help' || args.some(arg => ['--help', '-h'].includes(arg))))
+      || (cmd === 'call' && sub?.startsWith('browser.') && args.some(arg => ['--help', '-h'].includes(arg)))) {
+    const { browserHelp } = await import('./browser-commands.js');
+    console.log(JSON.stringify(browserHelp(), null, 2)); return;
+  }
 
   if ((cmd === 'exploration' && (sub === 'help' || args.some(arg => ['--help', '-h'].includes(arg))))
       || (cmd === 'call' && sub?.startsWith('exploration.') && args.some(arg => ['--help', '-h'].includes(arg)))) {

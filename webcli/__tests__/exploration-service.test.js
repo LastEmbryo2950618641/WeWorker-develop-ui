@@ -189,3 +189,89 @@ it('runs the actual preview validator and generated JavaScript before standalone
   await f.service.execute('install', { taskId, reviewId: review.reviewId, confirmed: true }); await f.service.jobs.get(taskId);
   expect((await f.service.execute('get', { taskId })).data.status).toBe('installed');
 });
+
+it('grants only explicit API origins and binds grants to the idempotency key and draft permissions', async () => {
+  const f = setup();
+  const args = { tabId: 7, goal: 'Explore API', requestId: 'origins', allowedOrigins: ['https://example.org'] };
+  for (const allowedOrigins of ['https://example.org', ['https://example.org/path'], ['https://user:placeholder@example.org'], ['file:///example'], ['https://example.org/']]) {
+    expect((await f.service.execute('start', { ...args, allowedOrigins })).error.code).toBe('INVALID_ARGUMENT');
+  }
+  const started = await f.service.execute('start', args); expect(started.ok).toBe(true);
+  const taskId = started.data.taskId; await f.service.jobs.get(taskId);
+  expect((await f.service.execute('start', { ...args, allowedOrigins: ['https://example.org', 'https://example.org'] })).data.taskId).toBe(taskId);
+  expect((await f.service.execute('start', { ...args, allowedOrigins: [] })).error.code).toBe('REQUEST_CONFLICT');
+  const evidence = (await f.service.execute('evidence', { taskId })).data;
+  const index = evidence.candidates.findIndex(item => new URL(item.url).origin === 'https://example.org');
+  expect(index).toBeGreaterThanOrEqual(0);
+  expect((await f.service.execute('generate', { taskId, plan: { tools: [{ name: 'query_items', risk: 'read', sourceApiKind: 'list', sourceApiIndexes: [index] }] } })).ok).toBe(true);
+  const manifest = JSON.parse((await f.service.execute('draft-read', { taskId, file: 'manifest.json' })).data.content);
+  expect(manifest.runtime_allowed_hosts).toContain('example.org');
+  expect(extractExplorationEvidence({ entries: [{ url: 'https://example.net/api/list' }] }, 'https://example.com', ['https://example.org'])).toEqual([]);
+});
+
+it('shares tab leases with browser commands and holds cancellation leases until the browser request settles', async () => {
+  const { BrowserService } = await import('../browser-service.js');
+  const { TabOperationLocks } = await import('../tab-operation-locks.js');
+  const tabLocks = new TabOperationLocks(); const f = setup({ tabLocks });
+  const browser = new BrowserService({ rootDir: path.join(f.root, 'browser'), tabLocks,
+    capabilities: () => ({ connected: true, capabilities: ['browser_commands_v1'] }),
+    requestExtension: async message => message.type === 'exploration_list_tabs' ? { tabs: [{ id: 7, url: 'https://example.com' }] } : { ok: true, data: { identity: 'example-identity' } } });
+  await browser.execute('bind', { session: 'work', tabId: 7 });
+  let finish; const original = f.requestExtension.getMockImplementation();
+  f.requestExtension.mockImplementation(message => message.type === 'exploration_capture_passive' ? new Promise(resolve => { finish = resolve; }) : original(message));
+  const taskId = (await f.service.execute('start', { tabId: 7, goal: 'Explore', requestId: 'shared' })).data.taskId;
+  await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+  expect((await browser.execute('click', { session: 'work', selector: '#next' })).error.code).toBe('TAB_BUSY');
+  await f.service.execute('cancel', { taskId });
+  expect((await browser.execute('state', { session: 'work' })).error.code).toBe('TAB_BUSY');
+  finish(capture); await f.service.jobs.get(taskId);
+  expect((await browser.execute('state', { session: 'work' })).ok).toBe(true);
+  const release = tabLocks.acquire(7);
+  const blocked = await f.service.execute('start', { tabId: 7, goal: 'Explore', requestId: 'blocked' });
+  expect(blocked.error.code).toBe('TAB_BUSY'); release();
+  const retry = await f.service.execute('start', { tabId: 7, goal: 'Explore', requestId: 'blocked' });
+  expect(retry.data.status).toBe('collecting');
+  await vi.waitFor(() => expect(f.requestExtension.mock.calls.filter(([msg]) => msg.type === 'exploration_capture_passive')).toHaveLength(2));
+  finish(capture); await f.service.jobs.get(retry.data.taskId);
+});
+
+it('generates more than two authored queries with JSON/form POST and rejects mutation or unresolved GraphQL', async () => {
+  const f = setup(); const original = f.requestExtension.getMockImplementation();
+  f.requestExtension.mockImplementation(message => message.type === 'exploration_capture_passive' ? { entries: [
+    { url: 'https://example.com/api/search', method: 'POST', status: 200, requestBody: '{"keyword":"placeholder-private"}' },
+    { url: 'https://example.com/api/query', method: 'POST', status: 200, requestBody: 'keyword=placeholder-private' },
+    { url: 'https://example.com/graphql', method: 'POST', status: 200, requestBody: '{"query":"query List { items { id } }","variables":{"keyword":"placeholder-private"}}' },
+    { url: 'https://example.com/graphql?operation=mutation', method: 'POST', status: 200, requestBody: '{"query":"mutation Delete { deleteItem(id: 1) }"}' },
+    { url: 'https://example.com/query', method: 'POST', status: 200, requestBody: '{"op":"delete"}' },
+    { url: 'https://example.com/graphql/persisted', method: 'POST', status: 200, requestBody: '{"extensions":{"persistedQuery":{"sha256Hash":"placeholder-hash"}}}' },
+  ] } : original(message));
+  const taskId = await start(f.service);
+  const evidence = (await f.service.execute('evidence', { taskId })).data.candidates;
+  expect(evidence.map(item => item.risk.level)).toEqual(['read', 'read', 'read', 'write', 'write', 'unknown']);
+  expect(JSON.stringify(evidence)).not.toMatch(/placeholder-private|query List|Delete|placeholder-hash/);
+  const tools = [0, 1, 2].map(i => ({ name: `query_${i}`, risk: 'read', sourceApiKind: 'list', sourceApiIndexes: [i], readReason: 'Observed lookup response; no mutation operation.' }));
+  expect((await f.service.execute('generate', { taskId, plan: { tools: [{ ...tools[0], readReason: undefined }] } })).error.code).toBe('INVALID_PLAN');
+  for (const index of [3, 4, 5]) expect((await f.service.execute('generate', { taskId, plan: { tools: [{ ...tools[0], sourceApiIndexes: [index] }] } })).error.code).toBe('INVALID_PLAN');
+  const generated = await f.service.execute('generate', { taskId, plan: { tools } }); expect(generated.ok).toBe(true);
+  expect(generated.data.toolNames).toHaveLength(3);
+  const commands = [];
+  for (let i = 0; i < 3; i++) commands.push((await f.service.execute('draft-read', { taskId, file: `extension/commands/query-${i}.js` })).data.content);
+  expect(commands[0]).toContain('sendJson('); expect(commands[1]).toContain('postForm('); expect(commands[2]).toContain('sendJson(');
+  await f.service.execute('validate', { taskId }); await f.service.jobs.get(taskId);
+  expect((await f.service.execute('get', { taskId })).data.validation.passed).toBe(true);
+});
+
+it('adds authored helpers without overwriting files, invalidates approval and exports a structural trace', async () => {
+  const f = setup(); const taskId = await draft(f.service);
+  await f.service.execute('validate', { taskId }); await f.service.jobs.get(taskId);
+  expect((await f.service.execute('draft-add', { taskId, file: '../escape.js', content: '' })).error.code).toBe('INVALID_ARGUMENT');
+  const helper = { taskId, file: 'extension/internal/example-helper.js', content: 'window.exampleHelper = value => value;' };
+  expect((await f.service.execute('draft-add', helper)).ok).toBe(true);
+  expect((await f.service.execute('draft-add', helper)).error.code).toBe('FILE_EXISTS');
+  expect((await f.service.execute('review', { taskId })).error.code).toBe('VALIDATION_REQUIRED');
+  await f.service.execute('validate', { taskId }); await f.service.jobs.get(taskId);
+  expect((await f.service.execute('get', { taskId })).data.status).toBe('review_ready');
+  const trace = (await f.service.execute('trace', { taskId })).data;
+  expect(trace.files).toContain(helper.file); expect(trace.structuralOnly).toBe(true);
+  expect(JSON.stringify(trace)).not.toMatch(/window.exampleHelper|placeholder-secret|placeholder-person/);
+});
