@@ -249,6 +249,7 @@ npm run test:exploration:browser --prefix webcli -- \
 ### 2026-10-17：OpenCLI 对齐第一轮与真实站点验收
 
 - 操作前 HEAD `a5e04d2`，分支仍为 `codex/api-exploration-cli`，没有新增上游合并。完整目标记录在 `docs/opencli_parity.md`；当前结果只是已完成的一批能力，目标保持进行中。
+- 本轮代码与首版台账提交：`6eff37f`。提交时工作区干净；未推送。后续改动从该提交起算，不重复创建分支或重新合并已纳入上游。
 - 用户已安装当前工作区 public 扩展并指定公共视频搜索页验收。本轮核实原全局 Bridge 的 PID/启动命令后切换为本分支 source Bridge；后续只重启本轮自己启动的已确认进程。扩展从 `weworker/build/extension-dist` 构建并通过既有协议重载。未访问/终止未知 8766 进程，未修改 Python 模块。
 - 34 个 browser.* 命令与独立 Skill：持久命名会话、owned/bound 标签管理、doctor；CSS/role/name/text/ref 定位和陈旧/歧义错误；表单与键盘；主 frame 原生指针/拖拽、文件输入；网络摘要/过滤/有界 JSON 详情；frames、eval、完整截图、console、dialog、wait。Bridge 日志只记浏览器命令元数据，不记脚本、参数或输入值。
 - 会话用 Chrome storage.session 身份防止 tabId 回收误操作；浏览器重启或扩展重载后身份可能过期，需要重新选择并绑定。用户绑定页 close 不关闭标签，open/back 不导航该页。browser 与探索采集/验证共享 tab 锁；取消不提前释放尚未完成的浏览器请求，dialog 可解除正在执行命令等待的弹窗。
