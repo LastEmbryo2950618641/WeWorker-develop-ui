@@ -10,6 +10,16 @@ const stateFor = tabId => {
 };
 
 export function clearBrowserFrames(tabId) { tabs.delete(tabId); }
+export async function beginBrowserFrames(chrome, tabId) {
+  const state = stateFor(tabId);
+  if (!state.enabled) {
+    await chrome.debugger.sendCommand({ tabId }, 'Runtime.enable');
+    try { await chrome.debugger.sendCommand({ tabId }, 'Target.setAutoAttach', autoAttach); }
+    catch { throw fail('FRAME_CONTEXT_UNAVAILABLE', 'Frame observation requires Chrome child debugging sessions. Update Chrome and reconnect.'); }
+    state.enabled = true;
+  }
+  return state;
+}
 export async function recordBrowserFrameEvent(chrome, source, method, params) {
   const state = stateFor(source.tabId), session = key(source);
   if (method === 'Runtime.executionContextCreated') {
@@ -23,6 +33,7 @@ export async function recordBrowserFrameEvent(chrome, source, method, params) {
     state.children.set(params.sessionId, session);
     try {
       await chrome.debugger.sendCommand(child, 'Runtime.enable');
+      await chrome.debugger.sendCommand(child, 'Page.enable');
       // Auto-attach is not recursive; an OOPIF can itself contain another OOPIF.
       await chrome.debugger.sendCommand(child, 'Target.setAutoAttach', autoAttach);
     } catch { /* Context discovery reports FRAME_CONTEXT_UNAVAILABLE; never use another frame. */ }
@@ -64,13 +75,7 @@ export async function executeFrameScript(chrome, tabId, args, func, input, world
 export async function evaluateBrowserFrame(chrome, tabId, args, ensureCdpAttached) {
   browserFrameSelection(tabId, args);
   await ensureCdpAttached(tabId);
-  const state = stateFor(tabId);
-  if (!state.enabled) {
-    await chrome.debugger.sendCommand({ tabId }, 'Runtime.enable');
-    try { await chrome.debugger.sendCommand({ tabId }, 'Target.setAutoAttach', autoAttach); }
-    catch { throw fail('FRAME_CONTEXT_UNAVAILABLE', 'Frame execution requires Chrome child debugging sessions. Update Chrome and reconnect.'); }
-    state.enabled = true;
-  }
+  const state = await beginBrowserFrames(chrome, tabId);
   const marker = `__weworkerFrame_${crypto.randomUUID().replaceAll('-', '')}`;
   let selected;
   try {

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { browserCommands, browserHelp } from './browser-commands.js';
+import { browserCommands, browserHelp, isBrowserObserver } from './browser-commands.js';
 import { resolveAdapterPaths } from './paths.js';
 import { assertManagedDirectory, assertManagedFile } from './adapter-package-files.js';
 import { explorationError as fail, integerArg, textArg } from './exploration-commands.js';
@@ -26,11 +26,12 @@ export class BrowserService {
       if (!args || typeof args !== 'object' || Array.isArray(args)) throw fail('INVALID_ARGUMENT', 'Arguments must be an object.');
       for (const key of Object.keys(args)) if (!spec.params.some(param => param.replace(/\?$/, '') === key)) throw fail('INVALID_ARGUMENT', `Unknown argument: ${key}`);
       for (const param of spec.params.filter(param => !param.endsWith('?'))) if (args[param] === undefined) throw fail('INVALID_ARGUMENT', `Missing argument: ${param}`);
+      if (command === 'wait' && args.kind !== 'download' && args.value === undefined) throw fail('INVALID_ARGUMENT', 'value is required for this wait kind.');
       if (spec.params.includes('session')) {
         session = textArg(args.session, 'session', 80);
         if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(session) || ['__proto__', 'constructor', 'prototype'].includes(session)) throw fail('INVALID_ARGUMENT', 'Use an alphanumeric session name.');
-        // Dialog replies must remain available while a click/eval waits for it.
-        if (command !== 'dialog') {
+        // Dialog replies and passive observers must not block the triggering action.
+        if (!isBrowserObserver(command, args)) {
           if (this.busy.has(session)) throw fail('SESSION_BUSY', 'Another operation is using this session.');
           this.busy.add(session); ownsSession = true;
         }
@@ -39,7 +40,7 @@ export class BrowserService {
       return { schemaVersion: 1, ok: true, command: `browser.${command}`, data };
     } catch (error) {
       return { schemaVersion: 1, ok: false, command: `browser.${command}`, error: { code: error.code || 'BROWSER_OPERATION_FAILED',
-        message: error.code ? String(error.message).slice(0, 1000) : 'Browser operation failed. Inspect connection and current tab state.' } };
+        message: error.code ? String(error.message).slice(0, 1000) : 'Browser operation failed. Inspect connection and current tab state.', ...(error.details ? { details: error.details } : {}) } };
     } finally { if (ownsSession) this.busy.delete(session); }
   }
   async tabs() {
@@ -50,10 +51,11 @@ export class BrowserService {
   async send(command, args, tabId, identity) {
     if (!this.capabilities().capabilities.includes('browser_commands_v1')) throw fail('EXTENSION_UPGRADE_REQUIRED', 'Reload the extension built from this branch to enable browser commands.');
     if ((args.documentId !== undefined || (command === 'eval' && args.frameId !== undefined)) && !this.capabilities().capabilities.includes('browser_frames_v1')) throw fail('EXTENSION_UPGRADE_REQUIRED', 'Reload the extension to select a frame/document; an older extension may evaluate in the main page.');
-    const release = command === 'dialog' ? () => {} : this.tabLocks.acquire(tabId);
+    if ((command === 'downloads' || (command === 'wait' && args.kind === 'download')) && !this.capabilities().capabilities.includes('browser_downloads_v1')) throw fail('EXTENSION_UPGRADE_REQUIRED', 'Reload the extension to observe tab download lifecycles.');
+    const release = isBrowserObserver(command, args) ? () => {} : this.tabLocks.acquire(tabId);
     try {
       const result = await this.request({ type: 'browser_execute', command, args, tabId, identity }, 45000);
-      if (!result?.ok) throw fail(result?.error?.code || 'BROWSER_OPERATION_FAILED', result?.error?.message || 'Browser operation failed.');
+      if (!result?.ok) throw Object.assign(fail(result?.error?.code || 'BROWSER_OPERATION_FAILED', result?.error?.message || 'Browser operation failed.'), result?.error?.details ? { details: result.error.details } : {});
       return result.data;
     } finally { release(); }
   }

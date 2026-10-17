@@ -110,3 +110,18 @@ it('guards frame eval and document targeting from older extensions and forwards 
   expect((await capable.execute('eval', { session: 'work', frameId: '12', documentId: 'example-document', expression })).ok).toBe(true);
   expect(requestExtension.mock.calls.at(-1)[0]).toMatchObject({ command: 'eval', args: { frameId: '12', documentId: 'example-document', expression }, identity: 'example-tab-identity' });
 });
+
+it('download observers release no action locks and propagate progress details, while old extensions are rejected', async () => {
+  const { service, requestExtension, options } = setup(); await service.execute('bind', { session: 'work', tabId: 7 });
+  expect((await service.execute('downloads', { session: 'work' })).error.code).toBe('EXTENSION_UPGRADE_REQUIRED');
+  const capable = new BrowserService({ ...options, capabilities: () => ({ connected: true, capabilities: ['browser_commands_v1', 'browser_downloads_v1'] }) });
+  let finish; const original = requestExtension.getMockImplementation();
+  requestExtension.mockImplementation(message => message.command === 'wait' ? new Promise(resolve => { finish = resolve; }) : original(message));
+  const pending = capable.execute('wait', { session: 'work', kind: 'download', after: 'example-cursor' });
+  await vi.waitFor(() => expect(finish).toBeTypeOf('function'));
+  expect((await capable.execute('click', { session: 'work', selector: '#download' })).ok).toBe(true);
+  expect((await capable.execute('downloads', { session: 'work' })).ok).toBe(true);
+  finish({ ok: false, error: { code: 'DOWNLOAD_TIMEOUT', message: 'Still receiving.', details: { state: 'in_progress', download: { downloadId: 'example-guid' } } } });
+  expect((await pending).error).toMatchObject({ code: 'DOWNLOAD_TIMEOUT', details: { download: { downloadId: 'example-guid' } } });
+  expect((await capable.execute('wait', { session: 'work', kind: 'selector' })).error.code).toBe('INVALID_ARGUMENT');
+});

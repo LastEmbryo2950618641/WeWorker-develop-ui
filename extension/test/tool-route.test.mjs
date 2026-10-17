@@ -34,9 +34,9 @@ test('exploration and browser operations share the refresh queue; dialogs can un
     const refresh = runtime.exclusive(7, async () => order.push('refresh'));
     await new Promise(resolve => setImmediate(resolve)); assert.deepEqual(order, ['query']);
     if (type === 'browser_execute') {
-      worker.context.executeBrowserCommand = async () => { order.push('dialog'); return { ok: true }; };
-      await worker.context.handleNativeMessage({ type, tabId: 7, command: 'dialog', id: 'example-dialog' });
-      assert.deepEqual(order, ['query', 'dialog']);
+      worker.context.executeBrowserCommand = async msg => { order.push(msg.command); return { ok: true }; };
+      for (const command of ['dialog', 'downloads', 'wait']) await worker.context.handleNativeMessage({ type, tabId: 7, command, args: { kind: 'download' }, id: 'example-observer-' + command });
+      assert.deepEqual(order, ['query', 'dialog', 'downloads', 'wait']);
     }
     finish(); await operation; await refresh; assert.equal(order.at(-1), 'refresh');
   }

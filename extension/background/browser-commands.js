@@ -1,7 +1,8 @@
 import { runBrowserPageCommand } from './browser-page.js';
 import { browserNetworkUrl, browserNetworkBody } from './browser-network.js';
 import { beginBrowserObservations, readBrowserObservations, clearBrowserObservations } from './browser-observations.js';
-import { executeFrameScript, evaluateBrowserFrame } from './browser-frames.js';
+import { beginBrowserFrames, executeFrameScript, evaluateBrowserFrame } from './browser-frames.js';
+import { beginBrowserDownloads, clearBrowserDownloads, markBrowserDownloadAction, readBrowserDownloads, waitBrowserDownload } from './browser-downloads.js';
 
 const pageCommands = new Set(['state', 'find', 'get', 'extract', 'click', 'dblclick', 'fill', 'type', 'select', 'check', 'uncheck', 'focus', 'hover', 'scroll']);
 const fail = (code, message) => Object.assign(new Error(message), { code });
@@ -13,9 +14,11 @@ export async function executeBrowserCommand({ command, tabId, args = {}, identit
     const bind = async id => {
       const key = identityKey(id); const prior = (await chrome.storage.session.get(key))[key];
       const token = prior || crypto.randomUUID(); if (!prior) await chrome.storage.session.set({ [key]: token });
-      await ensureCdpAttached(id); beginBrowserObservations(id);
+      await ensureCdpAttached(id); beginBrowserObservations(id); beginBrowserDownloads(id);
+      markBrowserDownloadAction(id);
       await chrome.debugger.sendCommand({ tabId: id }, 'Runtime.enable');
       await chrome.debugger.sendCommand({ tabId: id }, 'Page.enable');
+      await beginBrowserFrames(chrome, id);
       return token;
     };
     // Chrome session storage survives worker suspension/Bridge restarts, but not
@@ -31,6 +34,7 @@ export async function executeBrowserCommand({ command, tabId, args = {}, identit
       return { ...result.data, frameId: frame.frameId, documentId: frame.documentId };
     };
     let data;
+    if (['open', 'reload', 'back', 'click', 'dblclick', 'fill', 'type', 'select', 'check', 'uncheck', 'keys', 'eval', 'upload', 'drag'].includes(command)) markBrowserDownloadAction(tabId);
     if (command === 'open') {
       const url = new URL(args.url);
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw fail('INVALID_ARGUMENT', 'An HTTP(S) URL without credentials is required.');
@@ -85,7 +89,7 @@ export async function executeBrowserCommand({ command, tabId, args = {}, identit
       await chrome.debugger.sendCommand({ tabId }, 'DOM.setFileInputFiles', { nodeId: nodeIds[0], files: args.paths });
       data = { completed: true, count: args.paths.length };
     }
-    else if (command === 'close') { await chrome.tabs.remove(tabId); await chrome.storage.session.remove(identityKey(tabId)); clearBrowserObservations(tabId); data = { closed: true }; }
+    else if (command === 'close') { await chrome.tabs.remove(tabId); await chrome.storage.session.remove(identityKey(tabId)); clearBrowserObservations(tabId); clearBrowserDownloads(tabId); data = { closed: true }; }
     else if (command === 'reload') { await chrome.tabs.reload(tabId); data = { reloading: true }; }
     else if (command === 'back') { await chrome.tabs.goBack(tabId); data = { navigating: true }; }
     else if (command === 'eval') {
@@ -163,7 +167,10 @@ export async function executeBrowserCommand({ command, tabId, args = {}, identit
           contentType: entry.responseContentType, request: browserNetworkBody(entry.requestBodyPreview),
           response: String(body || '').length > 500000 ? { omitted: true, reason: 'Body exceeds 500000 characters.' } : browserNetworkBody(body) } };
       } else data = { source: snapshot.source, totalEntries: entries.length, entries: entries.slice(0, Math.min(Number(args.limit) || 60, 200)).map(entry => ({ key: entry.key, url: browserNetworkUrl(entry.url), method: entry.method, status: entry.status, timestamp: entry.timestamp, contentType: entry.responseContentType })) };
-    } else if (command === 'wait') {
+    } else if (command === 'downloads') data = readBrowserDownloads(tabId, args);
+    else if (command === 'wait' && args.kind === 'download') data = await waitBrowserDownload(chrome, tabId, args);
+    else if (command === 'wait') {
+      if (args.after !== undefined || args.downloadId !== undefined) throw fail('INVALID_ARGUMENT', 'after/downloadId are only valid for download waits.');
       const timeout = Math.max(0, Math.min(Number(args.timeoutMs) || 10000, 30000));
       const started = Date.now(); const value = String(args.value ?? '');
       if (args.kind === 'time') {
@@ -186,5 +193,5 @@ export async function executeBrowserCommand({ command, tabId, args = {}, identit
       }
     } else throw fail('UNKNOWN_COMMAND', 'Unsupported browser command.');
     return { ok: true, data };
-  } catch (error) { return { ok: false, error: { code: error.code || 'BROWSER_OPERATION_FAILED', message: error.code ? error.message : 'Browser operation failed; refresh the page state or connection.' } }; }
+  } catch (error) { return { ok: false, error: { code: error.code || 'BROWSER_OPERATION_FAILED', message: error.code ? error.message : 'Browser operation failed; refresh the page state or connection.', ...(error.details ? { details: error.details } : {}) } }; }
 }

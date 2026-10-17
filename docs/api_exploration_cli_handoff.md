@@ -1,6 +1,6 @@
 # API 自动探索 CLI 改造跟进与交接
 
-> 更新日期：2026-10-17。当前阶段：跨 frame 执行与文档身份已实现；WebCLI 1117 项、扩展聚焦 52 项、隔离真实浏览器最终完整 27 项通过，包含超时与隔离匹配检查。日常 Chrome 五个同 URL/嵌套跨源/严格 CSP frame 实测通过，B 站原命令仍返回 24 张可见卡片。OpenCLI 1.8.8 静态核查已完成，全能力对齐仍进行中；独立 Agent 对话、UI 统一与平台安装包验收尚未完成。
+> 更新日期：2026-10-17。当前阶段：下载生命周期/游标/续等已实现；WebCLI 1118 项、扩展聚焦 64 项、隔离真实浏览器完整 28 项通过。日常 Chrome 主页面下载、慢速续等、跨源 frame 原生键盘触发与文件内容通过；子 frame DOM 点击仍有限制。B 站 Excel 第一页 24 张卡片回归通过。完整 OpenCLI 对齐继续进行；独立 Agent 对话、UI 统一与平台安装包验收尚未完成。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
 
 ## 最新状态
@@ -10,8 +10,8 @@
 - 本次使用原工作目录，无新 worktree。切换时 ROADMAP.md 阻止 checkout，具名 stash 保存两份文档后切换并 apply，保留双方路线图。stash 仍保留作备份。
 - 功能分支在集成提交后创建为 `codex/api-exploration-cli`，最终操作结果见文末。未推送或创建 PR，最终发布目标仍待明确。
 - [开发设计](api_exploration_cli_design.md) 为本次审阅入口。
-- [OpenCLI 能力对齐台账](opencli_parity.md) 为最新范围与缺口清单；用户要求尽力对齐完整能力，不能把当前 34 个 browser 命令或单站点验收视为目标完成。
-- 首版功能实现提交为 `821a7df`，本轮从来源分析检查点 `9d5a5f0` 继续；后续实现、真实验收与本地检查点见文末和 Git 日志。集成基线仍为 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`。这些是已纳入快照，后续同步前应重新 fetch，不能据此推断远端未变化。
+- [OpenCLI 能力对齐台账](opencli_parity.md) 为最新范围与缺口清单；用户要求尽力对齐完整能力，不能把当前 35 个 browser 命令或单站点验收视为目标完成。
+- 首版功能实现提交为 `821a7df`，本轮从跨 frame 检查点 `51e7906` 继续；后续实现、真实验收与本地检查点见文末和 Git 日志。集成基线仍为 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`。这些是已纳入快照，后续同步前应重新 fetch，不能据此推断远端未变化。
 > 后续每次建分支、同步上游、解决冲突、实现功能或验证后，都应更新本文和 ROADMAP.md。未验证事项不得标为完成。
 
 ## 1. 目标与范围
@@ -392,3 +392,21 @@ npm run test:exploration:browser --prefix webcli -- \
 
 - 最终复验：隔离标记加固后，8 项相关单测、52 项扩展聚焦及 WebCLI 105 文件/1117 项通过；浏览器聚焦通过后再次跑完整 27 项，报告 `webcli-browser-acceptance-pVDWcQ/report.json`，包括全部旧流程、30 秒不结束 Promise、页面重写内置函数和 frame 导航拒绝。日常 Chrome 同样重载最终代码，以五 frame CSP 示例再次确认页面 hook 未被调用，随后 B 站恢复绑定，主文档检查为 excel 第一页，原命令返回 24 卡片。最终临时服务器用 closeAllConnections 正常退出，无遗留测试服务或标签。
 - CLI/Bridge 构建与公开配置通过；最终 npm pack dry-run 591 文件，包含 extension/background/browser-frames.js 和更新 Skill。10 个修改/新增 JS 文件语法、差异格式、增量凭据/私网地址检查通过；打包帮助中 eval 声明 frameId/documentId。原有可选列映射资源警告保留，无新依赖。检查点 SHA 以 Git 日志为准；下一步优先补 download 生命周期等待及浏览器流式观测，同时保留全部能力台账的未完成范围。
+
+
+### 2026-10-17：下载生命周期、可续等观察与真实验收
+
+- 从干净的跨 frame 检查点 `51e7906` 继续。分支仍为 `codex/api-exploration-cli`，未 fetch/合并/推送；develop/dev-1.1.0 已纳入快照和集成基线不变，后续仍按本文“上游→集成基线→功能分支”流程同步。完整对齐目标保持 active。
+- 新增 browser.downloads 与 wait kind=download，插件能力 browser_downloads_v1。主/子页面 Page 下载事件限定 tab 归属，GUID 只用于观察，不混同 Chrome downloads 数字 ID。下载记录不来自全局历史搜索；可选落盘元数据只查询准确 URL 与 ±2 秒开始时间范围，唯一匹配才返回文件路径，并声明 fileResolution，歧义不猜测。
+- 内存每标签最多 100 条；cursor 记录下载开始序号，after 用于下一动作，downloadId 用于已有传输。默认最近 browser 动作边界在等待开始时冻结，防止另一 CLI 的触发动作推进游标。Bridge busy/tab 锁与扩展 managed 队列均为被动下载观察放行；等待可先于点击，不重试/取消/再次发起下载。单次最多 30 秒；DOWNLOAD_TIMEOUT 区分 not_seen/in_progress，后者保留续等 ID；中断、重复匹配、失效/淘汰游标均明确报错。
+- Chrome/扩展/调试断开、标签关闭清理内存；Bridge 重启不清观察状态。bind 时启用递归 frame 观察，子目标增加 Page.enable，根网络缓存仍忽略子会话，GUID 去重防重复事件。无 manifest 权限、新依赖或下载目录/浏览器安全设置变更。URL 常见凭据参数脱敏，data URL 正文不返回；CLI 不读取下载正文，验收脚本只对自己创建的公开示例文件核对字节。
+- 验收先发现慢速 fixture 发送 7 字节 text/plain 时，服务端已有请求，但 Chrome 下载历史与 Page 事件均未创建记录。改为明确 application/octet-stream + nosniff 后同样分段响应能观察到 in_progress，没有延长生产等待掩盖问题。随后跨源 frame 验收暴露子目标未订阅 Page 事件，已修复递归订阅；单测覆盖该命令序列。
+- 自动化最终：WebCLI 105 文件/1118 项通过；扩展下载、frame、原生输入、网络、路由、消息安全和探索协议聚焦 64 项通过。新增覆盖旧游标/其他标签隔离、并行点击、默认边界、进度/中断/歧义、回收失效、限定路径匹配及旧插件拒绝。
+- 隔离真实 Chromium 完整 28 项通过，报告 `webcli-browser-acceptance-Jz491B/report.json`（系统临时目录）。包含等待先于点击、准确文件字节、历史排除、其他 tab 隔离、慢速超时→重启 Bridge→同 ID 继续且请求恰好一次、外部取消、跨源 frame、重复同名歧义。原有 frame 30 秒 Promise、探索、生成、修复、安装、普通调用、历史与重启恢复均通过。新增 --downloads-only 聚焦入口；默认仍跑全部。
+- 日常 Chrome 155：核实旧 PID 的完整 source Bridge 命令属于本任务后重启，重载已安装的工作区 extension-dist，doctor 确认 browser_downloads_v1；未动无关服务。主页面下载/进度/续等/准确文件字节通过。首次子 frame DOM click 虽到达服务端，却没有形成下载记录或文件，CLI 如实超时，未将点击成功误报下载成功；未确定 Chrome 阻止的具体策略。改用现有 focus(frameId/documentId) + 原生 keys Enter 后跨源下载完成且字节准确。最终报告 `weworker-download-live-qBiIBH/report.json`；测试仅创建公开示例 .txt，保留在本机下载目录；自建标签与临时服务正常关闭。
+- 用户 B 站重新明确绑定，页面仍为 excel 第一页，已安装 current-video-links 返回 24 卡片；标题/规范化绝对链接逐项匹配，下载观察没有混入另一个 tab 的示例文件。人工期望初次误用原始 // href，与命令规范化 https 链接不一致；改为 DOM anchor.href 后精确对比通过，未改生产命令。验证摘要 `/tmp/weworker-download-bili-regression.json`，真实页面数据未进入仓库。
+- 当前本任务 source Bridge PID 为 16371，日志 `/tmp/weworker-download-live-bridge.log`；这只是当时快照，下次重启前必须核实身份。插件已载本轮代码，B 站绑定保留；下次从 doctor/tabs/sessions 重新检查。
+- Python 网站探索agent相对功能起点 `af8e082` 差异为零，源码/环境/测试/生命周期/数据未触碰。未推送或创建 PR，本阶段保存本地检查点；最终构建/打包见下条。
+- 接手下一步：优先原生子 frame 指针（本次日常 Chrome 暴露实际限制）、console/network 持续观察、AX/截图扩展；随后 profile/多连接、PUBLIC_API/COOKIE_API runner 与显式凭据契约。多步 UI/动态页面/写命令、知识修订/共享修复、UI/内置聊天复用、独立 Codex/Claude 对话、平台分发与业务覆盖仍在能力台账内，不关闭全目标。
+
+- 最终分发检查：CLI/Bridge 构建、公开配置、12 个 JS 文件语法、Git 差异格式和新增内容凭据/私网地址检查通过；npm pack dry-run 592 文件，包含 browser-downloads.js 与最新 browser Skill，构建 CLI 帮助声明 downloads/downloadId。原有可选列映射资源缺失警告仍在，无新增依赖。完整 28 项后再为跨源链接补原生 focus + Enter 自动验收，--downloads-only 最终通过，报告 `webcli-browser-acceptance-TN43t5/report.json`；生产代码未再变更。检查点提交 SHA 以 Git 日志为准，完整目标保持进行中。

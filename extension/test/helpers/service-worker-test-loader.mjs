@@ -1,5 +1,6 @@
 import { scopedGenerationPreviewScripts } from '../../background/generation-preview-bundle.js';
 import { recordBrowserFrameEvent, clearBrowserFrames } from '../../background/browser-frames.js';
+import { recordBrowserDownload, clearBrowserDownloads } from '../../background/browser-downloads.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import vm from 'node:vm';
@@ -13,7 +14,7 @@ import { selectCompatibleCaptureBoundEntry, validateGenerationPreviewOutputV2 } 
 export function runServiceWorkerInContext(context, { repoRoot = process.cwd() } = {}) {
   const source = readFileSync(join(repoRoot, 'extension/background/service-worker.js'), 'utf8')
     .replace(/^import\s*\{[^}]*\}\s*from\s*['"][^'"]+['"];?\s*/gm, '');
-  Object.assign(context, { recordBrowserFrameEvent, clearBrowserFrames, scopedGenerationPreviewScripts, createHostAdapterClient, createHostAdapterRuntime, assertAdapterNavigationUrl, createNavigationGuard, classifyNavigationTarget, navigateAdapterTab, buildV2Bootstrap,
+  Object.assign(context, { recordBrowserDownload, clearBrowserDownloads, recordBrowserFrameEvent, clearBrowserFrames, scopedGenerationPreviewScripts, createHostAdapterClient, createHostAdapterRuntime, assertAdapterNavigationUrl, createNavigationGuard, classifyNavigationTarget, navigateAdapterTab, buildV2Bootstrap,
     createManagedBackgroundRuntime, MANAGED_RUNNER_PATH,
     v2InjectionFiles, injectAdapterSources, selectCompatibleCaptureBoundEntry, validateGenerationPreviewOutputV2 });
   vm.runInContext(source, context, { filename: 'service-worker.js', timeout: 5000 });

@@ -99,10 +99,23 @@ try {
   let renamedItemField = false;
   let renamedPageField = false;
   let fallbackUnavailable = false, fallbackRequests = 0;
+  const downloadResponses = new Map(), downloadRequests = [];
+  const downloadBody = 'Public example download\n';
   server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
     const port = server.address().port;
-    if (url.pathname === '/frame-host') {
+    if (url.pathname === '/download-page') {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end(`<!doctype html><title>Example downloads</title><a id="quick-download" href="/downloads/example.txt">Download example</a><a id="slow-download" href="/downloads/slow.txt">Slow download</a><a id="cancel-download" href="/downloads/cancel.txt">Interrupted download</a><iframe src="http://localhost:${port}/download-frame"></iframe>`);
+    } else if (url.pathname === '/download-frame') {
+      res.writeHead(200, { 'content-type': 'text/html' });res.end('<!doctype html><title>Example download frame</title><a id="frame-download" href="/downloads/frame.txt">Frame download</a><a id="frame-download-native" href="/downloads/frame-native.txt">Native frame download</a>');
+    } else if (url.pathname.startsWith('/downloads/')) {
+      downloadRequests.push(url.pathname);
+      // Explicit MIME prevents a tiny held response waiting for Chrome's text sniffing before a download exists.
+      res.writeHead(200, { 'content-type': 'application/octet-stream', 'x-content-type-options': 'nosniff', 'content-disposition': `attachment; filename="example-${url.pathname.split('/').at(-1)}"`, 'content-length': Buffer.byteLength(downloadBody) });
+      if (['/downloads/slow.txt', '/downloads/cancel.txt'].includes(url.pathname)) { res.write(downloadBody.slice(0, 7)); downloadResponses.set(url.pathname, res); }
+      else res.end(downloadBody);
+    } else if (url.pathname === '/frame-host') {
       res.writeHead(200, { 'content-type': 'text/html' });
       res.end(`<!doctype html><title>Example frame host</title><button id="frame-button">Main</button><iframe name="example-first" src="http://localhost:${port}/frame-child"></iframe><iframe name="example-second" src="http://localhost:${port}/frame-child"></iframe>`);
     } else if (url.pathname === '/frame-child' || url.pathname === '/frame-inner') {
@@ -191,7 +204,7 @@ try {
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
-  browser = await chromium.launchPersistentContext(path.join(root, 'browser-profile'), { channel: 'chromium', executablePath, headless: true,
+  browser = await chromium.launchPersistentContext(path.join(root, 'browser-profile'), { channel: 'chromium', executablePath, headless: true, acceptDownloads: true, downloadsPath: path.join(root, 'downloads'),
     args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
   browser.on('page', current => {
     current.on('framenavigated', frame => { if (frame === current.mainFrame()) browserEvents.push({ at: Date.now(), type: 'navigation', url: frame.url() }); });
@@ -214,6 +227,7 @@ try {
   assert.equal((await cli('browser.doctor')).data.ready, true);
   await cli('browser.bind', { session: 'acceptance', tabId });
   const browserCall = (command, args = {}, expectedOk = true) => cli(`browser.${command}`, { session: 'acceptance', ...args }, expectedOk);
+  if (!process.argv.includes('--downloads-only')) {
   await browserCall('network');
   const state = (await browserCall('state')).data;
   assert.ok(state.elements.some(element => element.role === 'searchbox'));
@@ -305,7 +319,63 @@ try {
   }
   await frameCall('close');
   passed('duplicate-URL and nested cross-origin frame eval under CSP, document guards, frame forms and stale-navigation rejection');
-  if (process.argv.includes('--browser-only')) return;
+  }
+
+  await cli('browser.open', { session: 'download-acceptance', url: origin + '/download-page' });
+  const downloadCall = (command, args = {}, ok = true) => cli(`browser.${command}`, { session: 'download-acceptance', ...args }, ok);
+  const initialDownloads = (await downloadCall('downloads')).data;
+  const pendingDownload = downloadCall('wait', { kind: 'download', value: 'example-example.txt', after: initialDownloads.cursor, timeoutMs: 10000 });
+  await delay(100);
+  await downloadCall('click', { selector: '#quick-download' });
+  const completedDownload = (await pendingDownload).data;
+  assert.equal(completedDownload.downloaded, true); assert.equal(completedDownload.state, 'complete');
+  assert.equal(completedDownload.suggestedFilename, 'example-example.txt');
+  assert.equal(completedDownload.fileResolved, true); assert.equal(await fs.readFile(completedDownload.filename, 'utf8'), downloadBody);
+  const afterFirstDownload = (await downloadCall('downloads')).data.cursor;
+  assert.equal((await downloadCall('wait', { kind: 'download', after: afterFirstDownload, timeoutMs: 0 }, false)).error.details.state, 'not_seen');
+  await cli('browser.open', { session: 'download-other', url: origin + '/download-page' });
+  await cli('browser.click', { session: 'download-other', selector: '#quick-download' });
+  assert.equal((await cli('browser.wait', { session: 'download-other', kind: 'download', value: 'example-example.txt' })).data.downloaded, true);
+  assert.equal((await downloadCall('wait', { kind: 'download', after: afterFirstDownload, timeoutMs: 0 }, false)).error.code, 'DOWNLOAD_TIMEOUT');
+  await cli('browser.close', { session: 'download-other' });
+  await downloadCall('click', { selector: '#slow-download' });
+  const pendingSlow = await downloadCall('wait', { kind: 'download', value: 'example-slow.txt', timeoutMs: 300 }, false);
+  await record('download-progress', { pendingSlow, requests: downloadRequests, observed: (await downloadCall('downloads')).data,
+    chrome: await browser.serviceWorkers()[0].evaluate(() => chrome.downloads.search({ urlRegex: '/downloads/slow\\.txt$' })) });
+  assert.equal(pendingSlow.error.details.state, 'in_progress');
+  const slowId = pendingSlow.error.details.download.downloadId;
+  const downloadBridgeExited = new Promise(resolve => bridge.once('exit', resolve)); bridge.kill('SIGTERM'); await downloadBridgeExited;
+  await startBridge(); await connected();
+  assert.equal((await downloadCall('downloads', { downloadId: slowId })).data.downloads[0].state, 'in_progress');
+  downloadResponses.get('/downloads/slow.txt').end(downloadBody.slice(7));
+  assert.equal((await downloadCall('wait', { kind: 'download', downloadId: slowId })).data.downloaded, true);
+  assert.equal(downloadRequests.filter(item => item === '/downloads/slow.txt').length, 1, 'Waiting must not trigger a second download');
+  await downloadCall('click', { selector: '#cancel-download' });
+  const pendingCancel = await downloadCall('wait', { kind: 'download', value: 'example-cancel.txt', timeoutMs: 300 }, false);
+  assert.equal(pendingCancel.error.details.state, 'in_progress');
+  // External user cancellation is the stimulus; observation still runs through CLI.
+  const extensionWorker = browser.serviceWorkers()[0];
+  await extensionWorker.evaluate(async () => { const items = await chrome.downloads.search({ urlRegex: '/downloads/cancel\\.txt$', state: 'in_progress' }); if (items.length !== 1) throw Error('Expected one example pending download'); await chrome.downloads.cancel(items[0].id); });
+  downloadResponses.get('/downloads/cancel.txt').destroy();
+  assert.equal((await downloadCall('wait', { kind: 'download', downloadId: pendingCancel.error.details.download.downloadId }, false)).error.code, 'DOWNLOAD_INTERRUPTED');
+  const downloadFrame = (await downloadCall('frames')).data.frames.find(frame => frame.url.endsWith('/download-frame'));
+  await downloadCall('click', { frameId: downloadFrame.frameId, documentId: downloadFrame.documentId, selector: '#frame-download' });
+  await record('download-frame', { requests: downloadRequests, observed: (await downloadCall('downloads')).data,
+    chrome: await browser.serviceWorkers()[0].evaluate(() => chrome.downloads.search({ urlRegex: '/downloads/frame\\.txt$' })) });
+  assert.equal((await downloadCall('wait', { kind: 'download', value: 'example-frame.txt' })).data.downloaded, true);
+  // Daily Chrome may require user activation; exercise the native keyboard path too.
+  await downloadCall('focus', { frameId: downloadFrame.frameId, documentId: downloadFrame.documentId, selector: '#frame-download-native' });
+  await downloadCall('keys', { key: 'Enter' });
+  assert.equal((await downloadCall('wait', { kind: 'download', value: 'example-frame-native.txt' })).data.downloaded, true);
+  const duplicateCursor = (await downloadCall('downloads')).data.cursor;
+  await downloadCall('click', { selector: '#quick-download' });await downloadCall('click', { selector: '#quick-download' });
+  const ambiguousDownload = await downloadCall('wait', { kind: 'download', after: duplicateCursor, value: 'example-example.txt' }, false);
+  assert.equal(ambiguousDownload.error.code, 'DOWNLOAD_AMBIGUOUS');
+  assert.equal(ambiguousDownload.error.details.matches.length, 2);
+  await record('browser-download', completedDownload);
+  await downloadCall('close');
+  passed('tab-scoped downloads: cursor, concurrent trigger, exact saved bytes, progress/resume across Bridge restart, cancellation, cross-frame and ambiguity');
+  if (process.argv.includes('--browser-only') || process.argv.includes('--downloads-only')) return;
   const args = { tabId, goal: '查询示例列表，支持关键词和分页', requestId: 'example-browser-acceptance' };
   const start = await cli('exploration.start', args); const taskId = start.data.taskId;
   assert.equal((await cli('exploration.start', args)).data.taskId, taskId);
@@ -797,6 +867,6 @@ try {
 } finally {
   await browser?.close();
   if (bridge && bridge.exitCode === null && bridge.signalCode === null) { const exited = new Promise(resolve => bridge.once('exit', resolve)); bridge.kill('SIGTERM'); await exited; }
-  if (server) await new Promise(resolve => server.close(resolve));
+  if (server) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
   await record('report', { passed: !process.exitCode, checks, artifacts: root });
 }

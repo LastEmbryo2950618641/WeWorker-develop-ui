@@ -11,6 +11,7 @@ import { executeInterceptRead } from './intercept-read.js';
 import { executePageQuery } from './page-query.js';
 import { recordBrowserObservation, clearBrowserObservations } from './browser-observations.js';
 import { recordBrowserFrameEvent, clearBrowserFrames } from './browser-frames.js';
+import { recordBrowserDownload, clearBrowserDownloads } from './browser-downloads.js';
 
 /**
  * Background Service Worker
@@ -42,6 +43,7 @@ const EXTENSION_CAPABILITIES = [
   'runtime_validation_v1',
   'browser_commands_v1',
   'browser_frames_v1',
+  'browser_downloads_v1',
   'strict_output_contract_v1',
   'page_sources_v1',
   'intercept_read_v1',
@@ -2223,6 +2225,7 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
   const tabId = source?.tabId;
   if (!tabId || !cdpAttachedTabs.has(tabId)) return;
   void recordBrowserFrameEvent(chrome, source, method, params);
+  recordBrowserDownload(tabId, method, params);
   // Child target context/request IDs are scoped to their debugger session.
   // Existing preview and network caches belong to the main target only.
   if (source.sessionId) return;
@@ -2414,6 +2417,7 @@ chrome.debugger.onDetach.addListener((source, reason) => {
   const tabId = source?.tabId;
   if (!tabId || source.sessionId) return;
   clearBrowserFrames(tabId);
+  clearBrowserDownloads(tabId);
   cdpAttachedTabs.delete(tabId);
   clearBrowserObservations(tabId);
   cdpExecutionContexts.delete(tabId);
@@ -3311,8 +3315,9 @@ async function handleNativeMessage(msg) {
     }
   } else if (msg.type === 'browser_execute') {
     const operation = () => executeBrowserCommand(msg, { chrome, ensureCdpAttached, cdpEvaluate, getCdpNetworkSnapshot });
-    // Dialog handling must remain available to release an operation waiting for it.
-    const result = Number.isInteger(msg.tabId) && msg.command !== 'dialog'
+    // Read-only download observers must not block the click they are observing.
+    const observer = msg.command === 'dialog' || msg.command === 'downloads' || (msg.command === 'wait' && msg.args?.kind === 'download');
+    const result = Number.isInteger(msg.tabId) && !observer
       ? await getHostAdapterRuntime().exclusive(msg.tabId, operation) : await operation();
     sendToNative({ type: 'call_tool_result', id: msg.id, result });
   } else if (msg.type === 'browser_state') {
@@ -6936,6 +6941,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   clearBrowserObservations(tabId);
+  clearBrowserDownloads(tabId);
+  clearBrowserFrames(tabId);
   chrome.storage.session.remove(`webcli-browser-tab-${tabId}`).catch(() => {});
   const actionCaptureSession = cdpActionCaptureSessions.get(tabId);
   if (actionCaptureSession && typeof actionCaptureSession.requestStop === 'function') {
