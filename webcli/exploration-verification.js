@@ -96,7 +96,7 @@ export function applyVerificationCases(testCases, verification = {}) {
       missingRequired: [], validationErrors: [], captureBound: false,
       // Authored arguments replace missing schema defaults; they never turn a
       // non-read or evidence-free case into a permissible execution.
-      execute: test.risk.level === 'read' && test.risk.confidence >= 0.75 && test.contract.kind === 'captured_sample' && !test.unverifiable,
+      execute: test.risk.level === 'read' && test.risk.confidence >= 0.75 && ['captured_sample', 'page_observation'].includes(test.contract.kind) && !test.unverifiable,
       contract: { ...test.contract, authoredFixture: item.expect } }));
   });
 }

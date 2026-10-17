@@ -274,6 +274,28 @@ test("managed foreground tab selection prefers an exact hostname match over suff
   assert.equal(executed[0].tabUrl, 'https://www.example.com/home');
 });
 
+test('page source commands select exact origin/path, reject ambiguity, and never open a fallback page', async () => {
+  const manifest = { name: 'fixture', match: ['example.com'],
+    _hostSnapshot: { name: 'fixture', profile: 'public', digest: 'fixture-digest' },
+    commands: [{ id: 'read-page', runtime: 'extension', safety: 'read', pageRoute: { origin: 'https://example.com', pathname: '/items' } }] };
+  const tabs = [{ id: 1, url: 'https://example.com/' }, { id: 2, url: 'http://example.com/items' },
+    { id: 3, url: 'https://example.com/items?q=example' }];
+  const worker = loadServiceWorker({ tabs, managedCatalog: { available: true, managedNames: ['fixture'], adapters: [manifest] } });
+  const executed = [];
+  worker.context.getHostAdapterRuntime = () => ({ execute: async tabId => { executed.push(tabId); return 'fixture-result'; } });
+  assert.equal((await worker.callNativeTool('fixture.read-page')).result, 'fixture-result');
+  assert.deepEqual(executed, [3]);
+  tabs.push({ id: 4, url: 'https://example.com/items?q=another' });
+  assert.equal((await worker.callNativeTool('fixture.read-page')).result.error.code, 'PAGE_SOURCE_AMBIGUOUS');
+  tabs[3].active = true;
+  assert.equal((await worker.callNativeTool('fixture.read-page')).result, 'fixture-result');
+  assert.deepEqual(executed, [3, 4]);
+  tabs[2].url = tabs[3].url = 'https://example.com/other';
+  assert.equal((await worker.callNativeTool('fixture.read-page')).result.error.code, 'PAGE_SOURCE_ROUTE_MISSING');
+  assert.equal(tabs.length, 4);
+  assert.deepEqual(executed, [3, 4]);
+});
+
 test("managed background calls select the offscreen runner without opening a site tab", async () => {
   const manifest = { name: 'fixture', match: ['example.com'], runtime_allowed_hosts: ['api.example.org'],
     _hostSnapshot: { name: 'fixture', profile: 'public', digest: 'fixture-digest' },

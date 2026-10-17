@@ -21,8 +21,9 @@ it('persists structural knowledge with compare-and-swap updates and field confli
 it('marks old records and changed installed packages stale even after a newer knowledge save', () => {
   const { store } = setup(); const site = 'example.com';
   const past = new Date(Date.now() - 31 * 86400000).toISOString();
-  store.save(site, { expectedHash: store.read(site).hash, verifiedAt: past, packageDigest: 'old', endpoints: [{ id: 'old-api' }], commands: { old: { verifiedAt: past } } });
+  store.save(site, { expectedHash: store.read(site).hash, verifiedAt: past, packageDigest: 'old', endpoints: [{ id: 'old-api' }], pages: [{ id: 'old-page' }], commands: { old: { verifiedAt: past } } });
   const newer = store.save(site, { expectedHash: store.read(site).hash, verifiedAt: new Date().toISOString(), packageDigest: 'new', endpoints: [{ id: 'new-api' }], commands: {} });
   expect(newer.staleEndpoints).toEqual(['old-api']); expect(newer.staleCommands).toEqual(['old']);
+  expect(newer.stalePages).toEqual(['old-page']);
   expect(store.read(site, { activeDigest: 'different' }).staleReasons).toContain('installed_package_changed_or_unavailable');
 });

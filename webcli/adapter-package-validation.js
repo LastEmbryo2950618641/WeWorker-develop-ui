@@ -162,6 +162,21 @@ export function validateV2Manifest(manifest, directoryName = "?") {
         fail(adapterName, `Command "${id}" route field "${field}" must be a declared match host.`);
       }
     }
+    if (command.pageRoute !== undefined) {
+      const route = command.pageRoute;
+      let url;
+      try { url = new URL(route?.origin + route?.pathname); } catch { /* Rejected below. */ }
+      if (!route || typeof route !== 'object' || Array.isArray(route)
+        || Object.keys(route).some(key => !['origin', 'pathname'].includes(key))
+        || typeof route.pathname !== 'string' || !/^\/(?!\/)/.test(route.pathname)
+        || command.runtime !== 'extension' || command.execution || command.safety === 'write'
+        || !url || !['http:', 'https:'].includes(url.protocol) || url.username || url.password
+        || url.origin !== route.origin || url.pathname !== route.pathname || url.search || url.hash
+        || !match?.some(host => url.hostname === host || (host.startsWith('*.') && url.hostname.endsWith(host.slice(1))))
+        || (command.tabDomain && url.hostname !== command.tabDomain)) {
+        fail(adapterName, `Command "${id}" pageRoute must be an exact declared HTTP(S) origin and pathname for a foreground read command.`);
+      }
+    }
     runtimesPresent.add(command.runtime);
     const ext = command.runtime === "extension" ? "js" : "py";
     const expectedModule = `${command.runtime}/commands/${id}.${ext}`;

@@ -35,6 +35,7 @@ Codex / Claude / 其他 CLI Agent + Skill
 | list / get / events / evidence / trace | 找回任务、查看状态、游标事件、结构化接口证据和修复诊断 |
 | collect | 用户操作页面后补采，不重载 |
 | actions / probe | 复用插件安全搜索、筛选和分页候选，每任务最多三次探测 |
+| observe | 观察声明式 UI_SELECTOR / DOM_STATE 来源，只保存路由、字段类型结构和选择理由 |
 | cancel | 停止后续阶段，丢弃迟到结果；已经派发的浏览器操作可能完成 |
 | generate | 默认最多两个 GET；Agent plan 支持 1–50 个读取工具及 JSON/form POST、GraphQL query，POST 必须有 readReason |
 | repair-info / repair | 查看当前安装包摘要/历史 cases，从新证据建立所选已有只读命令的修复草稿；其他文件与命令保留 |
@@ -73,6 +74,16 @@ Codex / Claude / 其他 CLI Agent + Skill
 持久化与输出只含请求/响应结构、字段名称、状态及端点。省略响应值和请求头，移除凭据查询字段，其余查询值变为占位；常见数字 ID、UUID 和邮箱路径段结构化为 :id。跨源流量不自动增加权限。
 
 当前生成范围：已观察成功且被判定为读取的 GET 与 Agent 明确编写读取理由的 POST（JSON/form/GraphQL query），每个计划最多 50 个新命令。未知/持久 GraphQL 操作、mutation、subscription 和动态 :id 路径不自动生成；写命令尚未开放。额外 API origin 在 start 显式授权，生成包只从选中证据派生 runtime_allowed_hosts，安装前审阅权限差异。已有包的命令按原有增量机制保留；只执行新生成的查询验证，不运行保留的写命令。
+
+## 页面来源策略
+
+observe 接受 UI_SELECTOR（行 selector、字段 selector/attribute/optional、emptySelector 和 limit）或 DOM_STATE（window 自有属性 path，或 JSON script selector + path）。扩展在 MAIN world 执行固定读取函数，观察阶段只返回类型结构；独立 page-source-v1 证据通过 fingerprint 与任务中的页面来源及 plan 绑定，不借用无关 API。支持纯页面或 API/页面混合草稿；纯页面生成不引入 API shared runtime，增量保留已有包。
+
+生成命令经 page_read helper 读取当前页面。UI_SELECTOR 返回 items/matchedCount/truncated；必需字段缺失、隐藏、歧义或无已观察空态均报错。DOM_STATE 不调用 getter、不读 prototype/存储/凭据字段；只接受有限 JSON，最多 1000 数组项、100 对象字段、10 层、20000 节点和 500000 字符，超限报错。页面观察省略标量值，作者必须另写精确 cases，真实验证全通过才可安装。插件能力标记为 page_sources_v1。
+
+manifest 增加可选 pageRoute `{origin, pathname}`，仅允许已声明页面主机的准确 HTTP(S) origin/pathname 和 Extension 前台只读命令。普通调用匹配已有页面；多个匹配页时只选唯一活动页，否则 PAGE_SOURCE_AMBIGUOUS；无匹配页返回 PAGE_SOURCE_ROUTE_MISSING，不导航其他页面。helper 再检查 origin/pathname，防止调用前页面变化。查询串/hash 不作为绑定条件，初始命令无参数，只读取当前结果；动态路径、多步页面流程与 INTERCEPT 仍待实现。
+
+知识增加 pages 与逐条 stalePages，修复可引用新的页面来源，仍保留原路由和其他命令。隔离真实浏览器覆盖无 JSON API 的三个来源、安装后普通调用、空态、缺字段、选择器漂移后的定向修复以及重启恢复。精确测试证据和真实站点复验见跟进文档。
 
 ## 通用浏览器层
 

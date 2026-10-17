@@ -6,6 +6,7 @@ import { createHostAdapterRuntime, assertAdapterNavigationUrl, createNavigationG
 import { createManagedBackgroundRuntime, MANAGED_RUNNER_PATH } from './managed-background-runtime.js';
 import { executeBrowserCommand } from './browser-commands.js';
 import { browserResponseEvidence } from './browser-network.js';
+import { executePageSource } from './page-source.js';
 import { recordBrowserObservation, clearBrowserObservations } from './browser-observations.js';
 
 /**
@@ -38,6 +39,7 @@ const EXTENSION_CAPABILITIES = [
   'runtime_validation_v1',
   'browser_commands_v1',
   'strict_output_contract_v1',
+  'page_sources_v1',
 ];
 
 function buildExtensionHello(extra = {}) {
@@ -2682,10 +2684,28 @@ async function handleNativeMessage(msg) {
         }
         const tabs = await chrome.tabs.query({});
         const route = selected.command.tabDomain || selected.command.routeDomain || selected.manifest.match[0];
+        let pageTab;
+        if (selected.command.pageRoute) {
+          const { origin, pathname } = selected.command.pageRoute;
+          assertAdapterNavigationUrl(selected.manifest, origin + pathname);
+          const matches = tabs.filter(entry => {
+            try { const url = new URL(entry.url); return url.origin === origin && url.pathname === pathname; }
+            catch { return false; }
+          });
+          const activeMatches = matches.filter(entry => entry.active);
+          pageTab = matches.length === 1 ? matches[0] : activeMatches.length === 1 ? activeMatches[0] : null;
+          if (!pageTab?.id) {
+            sendToNative({ type: 'call_tool_result', id: msg.id, traceID, result: { ok: false, error: {
+              code: matches.length ? 'PAGE_SOURCE_AMBIGUOUS' : 'PAGE_SOURCE_ROUTE_MISSING',
+              message: matches.length ? 'Activate one matching page before calling this command.' : `Open ${origin}${pathname} before calling this command.`,
+            } } });
+            return;
+          }
+        }
         // 先精确匹配 hostname，再回退到 manifest.match 声明的页面主机（含 *.wildcard）。
         // 回退必须限定在声明的主机内：runtime_allowed_hosts 里的辅助域（如 so.gitee.com）
         // 不是页面主机，不得被选为执行页。语义与 assertAdapterNavigationUrl 的白名单一致。
-        let tab = tabs.find(entry => {
+        let tab = pageTab || tabs.find(entry => {
           try { return new URL(entry.url).hostname === route; } catch { return false; }
         });
         if (!tab?.id) {
@@ -2822,6 +2842,14 @@ async function handleNativeMessage(msg) {
       sendToNative({ type: 'call_tool_result', id: msg.id, result: { tabs: explorableTabs } });
     } catch (err) {
       sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
+    }
+
+  } else if (msg.type === 'exploration_observe_page') {
+    try {
+      const result = await executePageSource(chrome, Number(msg.tabId), { ...msg.payload, metadataOnly: true });
+      sendToNative({ type: 'call_tool_result', id: msg.id, result });
+    } catch {
+      sendToNative({ type: 'call_tool_error', id: msg.id, error: 'Unable to observe the selected page.' });
     }
 
   } else if (msg.type === 'exploration_capture_passive') {
@@ -8112,6 +8140,8 @@ async function handleWecliRuntimeRequest(msg, sender) {
   const allowedHosts = await loadRuntimeAllowedHostsForTab(tab);
 
   switch (action) {
+    case 'page_read':
+      return executePageSource(chrome, tab.id, { ...payload, metadataOnly: false });
     case 'cookies_get':
       traceLog(traceID, `[ServiceWorkerRuntime] cookies_get ${String(payload.domain || payload.domains || payload.url || tab.url)}`);
       return getRuntimeCookies(tab, payload, allowedHosts);

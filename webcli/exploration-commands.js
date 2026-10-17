@@ -12,6 +12,7 @@ export const explorationCommands = {
   trace: { description: 'Read a structural diagnostic trace for handoff or repair; excludes captured data and source code.', params: ['taskId'] },
   evidence: { description: 'Read structural API evidence, without captured values or credentials.', params: ['taskId'] },
   collect: { description: 'Collect fresh evidence after manual page interaction, without reloading.', params: ['taskId'] },
+  observe: { description: 'Observe a declarative DOM selector or page-state/JSON-script source. Persists types and counts only; requires an authored reason.', params: ['taskId', 'source', 'reason'] },
   actions: { description: 'Inspect safe search/filter/pagination controls on the bound page.', params: ['taskId'] },
   probe: { description: 'Execute one freshly inspected safe read action and collect its network delta (three probes per task).', params: ['taskId', 'candidateId', 'value?'] },
   cancel: { description: 'Cancel task processing; an already dispatched browser request may finish but its result is discarded.', params: ['taskId'] },

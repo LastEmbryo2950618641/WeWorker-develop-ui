@@ -290,3 +290,18 @@ npm run test:exploration:browser --prefix webcli -- \
 - Python 相对 `af8e082` 差异为零；没有触及 Python 环境、测试、生命周期或用户持久目录。未推送、未开 PR。
 - 接手下一步：纯 DOM/UI/INTERCEPT 策略、动态路径与请求签名、知识冲突修订，之后完善 UI 共用服务及跨 Agent 独立对话验收。完整 OpenCLI 对齐目标仍 active；本轮只完成安装后只读命令维护这一项，不代表全部对齐。
 - 本轮功能及验收提交 `411fe85`，工作区提交时干净；该提交是当前最近成功验证的代码基线。打包 CLI 帮助确认 26 个探索命令，包含两个修复入口；后续 checkpoint 提交仅更新此记录。未推送、未创建 PR。
+
+### 2026-10-17：页面来源策略、准确路由与定向修复
+
+- 操作前 HEAD `a722880`，分支仍为 `codex/api-exploration-cli`。develop/dev-1.1.0 集成基线未变；本轮没有同步上游，不要重复合并历史 PR。
+- 新增 exploration.observe，支持 UI_SELECTOR 的行/字段/属性/空态与 DOM_STATE 的 window 自有属性或 JSON script。固定 MAIN world 读取函数，观察只返回结构，生成普通命令通过 page_read helper 读取；不把页面来源伪装成 API。页面来源使用独立指纹绑定计划，每个工具必须写作者 cases。纯页面/混合 API 计划、增量保留、修复与知识都接入同一服务。
+- helper 检查 origin/pathname、必需字段的唯一性/可见性；输入/脚本/样式不能当普通文本字段，文本优先使用渲染结果。DOM 缺行时要求可见空态标记，截断显式返回；状态 getter/原型/存储/凭据字段拒绝，超限报错。没有新依赖或 manifest 权限。
+- 真实测试首次发现网络记录器也记录 HTML document，“零网络候选”假设不成立，验收调整为“无 JSON API 候选”。随后预览 3/3 通过但普通命令失败，捕获错误 PAGE_SOURCE_ROUTE_CHANGED，确认旧路由只按 host 选中了首页。新增可选 pageRoute，包校验、生成与实际调度统一检查准确 origin/pathname；唯一匹配页优先，多页时只选唯一活动页，缺失/歧义不自动新开或导航。Bridge 增加 page_sources_v1 协商守卫，避免旧扩展忽略新路由。
+- 隔离真实 Chromium 全流程现 22 项通过：无 JSON API 示例页的 DOM、页面状态、JSON script 观察→生成→严格验证→安装→普通调用；缺字段失败、明确空态成功；服务器实际更换 DOM 类名后，历史 case 失败，定向修复选择器再验证/安装成功，其他页面命令仍可执行；关闭本任务页面后普通调用返回路由缺失。还覆盖既有 API/POST/GraphQL、六组断言、字段漂移修复、取消和 Bridge 重启恢复。
+- 此轮新增保存页面知识后，原测试“重启应标记安装包已变”断言过时；按最后已验证并保存的新摘要修正为 stale=false，同时检查四条页面来源跨重启保留。测试未绕过实际 CLI、插件、网络或验证器。
+- 用户 Chrome：核实自建 source Bridge 身份后更新进程、重载已安装的工作区扩展，page_sources_v1 可用。重选指定公共搜索页并重新绑定，不关闭用户页。观察可见普通视频卡片，生成本地 `bilibili.com.explored-visible-videos`，写标题/链接/数量/未截断断言；真实预览通过、审阅无新增权限后本地增量安装。普通调用返回 27 张已渲染卡片，标题/原始链接与当前 DOM 逐项一致。它读取当前页面，不能解释为完整搜索结果或唯一视频数；查询串与页码不由此命令控制。
+- 已有 `bilibili.com.explored-search-videos` 回归三组：excel 第一页 17 个视频并排除 3 个课程，第二页及 spreadsheet 第一页各 20 个视频，BV 格式和结果变化检查通过。新页面来源/case/语义说明保存于本地知识，stale=false。生成包、标题、响应与会话标识没有写入仓库。
+- 最终自动化：WebCLI 101 文件/1086 项通过；Extension page-source/tool-route/output-validator/refresh-queue 共 40 项通过。构建 prepare 与全量测试曾同时执行导致既有 generation-orchestrator 两例失败；停止并行修改构建资产，构建完成后顺序重跑全部通过。后续必须将 prepare/build/pack 与依赖其资产的测试串行执行。
+- CLI/Bridge bundle、打包 CLI 的 observe 帮助、公开配置、21 个修改/新增 JS 文件语法、git diff --check 通过。npm pack dry-run 583 文件，含 exploration-page.js、扩展 page-source.js 和新 Skill；预打包日志写在 JSON 前，解析报告时需跳过 prepare 日志。公开配置脚本位于仓库根 scripts/check-public-config.mjs，不在 weworker/scripts。已有可选列映射资源缺失提示未改。
+- source Bridge/用户扩展已具备本轮页面能力；后续仍先用 doctor、tabs、list 查询当前状态，不假定旧 PID/tabId。Chrome 重载后身份可能失效，应重新选择绑定；不要终止未知进程。Python 相对功能起点 `af8e082` 差异为零，未碰其环境、测试、生命周期或持久数据。未推送、未开 PR。
+- 下一步仍是完整 OpenCLI 对齐：INTERCEPT/策略回退、动态路径/CSRF/签名、写命令语义与验证、多步 UI/复杂 frame/Shadow DOM、多连接、下载/网络流、知识修订、UI 共用服务及独立 Codex/Claude 新对话验收。当前页面策略是阶段成果，目标保持 active；不要把这一批测试通过当作全部目标完成。

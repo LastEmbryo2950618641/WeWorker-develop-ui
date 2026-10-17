@@ -90,7 +90,8 @@ export function writeScaffoldFromSiteMemory(memory, options = {}) {
         secondaryToolName,
         detailToolName
     });
-    if (options.packageFormat === 2) return writePackageDraft({ memory, adapterDir, supportBundle, paths: options.adapterPaths });
+    if (options.packageFormat === 2) return writePackageDraft({ memory, adapterDir,
+        supportBundle: { ...supportBundle, toolFiles: [...supportBundle.toolFiles, ...(options.additionalTools || [])] }, paths: options.adapterPaths });
     fs.mkdirSync(generatedDir, { recursive: true });
     const retainedGeneratedToolSupportFiles = collectRetainedGeneratedToolSupportFiles(manifestPath, adapterDir, supportBundle.supportFiles);
     const finalToolNames = mergeToolNamesWithRetainedGeneratedTools(memory.siteKey, toolNames, retainedGeneratedToolSupportFiles);

@@ -129,6 +129,27 @@ describe("validateV2Manifest", () => {
     }
   });
 
+  it('limits page routes to exact declared foreground read origins and paths', () => {
+    const manifest = v2Manifest('blog');
+    const command = manifest.commands[0];
+    const valid = { origin: 'https://blog.example.com', pathname: '/items' };
+    command.pageRoute = valid;
+    expect(validateV2Manifest(manifest).commands[0].pageRoute).toEqual(valid);
+    for (const route of [null, {}, { ...valid, pathname: '//other.example.org' },
+      { ...valid, origin: 'https://api.example.org' }, { ...valid, origin: 'https://user:placeholder@blog.example.com' },
+      { ...valid, pathname: '/items?q=example' }, { ...valid, pathname: '/a/../items' },
+      { ...valid, pathname: '/items#example' }, { ...valid, extra: true }]) {
+      command.pageRoute = route;
+      expect(() => validateV2Manifest(manifest)).toThrow(/pageRoute/);
+    }
+    command.pageRoute = valid;
+    command.safety = 'write';
+    expect(() => validateV2Manifest(manifest)).toThrow(/pageRoute/);
+    command.safety = 'read';
+    command.execution = { type: 'api', runtime: 'background' };
+    expect(() => validateV2Manifest(manifest)).toThrow(/pageRoute/);
+  });
+
   it("rejects wrong schema_version", () => {
     expect(() => validateV2Manifest(v2Manifest("blog", { schema_version: 1 }), "blog")).toThrow(/schema_version/);
   });

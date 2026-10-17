@@ -36,8 +36,10 @@ export function writePackageDraft({ memory, adapterDir, supportBundle, paths }) 
   const evidence = { format: 2, name, commands: {}, ...(retained ? { retainedPackage: { name, digest: base.digest } } : {}) };
   const files = new Map(retained?.files || []);
   const runtimeFile = retained ? 'extension/internal/exploration-runtime.js' : 'extension/internal/runtime.js';
-  if (files.has(runtimeFile) && files.get(runtimeFile).toString('utf8') !== supportBundle.sharedRuntime.content) throw new Error('Existing exploration runtime changed; review compatibility before extending.');
-  files.set(runtimeFile, supportBundle.sharedRuntime.content);
+  if (supportBundle.sharedRuntime) {
+    if (files.has(runtimeFile) && files.get(runtimeFile).toString('utf8') !== supportBundle.sharedRuntime.content) throw new Error('Existing exploration runtime changed; review compatibility before extending.');
+    files.set(runtimeFile, supportBundle.sharedRuntime.content);
+  }
   const retainedIds = new Set(retained?.manifest.commands.map(command => command.id) || []);
   const commands = supportBundle.toolFiles.filter(file => !(retainedIds.has('check-login-status') && file.toolDefinition?.name === name + '.check_login_status')).map(file => {
     const tool = file.toolDefinition;
@@ -51,6 +53,7 @@ export function writePackageDraft({ memory, adapterDir, supportBundle, paths }) 
     evidence.commands[id] = { originalName: tool.name, safety: tool.access === 'write' ? 'write' : 'read', generationSource: tool.generationSource || null };
     return { id, ...(local !== id ? { aliases: [local] } : {}), runtime: 'extension', module,
       description: tool.description, schema: tool.parameters, safety: tool.access === 'write' ? 'write' : 'read',
+      ...(tool.pageRoute ? { pageRoute: tool.pageRoute } : {}),
       ...(retained ? { routeDomain: memory.siteHost || name, tabDomain: memory.siteHost || name } : {}),
     };
   });
@@ -77,7 +80,7 @@ export function writePackageDraft({ memory, adapterDir, supportBundle, paths }) 
   fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n', { flag: 'wx' });
   return { packageFormat: 2, siteKey: name, adapterDir: root, generatedDir: path.join(root, 'extension/commands'),
     mode: 'isolated_package_draft', toolNames: commands.map(command => name + '.' + command.id),
-    files: { manifest: path.join(root, 'manifest.json'), sharedRuntime: path.join(root, runtimeFile), sourceEvidence: evidencePath },
+    files: { manifest: path.join(root, 'manifest.json'), ...(supportBundle.sharedRuntime ? { sharedRuntime: path.join(root, runtimeFile) } : {}), sourceEvidence: evidencePath },
     managedBaseline: { profile: catalog.profile, name, digest: base?.digest || null, source: base?.source || null },
     supportFiles: [], manifestUpdated: true, indexCatalogUpdated: false, registryCatalogUpdated: false, removedGeneratedFiles: [] };
 }

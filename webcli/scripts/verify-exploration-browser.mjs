@@ -92,9 +92,16 @@ try {
   const postRequests = [];
   let failApi = false;
   let renamedItemField = false;
+  let renamedPageField = false;
   server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
-    if (['/api/post-search', '/api/form-query', '/graphql'].includes(url.pathname)) {
+    if (url.pathname === '/page-only') {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end(`<!doctype html><title>Example static inventory</title><h1>Static inventory</h1>
+        <ul id="rows"><li class="item"><a class="${renamedPageField ? 'heading' : 'title'}" href="/items/1">Example first</a></li><li class="item"><a class="${renamedPageField ? 'heading' : 'title'}" href="/items/2">Example second</a></li></ul><p id="empty" hidden>No items</p>
+        <script>window.examplePageState={items:[{id:'example-1',title:'Example first'},{id:'example-2',title:'Example second'}]};</script>
+        <script id="json-data" type="application/json">{"items":[{"id":"example-json","title":"Example JSON item"}]}</script>`);
+    } else if (['/api/post-search', '/api/form-query', '/graphql'].includes(url.pathname)) {
       let body = ''; req.on('data', chunk => body += chunk); req.on('end', () => {
         const data = url.pathname === '/api/form-query' ? Object.fromEntries(new URLSearchParams(body)) : JSON.parse(body);
         postRequests.push({ path: url.pathname, data });
@@ -395,6 +402,85 @@ try {
   await record('installed-repair-validation', repairValidation);
   passed('installed command repaired after real response drift; six imported cases revalidated, protected files preserved and sibling commands still run');
 
+  const pageOnlyTab = (await cli('browser.open', { session: 'page-only', url: origin + '/page-only' })).data.tabId;
+  const pageTaskId = (await cli('exploration.start', { tabId: pageOnlyTab, goal: 'Read static DOM, page state and JSON script data', requestId: 'example-page-sources' })).data.taskId;
+  assert.equal((await settle(pageTaskId)).status, 'evidence_ready');
+  // The HTML document itself may be observed by the network recorder; this
+  // page exposes no JSON API request to use as generation evidence.
+  assert.ok((await cli('exploration.evidence', { taskId: pageTaskId })).data.candidates.every(item => item.responseEvidence.bodyKind !== 'json'));
+  const pageSources = [
+    { strategy: 'UI_SELECTOR', selector: '#rows .item', emptySelector: '#empty', fields: { title: { selector: '.title' }, url: { selector: '.title', attribute: 'href' } } },
+    { strategy: 'DOM_STATE', path: ['examplePageState', 'items'] },
+    { strategy: 'DOM_STATE', jsonSelector: '#json-data', path: ['items'] },
+  ];
+  for (const source of pageSources) {
+    await cli('exploration.observe', { taskId: pageTaskId, source, reason: 'Observed public static data, no API endpoint or side effect.' });
+    assert.equal((await settle(pageTaskId)).status, 'evidence_ready');
+  }
+  const pageEvidence = (await cli('exploration.evidence', { taskId: pageTaskId })).data;
+  assert.equal(pageEvidence.pageSources.length, 3);
+  assert.ok(!JSON.stringify(pageEvidence).includes('Example first'));
+  const pagePlan = { tools: pageEvidence.pageSources.map((source, i) => ({ name: ['read_dom', 'read_state', 'read_json'][i], risk: 'read', strategy: source.source.strategy,
+    sourcePageId: source.id, purpose: 'Read public page data', readReason: 'Declarative data read, no mutation.' })) };
+  const pageDraft = (await cli('exploration.generate', { taskId: pageTaskId, plan: pagePlan })).data;
+  assert.equal((await cli('exploration.validate', { taskId: pageTaskId }, false)).error.code, 'VERIFICATION_REQUIRED');
+  for (const [i, tool] of pageDraft.toolNames.entries()) {
+    const current = (await cli('exploration.verification-read', { taskId: pageTaskId, tool })).data;
+    await cli('exploration.verification-write', { taskId: pageTaskId, tool, expectedHash: current.hash,
+      cases: [{ id: 'read-data', args: {}, expect: { rowCount: { path: i === 0 ? 'data.items' : 'data', min: i === 2 ? 1 : 2, max: i === 2 ? 1 : 2 },
+        types: { [i === 0 ? 'data.items.*.title' : 'data.*.title']: 'string' }, equals: { [i === 0 ? 'data.items.0.title' : 'data.0.title']: i === 2 ? 'Example JSON item' : 'Example first' } } }] });
+  }
+  await cli('exploration.validate', { taskId: pageTaskId });
+  const pageValidation = await settle(pageTaskId);
+  assert.equal(pageValidation.status, 'review_ready', JSON.stringify(pageValidation));
+  assert.deepEqual(pageValidation.runtimeValidation.executionSummary, { attempted: 3, passed: 3, failed: 0, skipped: 0 });
+  const pageReview = (await cli('exploration.review', { taskId: pageTaskId })).data;
+  await cli('exploration.install', { taskId: pageTaskId, reviewId: pageReview.reviewId, confirmed: true });
+  assert.equal((await settle(pageTaskId)).status, 'installed');
+  for (const tool of pageDraft.toolNames) {
+    const result = await cli(tool, {}, false);
+    await record('installed-' + tool, result);
+    assert.equal(result.ok, true, JSON.stringify(result));
+  }
+  const currentKnowledge = (await cli('exploration.knowledge-read', { site: pageReview.name })).data;
+  await cli('exploration.knowledge-save', { taskId: pageTaskId, expectedHash: currentKnowledge.hash });
+  assert.equal((await cli('exploration.knowledge-read', { site: pageReview.name })).data.knowledge.pages.length, 3);
+  await cli('browser.eval', { session: 'page-only', expression: "document.querySelectorAll('#rows .title')[1].remove();true" });
+  const missingField = await cli(pageDraft.toolNames[0], {}, false);
+  assert.equal(missingField.ok, false);
+  await cli('browser.eval', { session: 'page-only', expression: "document.querySelector('#rows').replaceChildren();document.querySelector('#empty').hidden=false;true" });
+  assert.equal((await cli(pageDraft.toolNames[0])).data.items.length, 0);
+  await record('page-source-validation', pageValidation);
+  passed('API-free DOM, MAIN-world state and JSON script observation, generation, strict verification, installation, calls, knowledge and explicit empty state');
+  renamedPageField = true;
+  const pageRepairInfo = (await cli('exploration.repair-info', { site: pageReview.name })).data;
+  const pageRepairId = (await cli('exploration.start', { tabId: pageOnlyTab, goal: 'Repair changed DOM selector', requestId: 'example-page-repair' })).data.taskId;
+  await settle(pageRepairId);
+  await cli('exploration.observe', { taskId: pageRepairId, source: { ...pageSources[0], fields: { title: { selector: '.heading' }, url: { selector: '.heading', attribute: 'href' } } }, reason: 'Public row links now use heading class.' });
+  await settle(pageRepairId);
+  const newPageSource = (await cli('exploration.evidence', { taskId: pageRepairId })).data.pageSources[0];
+  const pageRepair = (await cli('exploration.repair', { taskId: pageRepairId, site: pageReview.name, expectedDigest: pageRepairInfo.digest,
+    plan: { tools: [{ name: 'read-dom', risk: 'read', strategy: 'UI_SELECTOR', sourcePageId: newPageSource.id, purpose: 'Repair public DOM query', readReason: 'Public row read only.' }] } })).data;
+  assert.deepEqual(pageRepair.repair.knowledge.importedTools, [pageDraft.toolNames[0]]);
+  await cli('exploration.validate', { taskId: pageRepairId });
+  assert.equal((await settle(pageRepairId)).status, 'draft');
+  const domModule = (await cli('exploration.draft-read', { taskId: pageRepairId, file: 'extension/commands/read-dom.js' })).data;
+  await cli('exploration.draft-write', { taskId: pageRepairId, file: 'extension/commands/read-dom.js', expectedHash: domModule.hash, content: domModule.content.replaceAll('.title', '.heading') });
+  await cli('exploration.validate', { taskId: pageRepairId });
+  const repairedPageValidation = await settle(pageRepairId);
+  assert.equal(repairedPageValidation.status, 'review_ready', JSON.stringify(repairedPageValidation));
+  const repairedPageReview = (await cli('exploration.review', { taskId: pageRepairId })).data;
+  await cli('exploration.install', { taskId: pageRepairId, reviewId: repairedPageReview.reviewId, confirmed: true });
+  assert.equal((await settle(pageRepairId)).status, 'installed');
+  assert.equal((await cli(pageDraft.toolNames[0])).data.items[0].title, 'Example first');
+  for (const tool of pageDraft.toolNames.slice(1)) assert.equal((await cli(tool)).ok, true);
+  const repairedKnowledge = (await cli('exploration.knowledge-read', { site: pageReview.name })).data;
+  await cli('exploration.knowledge-save', { taskId: pageRepairId, expectedHash: repairedKnowledge.hash });
+  await record('page-repair-validation', repairedPageValidation);
+  passed('page selector drift fails imported cases; scoped CLI repair revalidates and preserves sibling page commands');
+  await cli('browser.close', { session: 'page-only' });
+  assert.equal((await cli(pageDraft.toolNames[0], {}, false)).error.code, 'PAGE_SOURCE_ROUTE_MISSING');
+
   const cancelledId = (await cli('exploration.start', { ...args, requestId: 'example-cancel' })).data.taskId;
   await cli('exploration.cancel', { taskId: cancelledId });
   await delay(5000);
@@ -411,7 +497,8 @@ try {
   assert.equal((await cli('exploration.get', { taskId: cancelledId })).data.status, 'cancelled');
   const restoredKnowledge = (await cli('exploration.knowledge-read', { site: review.name })).data;
   assert.equal(restoredKnowledge.knowledge.commands[verificationTool].cases.length, 6);
-  assert.ok(restoredKnowledge.staleReasons.includes('installed_package_changed_or_unavailable'));
+  assert.equal(restoredKnowledge.stale, false);
+  assert.equal(restoredKnowledge.knowledge.pages.length, 4);
   // Allow the extension's already-dispatched capture to finish before explicit resumption.
   await delay(5000);
   await cli('exploration.collect', { taskId: interruptedId });

@@ -396,3 +396,52 @@ it('requires authored cases for repairs and refuses a baseline changed after val
   fs.appendFileSync(manifestPath, '\n');
   expect((await f.service.execute('review', { taskId })).ok).toBe(false);
 });
+
+it('generates and installs a page-only command without API candidates, requiring fresh observation and authored cases', async () => {
+  const f = setup({ capabilities: () => ({ connected: true, capabilities: ['passive_exploration_v1', 'strict_output_contract_v1', 'page_sources_v1'] }) });
+  const original = f.requestExtension.getMockImplementation();
+  f.requestExtension.mockImplementation(async msg => msg.type === 'exploration_capture_passive' ? { entries: [] }
+    : msg.type === 'exploration_observe_page' ? { ok: true, shape: { type: 'array', length: 1, items: { type: 'string', value: 'example-private-content' } } } : original(msg));
+  const taskId = await start(f.service);
+  expect((await f.service.execute('generate', { taskId })).error.code).toBe('NO_READ_EVIDENCE');
+  const source = { strategy: 'DOM_STATE', path: ['exampleState', 'items'] };
+  await f.service.execute('observe', { taskId, source, reason: 'Public item state has no API endpoint.' }); await f.service.jobs.get(taskId);
+  const evidence = (await f.service.execute('evidence', { taskId })).data;
+  expect(evidence.candidates).toEqual([]); expect(evidence.pageSources).toHaveLength(1);
+  expect(JSON.stringify(evidence)).not.toContain('example-private-content');
+  const plan = { tools: [{ name: 'read_page', risk: 'read', strategy: 'DOM_STATE', sourcePageId: evidence.pageSources[0].id, readReason: 'Only reads the observed public state.' }] };
+  const generated = await f.service.execute('generate', { taskId, plan }); expect(generated.ok).toBe(true);
+  const run = f.service.runs.get(taskId);
+  expect(readGenerationEvidence(run.draft.adapterDir).commands['read-page'].generationSource.version).toBe('page-source-v1');
+  expect((await f.service.execute('validate', { taskId })).error.code).toBe('VERIFICATION_REQUIRED');
+  const tool = generated.data.toolNames[0], current = (await f.service.execute('verification-read', { taskId, tool })).data;
+  await f.service.execute('verification-write', { taskId, tool, expectedHash: current.hash, cases: [{ id: 'items', args: {}, expect: { types: { data: 'array' }, rowCount: { path: 'data', min: 1 } } }] });
+  await f.service.execute('validate', { taskId }); await f.service.jobs.get(taskId);
+  expect((await f.service.execute('get', { taskId })).data.status).toBe('review_ready');
+  const review = (await f.service.execute('review', { taskId })).data;
+  await f.service.execute('install', { taskId, reviewId: review.reviewId, confirmed: true }); await f.service.jobs.get(taskId);
+  expect((await f.service.execute('get', { taskId })).data.status).toBe('installed');
+  const known = (await f.service.execute('knowledge-read', { site: 'example.com' })).data;
+  const saved = await f.service.execute('knowledge-save', { taskId, expectedHash: known.hash });
+  expect(saved.data.knowledge.endpoints).toEqual([]); expect(saved.data.knowledge.pages).toHaveLength(1);
+  expect(new ExplorationService(f.options).runs.get(taskId).pageSources[0].id).toBe(evidence.pageSources[0].id);
+});
+
+it('combines API and page plans and rejects mismatched page strategy or stale observations', async () => {
+  const f = setup({ capabilities: () => ({ connected: true, capabilities: ['passive_exploration_v1', 'strict_output_contract_v1', 'page_sources_v1'] }) });
+  const original = f.requestExtension.getMockImplementation();
+  f.requestExtension.mockImplementation(async msg => msg.type === 'exploration_observe_page' ? { ok: true, shape: { type: 'object' } } : original(msg));
+  const taskId = await start(f.service);
+  await f.service.execute('observe', { taskId, source: { strategy: 'UI_SELECTOR', selector: '.item', fields: { title: {} } }, reason: 'Read visible rows.' }); await f.service.jobs.get(taskId);
+  const sourcePageId = f.service.runs.get(taskId).pageSources[0].id;
+  const tool = { name: 'page_items', risk: 'read', sourcePageId, strategy: 'UI_SELECTOR', readReason: 'Only reads visible rows.' };
+  for (const changed of [{ strategy: 'DOM_STATE' }, { sourcePageId: 'page-v1-missing' }, { sourceApiIndexes: [0] }]) {
+    expect((await f.service.execute('generate', { taskId, plan: { tools: [{ ...tool, ...changed }] } })).error.code).toBe('INVALID_PLAN');
+  }
+  const plan = { tools: [tool, { name: 'api_items', risk: 'read', sourceApiKind: 'list', sourceApiIndexes: [0] }] };
+  const result = await f.service.execute('generate', { taskId, plan }); expect(result.ok).toBe(true);
+  const sources = readGenerationEvidence(f.service.runs.get(taskId).draft.adapterDir).commands;
+  expect(sources['page-items'].generationSource.version).toBe('page-source-v1');
+  expect(sources['api-items'].generationSource.version).toBe('api-source-v2');
+  expect((await f.service.execute('observe', { taskId, source: {}, reason: 'Changed' })).error.code).toBe('INVALID_STATE');
+});

@@ -6,6 +6,7 @@ import { explorationError as fail, textArg } from './exploration-commands.js';
 import { generationEvidenceDir } from './generation-harness/package-draft.js';
 import { buildApiSourceEvidence } from './generation-harness/source-evidence.js';
 import { verifyRepairRetention } from './generation-harness/existing-site.js';
+import { pageSourceEvidence } from './exploration-page.js';
 
 export function repairTarget(site, paths) {
   textArg(site, 'site', 128);
@@ -33,7 +34,8 @@ export function writeRepairDraft({ site, expectedDigest, plan, memory, candidate
   writePackageDirectory(adapterDir, files);
   const evidence = { format: 2, name: site, retainedPackage: { name: site, digest: pkg.digest },
     commands: Object.fromEntries(plan.tools.map(tool => [tool.name, { originalName: `${site}.${tool.name}`, safety: 'read',
-      generationSource: buildApiSourceEvidence(candidates[tool.sourceApiIndexes[0]], { sourceKind: 'passive_list' }) }])) };
+      generationSource: tool.sourcePageId ? pageSourceEvidence(memory.pageSources.find(item => item.id === tool.sourcePageId))
+        : buildApiSourceEvidence(candidates[tool.sourceApiIndexes[0]], { sourceKind: 'passive_list' }) }])) };
   const evidenceDir = generationEvidenceDir(adapterDir);
   assertManagedDirectory(evidenceDir);
   fs.mkdirSync(evidenceDir, { recursive: true, mode: 0o700 });

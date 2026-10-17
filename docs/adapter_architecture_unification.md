@@ -45,6 +45,7 @@ Adapter 是唯一分发和安装单位。浏览器扩展承担浏览器执行与
 - 调用保持 webcli call <name>.<command-id>。name 包含点号时使用最长已注册名称匹配，不能按最后一个域名段猜测。
 - commands[].aliases 可显式保留同包旧命令名（最多 64 个，仅字母、数字、下划线、短横线，不包含包名前缀）。别名与规范 ID 不得冲突；列表保持一个规范命令，帮助和 Skill 展示兼容名。宿主与扩展将别名解析到同一命令、权限及包摘要；停用、损坏或移除后禁止旧副本回退。commands[].legacyNames 可显式声明最多 64 个完整跨包前缀历史调用名；加载器建立全目录唯一索引，CLI、Backend、Bridge、Extension help/call 与 Skill 使用同一规范命令和包摘要。内部已为可确定映射的旧名声明 legacyNames，未能映射到现有 v2 命令的历史名继续保留清单待产品确认。
 - Extension API 命令可声明 execution: { type: "api", runtime: "background" }。省略时仍走页面执行；Toolkit 不接受此声明。页面命令升级为后台命令时新增 execution:background 安装权限，且 Bridge 要求扩展协商 adapter_background_v1 能力。
+- Extension 前台只读命令可声明 pageRoute: { origin: "https://example.com", pathname: "/items" }，限定当前页面来源。必须是 match 声明的页面主机及准确 HTTP(S) origin/pathname，无查询串或 hash，不扩大权限。普通调用选择唯一匹配页或多个匹配页中的唯一活动页；缺失/歧义报错，不自动导航。Bridge 要求 page_sources_v1；执行 helper 再次核对路由。省略此字段的命令保留原域名路由行为。
 - 命令实现与共享实现分开，宿主 Runtime 不重复装入各个包。
 - 现有 v2 runtime 枚举 extension/wewright 是兼容输入；产品层使用 Extension/Toolkit。不得无版本约定地改枚举、改工具参数、改变输出格式。
 - 名称校验覆盖 Windows 保留名、非法字符、尾随点与空格、大小写碰撞；文件校验覆盖路径穿越、符号链接、目录联接及解压体积限制。
