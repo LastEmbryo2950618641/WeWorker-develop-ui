@@ -27,6 +27,7 @@ export class BrowserService {
       for (const key of Object.keys(args)) if (!spec.params.some(param => param.replace(/\?$/, '') === key)) throw fail('INVALID_ARGUMENT', `Unknown argument: ${key}`);
       for (const param of spec.params.filter(param => !param.endsWith('?'))) if (args[param] === undefined) throw fail('INVALID_ARGUMENT', `Missing argument: ${param}`);
       if (command === 'wait' && args.kind !== 'download' && args.value === undefined) throw fail('INVALID_ARGUMENT', 'value is required for this wait kind.');
+      if (command === 'wait' && args.shadow !== undefined && args.kind !== 'selector') throw fail('INVALID_ARGUMENT', 'shadow is available for selector waits only.');
       if (['console', 'network'].includes(command) && ['follow', 'cursor', 'durationMs', 'maxEvents', 'intervalMs'].some(key => args[key] !== undefined)) throw fail('INVALID_ARGUMENT', 'Streaming flags belong to the CLI. Direct Bridge clients should poll browser.events with its cursor.');
       if (spec.params.includes('session')) {
         session = textArg(args.session, 'session', 80);
@@ -51,6 +52,7 @@ export class BrowserService {
   }
   async send(command, args, tabId, identity) {
     if (!this.capabilities().capabilities.includes('browser_commands_v1')) throw fail('EXTENSION_UPGRADE_REQUIRED', 'Reload the extension built from this branch to enable browser commands.');
+    if((args.shadow!==undefined||String(args.ref||'').startsWith('shadow:'))&&!this.capabilities().capabilities.includes('browser_shadow_query_v1'))throw fail('EXTENSION_UPGRADE_REQUIRED','Reload the extension to query open shadow roots or operate their references.');
     if(command==='screenshot'&&['annotate','width','height'].some(key=>args[key]!==undefined)&&!this.capabilities().capabilities.includes('browser_screenshot_v1'))throw fail('EXTENSION_UPGRADE_REQUIRED','Reload the extension to annotate screenshots or temporarily change their viewport.');
     if (((command === 'state' && (args.source !== undefined || args.compareSources !== undefined)) || String(args.ref||'').startsWith('ax:')) && !this.capabilities().capabilities.includes('browser_accessibility_v1')) throw fail('EXTENSION_UPGRADE_REQUIRED','Reload the extension to use AX snapshots, source comparison and AX references.');
     if ((args.documentId !== undefined || (command === 'eval' && args.frameId !== undefined)) && !this.capabilities().capabilities.includes('browser_frames_v1')) throw fail('EXTENSION_UPGRADE_REQUIRED', 'Reload the extension to select a frame/document; an older extension may evaluate in the main page.');

@@ -2,25 +2,54 @@
 export async function runBrowserPageCommand(command, args = {}) {
   const fail = (code, message) => { throw Object.assign(new Error(message), { code }); };
   try {
+    if (args.shadow !== undefined && ![true, false, 'true', 'false'].includes(args.shadow)) fail('INVALID_ARGUMENT', 'shadow must be true or false.');
+    const shadow = args.shadow === true || args.shadow === 'true';
     const limit = Math.max(1, Math.min(Number(args.limit) || 100, 200));
     const visible = node => !!(node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden');
     const role = node => node.getAttribute('role') || ({ BUTTON: 'button', A: 'link', TEXTAREA: 'textbox', SELECT: 'combobox' }[node.tagName])
       || (node.tagName === 'INPUT' ? ({ checkbox: 'checkbox', radio: 'radio', search: 'searchbox', submit: 'button', button: 'button' }[node.type] || 'textbox') : '');
-    const label = node => (node.getAttribute('aria-label') || (node.getAttribute('aria-labelledby') || '').split(/\s+/).map(id => document.getElementById(id)?.textContent || '').join(' ').trim()
+    const label = node => (node.getAttribute('aria-label') || (node.getAttribute('aria-labelledby') || '').split(/\s+/).map(id => node.getRootNode().getElementById?.(id)?.textContent || '').join(' ').trim()
       || [...(node.labels || [])].map(item => item.textContent).join(' ') || node.getAttribute('placeholder') || node.textContent || '').trim().slice(0, 500);
+    const shadowHosts = node => {
+      const hosts=[]; let root=node.getRootNode();
+      while(root instanceof ShadowRoot){hosts.unshift({tag:root.host.tagName.toLowerCase(),...(root.host.id?{id:root.host.id}:{})});root=root.host.getRootNode();}
+      return hosts;
+    };
+    const disabled = node => Boolean(node.disabled || node.matches(':disabled') || node.getAttribute('aria-disabled') === 'true');
     const describe = (node, ref) => ({ ref, tag: node.tagName.toLowerCase(), role: role(node), name: label(node),
       ...(node.id ? { id: node.id } : {}), ...(node.getAttribute('type') ? { type: node.getAttribute('type') } : {}),
-      disabled: Boolean(node.disabled), ...(node.type === 'checkbox' || node.type === 'radio' ? { checked: node.checked } : {}) });
+      ...(node.getRootNode() instanceof ShadowRoot ? {shadowHosts:shadowHosts(node)} : {}),
+      disabled: disabled(node), ...(node.type === 'checkbox' || node.type === 'radio' ? { checked: node.checked } : {}) });
+    // Explicit opt-in preserves normal CSS scope. Each open shadow root is a
+    // separate CSS tree: combinators never silently jump across a host boundary.
+    let roots;
+    const queryAll = selector => {
+      try {
+        if(!shadow)return [...document.querySelectorAll(selector)];
+        if(!roots){
+          roots=[document];const depths=[0];let scanned=0;
+          for(let i=0;i<roots.length;i++){
+            const walker=document.createTreeWalker(roots[i],NodeFilter.SHOW_ELEMENT);
+            let node;while((node=walker.nextNode())){
+              if(++scanned>20000)fail('SHADOW_QUERY_LIMIT','Open-shadow lookup exceeds 20000 elements. Select a smaller frame or use an AX reference.');
+              if(node.shadowRoot){
+                if(roots.length>=101||depths[i]>=32)fail('SHADOW_QUERY_LIMIT','Open-shadow lookup exceeds 100 roots or 32 nested boundaries. Use an AX reference.');
+                roots.push(node.shadowRoot);depths.push(depths[i]+1);
+              }
+            }
+          }
+        }
+        return roots.flatMap(root=>[...root.querySelectorAll(selector)]);
+      }catch(error){if(error.code==='SHADOW_QUERY_LIMIT')throw error;fail('INVALID_SELECTOR','Invalid CSS selector.');}
+    };
     const query = () => {
       if (args.ref) {
         const snapshot = globalThis.__weworkerBrowserSnapshot;
         const found = snapshot?.refs.get(String(args.ref));
-        if (!found || !found.node.isConnected || found.node.ownerDocument !== document || snapshot.url !== location.href || (!found.ax && found.label !== label(found.node))) fail('STALE_REF', 'Reference expired. Read browser.state/find again or use a selector.');
+        if (!found || !found.node.isConnected || found.node.ownerDocument !== document || snapshot.url !== location.href || (!found.ax && (found.label !== label(found.node) || (found.role !== undefined && found.role !== role(found.node))))) fail('STALE_REF', 'Reference expired. Read browser.state/find again or use a selector.');
         return [found.node];
       }
-      let nodes;
-      try { nodes = [...document.querySelectorAll(args.selector || '*')]; }
-      catch { fail('INVALID_SELECTOR', 'Invalid CSS selector.'); }
+      let nodes = queryAll(args.selector || '*');
       if (args.role) nodes = nodes.filter(node => role(node) === args.role);
       if (args.name !== undefined) nodes = nodes.filter(node => label(node) === String(args.name));
       if (args.text !== undefined) nodes = nodes.filter(node => node.textContent.trim() === String(args.text) && ![...node.children].some(child => child.textContent.trim() === String(args.text)));
@@ -34,17 +63,19 @@ export async function runBrowserPageCommand(command, args = {}) {
       return nodes[0];
     };
     if (command === 'state' || command === 'find') {
-      const nodes = command === 'find' ? query() : [...document.querySelectorAll('a[href],button,input,textarea,select,[role],[contenteditable="true"],[tabindex]')].filter(visible);
+      const nodes = command === 'find' ? query() : queryAll('a[href],button,input,textarea,select,[role],[contenteditable="true"],[tabindex]').filter(visible);
       if (args.metricsOnly) return {ok:true,data:{url:location.href,title:document.title,metrics:{source:'dom',interactiveNodes:nodes.length,
         namedInteractiveNodes:nodes.filter(node=>label(node)).length,textChars:Math.min(document.body?.innerText.length||0,12000),
         roles:Object.fromEntries([...new Set(nodes.map(role))].map(value=>[value,nodes.filter(node=>role(node)===value).length])),truncated:nodes.length>limit||(document.body?.innerText.length||0)>12000}}};
       const snapshotId = crypto.randomUUID(); const refs = new Map();
-      const elements = nodes.slice(0, limit).map((node, index) => { const ref = `${snapshotId}:${index + 1}`; refs.set(ref, { node, label: label(node) }); return describe(node, ref); });
+      const elements = nodes.slice(0, limit).map((node, index) => { const ref = `${shadow||node.getRootNode() instanceof ShadowRoot?'shadow:':''}${snapshotId}:${index + 1}`; refs.set(ref, { node, label: label(node), role: role(node) }); return describe(node, ref); });
       globalThis.__weworkerBrowserSnapshot = { refs, url: location.href, snapshotId, source: 'dom' };
       return { ok: true, data: { url: location.href, title: document.title, snapshotId, matches: nodes.length, elements,
+        ...(shadow?{scope:'open_shadow_roots',shadowRoots:(roots?.length||1)-1,closedShadowIncluded:false,truncated:nodes.length>limit,textScope:'light_dom'}:{}),
         ...(command === 'state' ? { text: document.body?.innerText.slice(0, 12000) || '' } : {}) } };
     }
     if (command === 'extract') {
+      if(shadow&&!args.selector&&!args.ref&&!args.role&&args.text===undefined)fail('INVALID_ARGUMENT','Shadow extraction requires an explicit element target.');
       const node = args.selector || args.ref || args.role || args.text !== undefined ? one() : document.body;
       const text = node?.innerText || node?.textContent || '';
       const max = Math.max(1, Math.min(Number(args.maxChars) || 20000, 200000));
@@ -67,7 +98,7 @@ export async function runBrowserPageCommand(command, args = {}) {
       if (!readers[property]) fail('INVALID_ARGUMENT', 'property must be text, value, html or attribute.');
       return { ok: true, data: { value: String(readers[property]() ?? '').slice(0, 100000), element: describe(node) } };
     }
-    if (node.disabled) fail('ELEMENT_DISABLED', 'The target element is disabled.');
+    if (disabled(node)) fail('ELEMENT_DISABLED', 'The target element is disabled.');
     if (args.scrollIntoView !== false) node.scrollIntoView({ block: 'center', inline: 'center' });
     if (command === 'bounds') {
       const rect = node.getBoundingClientRect();
@@ -104,7 +135,7 @@ export async function runBrowserPageCommand(command, args = {}) {
       const value = (command === 'type' ? (node.isContentEditable ? node.textContent : node.value) : '') + String(args.value ?? '');
       if (node.isContentEditable) node.textContent = value;
       else Object.getOwnPropertyDescriptor(node.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value').set.call(node, value);
-      node.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: String(args.value ?? '') })); node.dispatchEvent(new Event('change', { bubbles: true }));
+      node.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: String(args.value ?? '') })); node.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
       if ((node.isContentEditable ? node.textContent : node.value) !== value) fail('INPUT_REJECTED', 'The page did not retain the supplied input.');
     } else if (command === 'select') {
       if (node.tagName !== 'SELECT') fail('INVALID_ARGUMENT', 'Target is not a native select.');
@@ -113,7 +144,7 @@ export async function runBrowserPageCommand(command, args = {}) {
       const options = values.map(value => [...node.options].find(option => option.value === value || option.textContent.trim() === value));
       if (options.some(option => !option || option.disabled)) fail('OPTION_NOT_FOUND', 'An option is missing or disabled.');
       for (const option of node.options) option.selected = options.includes(option);
-      node.dispatchEvent(new Event('input', { bubbles: true })); node.dispatchEvent(new Event('change', { bubbles: true }));
+      node.dispatchEvent(new Event('input', { bubbles: true, composed: true })); node.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
     } else if (command === 'check' || command === 'uncheck') {
       const desired = command === 'check';
       const current = () => ['checkbox', 'radio'].includes(node.type) ? node.checked : node.getAttribute('aria-checked') === 'true';

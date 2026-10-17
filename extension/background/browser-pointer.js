@@ -187,6 +187,10 @@ export async function executeFramePointer(chrome, tabId, command, args, ensureCd
                 await stable();
                 if (typeof args.ref === 'string' && args.ref.startsWith('ax:'))
                     await validateBrowserAxReference(chrome, tabId, selectedArgs, ensureCdpAttached, command);
+                if (typeof args.ref === 'string' && args.ref.startsWith('shadow:')) {
+                    const checked = await executeFrameScript(chrome, tabId, selectedArgs, runBrowserPageCommand, ['bounds', { ...selectedArgs, scrollIntoView: false, pointerToken: tokens[0] }]);
+                    if (!checked.result?.ok) throw fail(checked.result?.error?.code || 'STALE_REF', checked.result?.error?.message || 'Shadow reference changed after hover.');
+                }
                 checkContext();
                 let releaseAt = from;
                 try {

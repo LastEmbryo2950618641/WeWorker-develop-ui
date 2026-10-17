@@ -177,3 +177,12 @@ it('guards new screenshot options and saves PNG only to a new explicit local fil
   expect((await capable.execute('screenshot',{session:'work',path:'relative.png'})).error.code).toBe('INVALID_ARGUMENT');
   expect((await capable.execute('screenshot',{session:'work',path:path.join(options.rootDir,'missing','example.png')})).error.code).toBe('SCREENSHOT_PATH_UNAVAILABLE');
 });
+
+it('requires explicit shadow capability even for refs, and rejects shadow on non-selector waits',async()=>{
+  const {service,options,requestExtension}=setup();await service.execute('bind',{session:'work',tabId:7});
+  for(const args of [{shadow:true,selector:'button'},{ref:'shadow:example:1'}])expect((await service.execute('click',{session:'work',...args})).error.code).toBe('EXTENSION_UPGRADE_REQUIRED');
+  const capable=new BrowserService({...options,capabilities:()=>({connected:true,capabilities:['browser_commands_v1','browser_shadow_query_v1']})});
+  expect((await capable.execute('find',{session:'work',shadow:true,role:'button',name:'Example'})).ok).toBe(true);
+  expect(requestExtension.mock.calls.at(-1)[0].args).toEqual({shadow:true,role:'button',name:'Example'});
+  expect((await capable.execute('wait',{session:'work',kind:'download',shadow:true})).error.code).toBe('INVALID_ARGUMENT');
+});

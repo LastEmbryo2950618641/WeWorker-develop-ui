@@ -1,6 +1,6 @@
 # API 自动探索 CLI 改造跟进与交接
 
-> 更新日期：2026-10-17。当前阶段：截图主文档 DOM 编号、临时 CSS 尺寸、恢复与本地新文件保存已实现；WebCLI 1130 项、扩展相关 105 项、隔离真实浏览器完整 35 项通过。日常 Chrome 高 DPR 截图与 B 站主文档 AX/24 卡片回归通过。完整 OpenCLI 对齐继续进行；深层定位/复杂控件、多连接、独立 HTTP runner、独立 Agent 对话、UI 统一与平台安装包验收尚未完成。
+> 更新日期：2026-10-17。当前阶段：开放 Shadow DOM 显式查询、树内标签、嵌套引用与 composed 表单事件已实现；WebCLI 1131 项、扩展相关 109 项、隔离真实浏览器完整 36 项通过。日常 Chrome 同类操作及 B 站主文档 AX/24 卡片回归通过。完整 OpenCLI 对齐继续进行；通用复杂控件、多连接、独立 HTTP runner、独立 Agent 对话、UI 统一与平台安装包验收尚未完成。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
 
 ## 最新状态
@@ -11,7 +11,7 @@
 - 功能分支在集成提交后创建为 `codex/api-exploration-cli`，最终操作结果见文末。未推送或创建 PR，最终发布目标仍待明确。
 - [开发设计](api_exploration_cli_design.md) 为本次审阅入口。
 - [OpenCLI 能力对齐台账](opencli_parity.md) 为最新范围与缺口清单；用户要求尽力对齐完整能力，不能把当前 36 个 browser 命令或单站点验收视为目标完成。
-- 首版功能实现提交为 `821a7df`，本轮从 AX 检查点 `b89654e` 继续；后续实现、真实验收与本地检查点见文末和 Git 日志。集成基线仍为 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`。这些是已纳入快照，后续同步前应重新 fetch，不能据此推断远端未变化。
+- 首版功能实现提交为 `821a7df`，本轮从截图检查点 `1b33eb2` 继续；后续实现、真实验收与本地检查点见文末和 Git 日志。集成基线仍为 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`。这些是已纳入快照，后续同步前应重新 fetch，不能据此推断远端未变化。
 > 后续每次建分支、同步上游、解决冲突、实现功能或验证后，都应更新本文和 ROADMAP.md。未验证事项不得标为完成。
 
 ## 1. 目标与范围
@@ -481,3 +481,16 @@ npm run test:exploration:browser --prefix webcli -- \
 - 新扩展已由本任务重载，无需用户重新安装。重新 tabs 选择并绑定 B 站 excel 页，主文档 AX 和 current-video-links 24 张可见卡片标题/规范化链接逐项回归通过，页面仍在第一页。真实页面/结果未保存到仓库。当前 source Bridge 快照 PID 31129，日志 `/tmp/weworker-screenshot-live-bridge.log`；下次先核实完整命令归属与 doctor，再操作，不能照抄历史 tab/document/PID。
 - CLI/Bridge 构建、公开配置、Git 差异格式、10 个 JS/MJS 语法与新增内容凭据/私网地址检查通过。npm pack dry-run 597 文件，包含 screenshot 模块及更新 browser Skill；无新增依赖，既有可选列映射资源警告保留。Python 网站探索agent相对 `af8e082` 差异为零，源码/环境/测试/数据未动；CI/发布/schema/.env 未改。
 - 下一步优先深层 selector/复杂控件，再处理 profile/多连接、独立 PUBLIC_API/COOKIE_API 执行与鉴权契约；完整台账中的动态页面/多步 UI/写命令、知识修订/共享修复、UI/内置聊天复用、独立 Agent 新对话、平台分发等仍未完成。整体 goal 保持 active，本地检查点 SHA 以 Git 日志为准。
+
+### 开放 Shadow DOM 查询（2026-10-17）
+
+- 从截图提交 `1b33eb2` 继续，未改集成基线或同步远端。新增能力 browser_shadow_query_v1，通用 target/state/drag/wait-selector 可显式传 shadow=true；普通 CSS 查询保持原范围。逐个开放根执行 selector/role/name/text，组合器不跨树，默认不进入关闭根和其他 frame；显式 frame/document 可用于跨源文档。
+- 结果附 shadowHosts（从外到内的 tag/id）、不透明 shadow ref、根数/范围/截断；树内 aria-labelledby 不再错误引用主文档同 ID。名称/角色/URL/节点变化拒绝旧引用，find(ref) 后仍保留 shadow 标记；后续调用无需再传 shadow，但子 frame DOM refs 仍需带 frame/document，不混同自带身份的 AX refs。
+- 原生 shadow 指针走已有 frame pointer 路径，保留实际节点、检查祖先遮挡和悬停后几何，再复核引用；同文档不同开放根之间的 drag 是同 frame 原生鼠标动作。fill/type/select 的 input/change 设为 composed，实际宿主监听器收到值变化。禁用 fieldset 与 aria-disabled 均拒绝操作，状态元数据也使用同一判断，避免“显示可用却无法操作”。
+- 查询最多 20000 元素、100 开放根、32 层；超限失败，不在部分候选中执行。state 文本仍为 light_dom，深层文本通过明确元素 get/extract。DOM 角色/标签只是本地解析，不替代 Chrome AX 名称算法；关闭根继续用 AX，shadow 与 AX/compareSources 不能混用。upload 和截图编号未扩展，复杂表单、跨 frame/DataTransfer 拖拽、生成流程的 frame/shadow 来源仍未完成。
+- WebCLI 106 文件/1131 项通过，扩展相关最终 109 项通过；新增 4 项单测检查 tree-scoped 标签、角色/节点失效、遍历限额、不合法参数及禁用状态一致性，Bridge 验证选项/ref 的能力守卫和非 selector 等待拒绝。没有新增依赖。
+- 新增 browser-shadow-acceptance.mjs / --shadow-only。最初测试页内联事件的引号错误导致没有建立 shadow roots，修正 fixture 后 `webcli-browser-acceptance-YC9l92` 通过。最终生产主体完整 Chromium 36 项通过 `webcli-browser-acceptance-HlI3DQ/report.json`，包括新增 shadow、旧截图/AX/持续观察/frame/下载，以及探索、生成、安装、修复、知识与重启。其后补禁用状态输出一致性，最终 shadow 聚焦 `webcli-browser-acceptance-Uf6vlx/report.json` 通过；没有将聚焦报告称为再次完整运行。
+- 日常 Chrome 首次比 fixture 多一个开放根，属于浏览器环境额外注入；验收改为要求至少三个 fixture 根，并精确核对目标 host 路径、名字和实际动作，不假设用户 profile 无其他扩展。最终 `weworker-shadow-live-YkBglq/report.json` 通过嵌套原生点击/同 frame drag、局部标签、composed 表单事件、歧义/关闭根排除/替换/悬停改名/禁用/遮挡、selector 等待、跨源 frame 和遍历上限；自建页与服务器已正常关闭。
+- 每次重载后重新选择 B 站 excel 用户页并绑定，最终主文档 AX 与 current-video-links 24 张可见卡片标题/规范化链接逐项一致，保持第一页；真实页面数据未进入仓库。source Bridge 当前快照 PID 33631，日志 `/tmp/weworker-shadow-live-bridge.log`；插件仍加载工作区 extension-dist，已经重载新代码，无需用户重装。下一次操作前核实进程完整命令、doctor/tabs，历史身份不可照抄。
+- CLI/Bridge 构建、构建版 browser.help 的 shadow 参数、公开配置、Git 差异格式、10 个 JS/MJS 语法与新增内容凭据/私网检查通过；npm pack dry-run 597 文件包含新能力和 Skill，测试脚本不分发。Python 网站探索agent相对 `af8e082` 零差异，源码/环境/测试/生命周期/数据未触碰。CI/发布/schema/.env 未改，未推送或创建 PR。
+- 下一步优先补 date/select/file 等复合字段元数据与对应结构读取，再推进多 profile/连接及 PUBLIC_API/COOKIE_API 独立 runner；UI/聊天共用入口、写命令/多步 UI、知识修订/共享修复、独立 Agent 对话和平台分发继续保留在完整目标。goal 保持 active；本阶段本地提交 SHA 见 Git 日志。

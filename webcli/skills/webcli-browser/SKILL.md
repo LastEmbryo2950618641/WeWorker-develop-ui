@@ -20,7 +20,7 @@ description: 通过 WebCLI 和浏览器插件直接操作已登录网页、检�
 - `state` 返回页面文本及交互元素，`find` 按 selector、role/name、精确 text 定位。优先有语义且唯一的 selector 或 role/name。
 - `state --source=ax` 从 Chrome 无障碍树读取计算后的 role/name 和语义树，默认汇总可访问 frame；`--frameId=0` 或显式 frameId/documentId 只读指定文档。`state --compareSources=true` 比较 DOM/AX 控件数、命名覆盖、角色分布和耗时，保留当前引用；这是来源对比，不是历史快照差异，也不会自动替换默认 DOM 来源。
 - AX 的 ref 是不透明令牌，自带 frame/document 身份，可直接传给 get/click/fill 等命令，无需猜 frame 索引；重复名称保留不同节点引用。带 ref 时若另传不匹配的 frameId/documentId 会失败。节点替换、role/name 改变、导航、同文档的新 state/find 会使旧引用失效，不按相同名称自动寻找替代节点。
-- AX 引用支持开放、关闭及嵌套 Shadow DOM 的控件，原生指针逐层检查 ShadowRoot 和 iframe 祖先遮挡；截图、selector/role 查询本身的 Shadow DOM 覆盖仍需单独核对。此能力不等于通用自定义组件、多步 UI、跨 frame 或 DataTransfer 拖放已实现。
+- AX 引用支持开放、关闭及嵌套 Shadow DOM 的控件，原生指针逐层检查 ShadowRoot 和 iframe 祖先遮挡；开放 Shadow DOM 的 selector/role 查询见下，截图编号仍限主文档普通 DOM。此能力不等于通用自定义组件、多步 UI、跨 frame 或 DataTransfer 拖放已实现。
 - AX 需要 browser_accessibility_v1。结果含 tree/text/elements 和 metrics，省略输入值；用 get 显式读普通字段，密码字段仍拒绝。limit 限制总引用数（1–200，默认 100），语义节点最多 1000、文本最多 12000 字符、默认最多 50 frame；达到上限、子 frame 失败或无法解析的节点会标 truncated/partial 与 frame 明细。部分结果不能代表完整页面，可指定 frame 进一步读取。快照分步采集，不是原子冻结网页。
 - compareSources 不创建新引用；DOM 与 AX 统计口径不同，更多节点不代表更优。来源不可用时报告错误；AX_UNAVAILABLE / AX_SNAPSHOT_TIMEOUT / AX_REFERENCE_TIMEOUT 时检查页面状态，再明确选择来源。不会静默回退或重放输入。
 - ref 仅限最近一次 state/find 快照。新快照、URL 变化、节点移除或标签变化会让旧 ref 失效。遇到 `STALE_REF` 重新读状态；遇到 `AMBIGUOUS_TARGET` 收窄定位。
@@ -30,6 +30,22 @@ description: 通过 WebCLI 和浏览器插件直接操作已登录网页、检�
 - 原生 frame 操作保留选中节点与文档身份，处理边框、缩放、旋转与透视，并逐层检查遮挡。ELEMENT_OBSCURED / ELEMENT_OFFSCREEN 时先检查页面；POINTER_TARGET_CHANGED 表示悬停后布局改变，未自动重试。FRAME_DOCUMENT_CHANGED / POINTER_OPERATION_INTERRUPTED 时操作可能已产生悬停或部分点击副作用，先读取状态，不重放。拖拽异常会尝试在最后位置释放鼠标按钮。
 - upload 用 selector + paths 数组指定主 frame 文件输入与本地绝对路径，支持隐藏原生 input。只选择当前任务授权的文件；可能触发站点自动上传，按实际业务副作用处理。
 - 修改、发布、购买等操作须在用户授权范围内；工具存在不等于授权操作。登录、验证码与风控由用户完成。
+
+## 开放 Shadow DOM 定位
+
+```bash
+webcli call browser.state --session=work --shadow=true
+webcli call browser.find --args '{"session":"work","shadow":true,"role":"button","name":"Example action"}'
+webcli call browser.click --args '{"session":"work","ref":"<返回的 shadow ref>"}'
+webcli call browser.wait --args '{"session":"work","shadow":true,"kind":"selector","value":"#example-ready"}'
+```
+
+- shadow=true 显式查询所选文档及其所有开放 shadow roots；普通 CSS 查询范围保持原样。selector 在各树内分别运行，`#host button` 不会跨 shadow 边界，多个匹配仍报 AMBIGUOUS_TARGET。用 find 的 shadowHosts（外到内的 host tag/id）区分控件，再用实际 ref，不猜第一个。
+- 支持 DOM state/find/get、目标 extract、填写/选择/勾选/焦点/滚动、原生 click/dblclick/hover、同 frame drag 和 wait kind=selector；frameId/documentId 可限定跨源文档。upload 与 screenshot 的 DOM 编号尚未扩展，不能传 shadow。text/xhr/download/time 等 wait 不接受该选项。
+- 需要 browser_shadow_query_v1；shadow ref 也有能力守卫，后续可不再传 shadow。ref 仍属于创建时的文档，子 frame 引用要继续带返回的 frameId/documentId，不能当成自动跨文档 AX ref。新快照、节点替换、名称/角色变化或 URL 改变会使旧引用失效；悬停后点击前再次核对。
+- role/name 用 DOM 标签与树内 aria-labelledby 解析，不等同完整浏览器无障碍名称算法。需要计算后名称或关闭的 shadow root 时使用 source=ax；shadow 与 AX/compareSources 不能混用。状态标记 closedShadowIncluded=false、scope=open_shadow_roots，文本摘要仍是 textScope=light_dom，深层文本请显式选元素 get/extract。
+- 最多扫描 20000 元素、100 个开放根和 32 层 shadow 边界；超限 SHADOW_QUERY_LIMIT，不从不完整候选集中执行动作。输出最多 200 refs，截断标记和总匹配数保留。可改选较小 frame 或使用 AX ref。
+- fill/type/select 的 input/change 事件可穿过 shadow 边界到宿主监听器。返回成功后仍需读取实际值或业务结果；该契约不保证所有自定义日期/下拉/编辑器的内部协议。
 
 ## 观察与诊断
 

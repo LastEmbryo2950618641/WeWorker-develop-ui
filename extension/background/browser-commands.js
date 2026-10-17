@@ -62,10 +62,11 @@ export async function executeBrowserCommand({ command, tabId, args = {}, identit
     }
     if (command === 'state') {
       const options = browserStateOptions(args);
+      if(args.shadow!==undefined&&(options.source==='ax'||options.compare))throw fail('INVALID_ARGUMENT','shadow applies to DOM state only; AX already follows accessible shadow nodes.');
       if (options.source === 'ax' || options.compare) return {ok:true,data:await readBrowserAxState(chrome,tabId,args,ensureCdpAttached)};
     }
     if (command === 'bind') data = { identity: await bind(tabId) };
-    else if (['click', 'dblclick', 'hover', 'drag'].includes(command) && (Number(args.frameId) || axReference)) data = await executeFramePointer(chrome, tabId, command, args, ensureCdpAttached);
+    else if (['click', 'dblclick', 'hover', 'drag'].includes(command) && (Number(args.frameId) || axReference || args.shadow !== undefined || String(args.ref||'').startsWith('shadow:'))) data = await executeFramePointer(chrome, tabId, command, args, ensureCdpAttached);
     else if (['click', 'dblclick', 'hover', 'drag'].includes(command) && !Number(args.frameId)) {
       await ensureCdpAttached(tabId);
       await chrome.debugger.sendCommand({ tabId }, 'Page.bringToFront');
@@ -189,6 +190,7 @@ export async function executeBrowserCommand({ command, tabId, args = {}, identit
     else if (command === 'wait' && args.kind === 'download') data = await waitBrowserDownload(chrome, tabId, args);
     else if (command === 'wait') {
       if (args.after !== undefined || args.downloadId !== undefined) throw fail('INVALID_ARGUMENT', 'after/downloadId are only valid for download waits.');
+      if(args.shadow!==undefined&&args.kind!=='selector')throw fail('INVALID_ARGUMENT','shadow is available for selector waits only.');
       const timeout = Math.max(0, Math.min(Number(args.timeoutMs) || 10000, 30000));
       const started = Date.now(); const value = String(args.value ?? '');
       if (args.kind === 'time') {
@@ -202,7 +204,7 @@ export async function executeBrowserCommand({ command, tabId, args = {}, identit
             if (network.entries.some(entry => entry.url.includes(value) && entry.status)) { data = { matched: true }; break; }
           } else {
             const frame = { frameId: args.frameId, documentId: args.documentId };
-            const result = args.kind === 'selector' ? await page('find', { selector: value, ...frame }) : await page('extract', { maxChars: 200000, ...frame });
+            const result = args.kind === 'selector' ? await page('find', { selector: value, ...(args.shadow===undefined?{}:{shadow:args.shadow}), ...frame }) : await page('extract', { maxChars: 200000, ...frame });
             if (args.kind === 'selector' ? result.matches > 0 : result.text.includes(value)) { data = { matched: true }; break; }
           }
           await new Promise(resolve => setTimeout(resolve, 100));

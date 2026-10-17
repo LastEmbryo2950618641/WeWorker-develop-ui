@@ -1,5 +1,5 @@
 /** Agent-neutral browser commands. Session names bind independent CLI processes. */
-const target = ['selector?', 'ref?', 'role?', 'name?', 'text?', 'frameId?', 'documentId?'];
+const target = ['selector?', 'ref?', 'role?', 'name?', 'text?', 'frameId?', 'documentId?', 'shadow?'];
 export const browserCommands = {
   help: { description: 'Describe browser commands and their arguments.', params: [] },
   doctor: { description: 'Check Bridge version, extension capabilities and a live tab query.', params: [] },
@@ -11,8 +11,8 @@ export const browserCommands = {
   close: { description: 'Close an owned tab, or release a user-bound tab without closing it.', params: ['session'] },
   back: { description: 'Navigate back in an owned tab.', params: ['session'] },
   reload: { description: 'Reload the selected page.', params: ['session'] },
-  state: { description: 'Read page state from dom (default) or Chrome ax. compareSources reports DOM/AX metrics without replacing current refs. AX refs carry frame/document identity and support subsequent operations.', params: ['session', 'frameId?', 'documentId?', 'limit?', 'source?', 'compareSources?'] },
-  find: { description: 'Find elements by CSS, role/name, text or a current reference.', params: ['session', ...target, 'limit?'] },
+  state: { description: 'Read page state from dom (default) or Chrome ax. shadow=true includes open shadow DOM controls; compareSources reports DOM/AX metrics without replacing refs. AX refs carry frame/document identity.', params: ['session', 'frameId?', 'documentId?', 'limit?', 'source?', 'compareSources?', 'shadow?'] },
+  find: { description: 'Find elements by CSS, role/name, text or a current reference. shadow=true queries each open shadow root; CSS combinators stay inside each tree. Results identify shadow hosts; ambiguity never chooses the first match.', params: ['session', ...target, 'limit?'] },
   get: { description: 'Read an element property: text, value, html or an attribute.', params: ['session', ...target, 'property?', 'attribute?'] },
   extract: { description: 'Read visible page or element text.', params: ['session', ...target, 'maxChars?'] },
   click: { description: 'Click one unambiguous element.', params: ['session', ...target] },
@@ -24,7 +24,7 @@ export const browserCommands = {
   uncheck: { description: 'Ensure a checkbox is unchecked.', params: ['session', ...target] },
   focus: { description: 'Focus an element.', params: ['session', ...target] },
   hover: { description: 'Move the pointer over an element.', params: ['session', ...target] },
-  drag: { description: 'Drag between two unambiguous CSS targets in the selected frame using a native pointer.', params: ['session', 'selector', 'toSelector', 'frameId?', 'documentId?'] },
+  drag: { description: 'Drag between two unambiguous CSS targets in the selected frame using a native pointer.', params: ['session', 'selector', 'toSelector', 'frameId?', 'documentId?', 'shadow?'] },
   upload: { description: 'Set files on one native file input in the main frame. paths must be an array of absolute local file paths.', params: ['session', 'selector', 'paths'] },
   scroll: { description: 'Scroll the page or element in a direction.', params: ['session', ...target, 'direction?', 'amount?'] },
   keys: { description: 'Send a keyboard key or modifier combination to the focused page.', params: ['session', 'key'] },
@@ -36,7 +36,7 @@ export const browserCommands = {
   network: { description: 'Read captured network traffic or inspect a key; CLI follow=true emits new completed/failed/redirected requests as JSON Lines.', params: ['session', 'detail?', 'all?', 'failed?', 'since?', 'until?', 'limit?', 'match?', 'follow?', 'cursor?', 'durationMs?', 'maxEvents?', 'intervalMs?'] },
   events: { description: 'Poll a bounded console/network event batch without locking page actions. Cursor belongs to this tab, channel and observation; expired history fails explicitly.', params: ['session', 'channel', 'cursor?', 'level?', 'all?', 'failed?', 'since?', 'until?', 'limit?', 'match?'] },
   downloads: { description: 'Read downloads observed in this tab and a cursor to mark the next action. Only metadata is returned; no browser history or file contents are read.', params: ['session', 'after?', 'downloadId?', 'match?', 'limit?'] },
-  wait: { description: 'Wait for selector/text/xhr/time or a tab download. Download waits accept a filename/URL substring and an optional prior cursor or downloadId.', params: ['session', 'kind', 'value?', 'timeoutMs?', 'frameId?', 'documentId?', 'after?', 'downloadId?'] },
+  wait: { description: 'Wait for selector/text/xhr/time or a tab download. shadow=true is supported for selector waits. Download waits accept a filename/URL substring and an optional prior cursor or downloadId.', params: ['session', 'kind', 'value?', 'timeoutMs?', 'frameId?', 'documentId?', 'after?', 'downloadId?', 'shadow?'] },
 };
 
 export const isBrowserObserver = (command, args) => ['dialog', 'downloads', 'events'].includes(command) || (command === 'wait' && args.kind === 'download');

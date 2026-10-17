@@ -13,6 +13,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { verifyBrowserEvents } from './browser-events-acceptance.mjs';
 import { verifyBrowserAx } from './browser-ax-acceptance.mjs';
 import { verifyBrowserScreenshots } from './browser-screenshot-acceptance.mjs';
+import { verifyBrowserShadow } from './browser-shadow-acceptance.mjs';
 
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'webcli-browser-acceptance-'));
@@ -249,6 +250,8 @@ try {
   assert.equal((await cli('browser.doctor')).data.ready, true);
   await cli('browser.bind', { session: 'acceptance', tabId });
   const browserCall = (command, args = {}, expectedOk = true) => cli(`browser.${command}`, { session: 'acceptance', ...args }, expectedOk);
+  if(!['--downloads-only','--events-only','--ax-only','--screenshots-only'].some(flag=>process.argv.includes(flag)))await verifyBrowserShadow({cli,record,passed});
+  if(process.argv.includes('--shadow-only'))return;
   if (!['--downloads-only','--events-only','--ax-only'].some(flag=>process.argv.includes(flag))) {
     await verifyBrowserScreenshots({cli,root,record,passed,setZoom:(tabId,zoom)=>browser.serviceWorkers()[0].evaluate(({tabId,zoom})=>chrome.tabs.setZoom(tabId,zoom),{tabId,zoom})});
   }
