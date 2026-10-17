@@ -82,6 +82,7 @@ export function analyzeExploration(run, capabilities = []) {
   return { taskId: run.taskId, author: 'calling-agent', candidates, pages, selected, failures: { codes, authenticationRequired: auth }, nextActions: actions,
     strategies: [
       { strategy: 'PUBLIC_API', available: true, reason: 'Independent host HTTP. Requires explicit rationale and authored cases proving credential-free execution.' },
+      { strategy: 'AUTH_API', available: true, reason: 'Independent host HTTP with declared environment credentials (Bearer/header/Basic/HMAC). Host environment must supply the values; authored cases required.' },
       { strategy: 'COOKIE_API', available: capabilities.includes('http_credentials_v1'), reason: 'Independent host HTTP with explicitly named browser cookies and optional CSRF mapping. Requires http_credentials_v1 and authored cases.' },
       ...['UI_SELECTOR', 'DOM_STATE', 'PAGE_FETCH', 'INTERCEPT'].map(strategy => ({ strategy, available: true })),
     ],

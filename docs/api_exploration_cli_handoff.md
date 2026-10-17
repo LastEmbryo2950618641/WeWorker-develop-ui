@@ -1,17 +1,17 @@
 # API 自动探索 CLI 改造跟进与交接
 
-> 更新日期：2026-10-17。最新阶段已新增独立 HTTP Runner、PUBLIC_API/COOKIE_API 生成/验证/安装/普通调用及只读局部修复，基于已完成的多浏览器 profile。WebCLI 1161 项、完整 Chromium 47 项、最终 HTTP 聚焦 6 项和打包 CLI HTTP 16 项通过；双 profile 的 HttpOnly/CSRF 隔离、缺失凭据不回退及凭据不进入日志/任务/安装目录已验证。整体 OpenCLI 对齐仍未完成，Python 网站探索agent全程未动。
+> 更新日期：2026-10-17。最新阶段在独立 HTTP Runner 与多浏览器 profile 之上新增契约 version 2、AUTH_API、环境 Bearer/header/Basic/声明式 HMAC 和 Cookie store/分区选择。WebCLI 1183 项、完整 Chromium 50 项、最终 HTTP 聚焦 8 项和打包 CLI HTTP 36 项通过；AUTH 生成→宿主验证→安装→无浏览器调用、双 profile 的 HttpOnly/CSRF 与分区隔离、缺失凭据零请求及持久内容无凭据已验证。整体 OpenCLI 对齐仍未完成，Python 网站探索agent全程未动。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
 
 ## 新会话从这里接手
 
-- 继续当前分支 `codex/api-exploration-cli`，HTTP 阶段起点 `81b4fd0`；检查点 SHA 见 Git 最新提交。先核对工作区/日志，不重建分支或重复实现 profile/HTTP Runner。根 AGENTS.md、ROADMAP.md、本文末尾、[开发设计](api_exploration_cli_design.md)、[HTTP 契约](http_adapter_runtime.md) 和 [能力台账](opencli_parity.md) 为接手入口。
+- 继续当前分支 `codex/api-exploration-cli`，最新鉴权阶段起点 `953d9e2`；检查点 SHA 见 Git 最新提交。先核对工作区/日志，不重建分支或重复实现 profile/HTTP Runner。根 AGENTS.md、ROADMAP.md、本文末尾、[开发设计](api_exploration_cli_design.md)、[HTTP 契约](http_adapter_runtime.md) 和 [能力台账](opencli_parity.md) 为接手入口。
 - 已完成多浏览器 profile，使用 `webcli call profile.list` 和 `--profile=<contextId|alias>`；唯一在线可自动选择，显式/default 离线不回退。旧 browser/exploration 根通过 `--profile=legacy` 只读访问，新 profile 不继承旧 tabId。桌面尚无 profile 选择 UI，多连接时需 CLI 保存默认或由调用方显式传路由。
-- 独立 PUBLIC_API/COOKIE_API runner 和显式 Cookie/CSRF 契约已实现，保持 Extension/Toolkit Runner 边界。下一步补环境/Bearer/签名等通用鉴权、分区 Cookie 和无需页面的 API 发现；之后推进动态页面/多步 UI/写命令、知识修订/共享修复、其他 CDP/外部 CLI/插件生态与站点覆盖。API 探索 UI/内置对话复用、独立 Agent 对话及平台分发仍在台账；不能把本阶段当作完整对齐完成。
+- PUBLIC_API/COOKIE_API/AUTH_API runner 已实现，version 2 支持宿主环境 Bearer/header/Basic/HMAC 与 Cookie storeId/partitionKey，保持 Extension/Toolkit Runner 边界。下一步先做无需页面的 API 发现；之后推进动态页面/多步 UI/写命令、知识修订/共享修复、CDP/外部 CLI/插件生态与站点覆盖。任意站点签名/OAuth 仍未等同；API 探索 UI/内置对话复用、独立 Agent 对话及平台分发仍在台账，不能把本阶段当作完整对齐完成。
 - WebCLI + 插件继续面向任意能执行 CLI 的 Agent，调用方处理自然语言，不依赖桌面或第二模型 Key。Python 网站探索agent源码、环境、测试、生命周期和数据全程不动。
 - 集成基线 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`；本轮没有 fetch/merge/push/PR。后续同步按第 4 节“上游 → 集成基线 → 功能分支”，这些 SHA 仅是已纳入快照。
-- 用户已安装工作区 extension-dist，无需重装。HTTP 阶段仅重建资源，在隔离浏览器实测，没有重载日常 Chrome 或重启用户 Bridge；使用新 Cookie 能力前需核对 `http_credentials_v1` 并重载已安装扩展/本工作区 Bridge。真实外部目标仍为 B 站 Excel 搜索页，重新 doctor/tabs/bind；不要照抄历史身份/PID。历史 source Bridge 快照 PID 47386、日志 `/tmp/weworker-profile-live-bridge.log`，本阶段未重新核实，重启前必须检查完整命令和归属。
-- 本轮临时报告：完整 `webcli-browser-acceptance-pwbLA3/report.json`（44 项），最终 profile/trace 聚焦 `webcli-browser-acceptance-5UiXsh/report.json`（8 项），日常 Chrome `/tmp/weworker-profile-bilibili-regression.json`。前两项位于系统临时根，可被清理；缺失时用已提交脚本复跑，不把旧报告当作最新测试。
+- 用户已安装工作区 extension-dist，无需重装。HTTP 与鉴权阶段仅重建资源，在隔离浏览器实测，没有重载日常 Chrome 或重启用户 Bridge；使用新 Cookie scope 能力前需核对 `http_credentials_v2` 并重载已安装扩展/本工作区 Bridge。AUTH 普通调用读 CLI 环境；预览/COOKIE/桌面调用读相应 HTTP 宿主环境，不自动转发 CLI 环境、不加载 .env。真实外部目标仍为 B 站 Excel 搜索页，重新 doctor/tabs/bind；不要照抄历史身份/PID。历史 source Bridge 快照 PID 47386、日志 `/tmp/weworker-profile-live-bridge.log`，本阶段未重新核实，重启前必须检查完整命令和归属。
+- 最新鉴权临时报告：完整 `webcli-browser-acceptance-qHQYwP/report.json`（50 项），最终 HTTP 聚焦 `webcli-browser-acceptance-agzerk/report.json`（8 项），位于系统临时根，可被清理；缺失时用已提交脚本复跑，不把旧报告当作最新测试。本阶段未重跑日常 Chrome/B 站。
 
 ## 最新状态
 
@@ -569,3 +569,16 @@ npm run test:exploration:browser --prefix webcli -- \
 - 安装权限测试首次把 `paths` 误放入 input，创建了本轮的 `example-http` 占位安装；发现后核对唯一 digest，已通过安装器仅移除该测试安装，测试修正为第二个 options 参数并再次通过。用户其他安装未修改，后续测试继续用隔离根。
 - 重新核对本机 `opencli --version` 为 1.8.6，`opencli list -f json` 1275 条；官方 1.8.8 的 1366 条/179 分组仍为上一阶段审计基线，两个版本数量不能混用。本轮未安装/更新 OpenCLI。
 - 剩余：环境/Bearer/HMAC/站点签名、分区 Cookie、无页面 API 发现；复杂控件、多步 UI/写命令生成验证、知识冲突和共享/写命令修复；CDP/Electron、external/plugin/补全等工具生态、业务命令覆盖、跨 Agent/跨平台/实际安装包验收及产品复用。HTTP 的完整 source-level trace/跨源重定向实机验收也未覆盖。整体目标保持进行中。
+
+### 2026-10-17：HTTP version 2、环境鉴权和 Cookie 分区
+
+- 阶段起点 `953d9e2`，继续当前功能分支；本轮没有 fetch/merge/push/PR。本地检查点以最新 Git 日志为准。Python 网站探索agent的源码、环境、测试、生命周期和数据全程未动。
+- 新增 `webcli/http-auth.js` 与聚焦测试；version 2 兼容 version 1，旧宿主拒绝新版本。AUTH_API 使用执行宿主的明确环境变量名，支持 Bearer、自定义认证头、Basic、声明式 HMAC-SHA256/SHA512（hex/base64）；密钥按 UTF-8，不开放 Node crypto/环境给命令。HMAC 可按 method/origin/pathQuery/bodySha256/timestamp/nonce/header/literal 顺序拼接，重定向逐跳按实际字节重新签名；不声称任意站点签名或 OAuth 流程已完成。
+- 普通 PUBLIC/AUTH 命令不选择浏览器，桌面 Bridge 路由也已覆盖零/多连接测试；COOKIE 可叠加 auth。预览用执行宿主环境，CLI 不向现有 Bridge 传送环境值，不读写 .env。缺失/空/非法凭据在命令启动前失败，零请求；Basic 编码、规范化头、HMAC 签名和原始值回显在进入 Worker 前脱敏。
+- Cookie version 2 可选 storeId 和 partitionKey；分区必须包含浏览器实际 topLevelSite 和明确 hasCrossSiteAncestor。Bridge 固定连接并检查 http_credentials_v2，扩展再次过滤返回 store/分区身份；旧插件/不支持字段/缺失/歧义不回退。所有 auth 及 cookie scope 变化纳入安装权限，局部 repair 不放宽这些字段。
+- 生成计划支持 AUTH_API/auth 和 Cookie scopes，自动选择版本；每个 HTTP 命令仍须作者 cases。实际运行测试包括 AUTH 生成→7 组验证末组故意失败→修正→安装→局部 repair→普通调用，以及真实 Chromium 的 AUTH 生成/宿主预览/安装/关闭页后独立调用。
+- 验证：WebCLI 全量 **110 文件/1183 项**；最终聚焦 **5 文件/84 项**；扩展 Cookie **4 项**；打包 CLI HTTP **2 文件/36 项**；完整真实 Chromium **50 项**，最终 HTTP 聚焦 **8 项**。CLI/Bridge bundle、公开配置、22 个 JS/MJS 语法、diff 格式与新增内容常见凭据/私网模式扫描通过。npm pack dry-run **607 文件**，包含 auth/contract、扩展 helper、更新 Skill；无新增依赖。
+- 完整报告：系统临时根 `webcli-browser-acceptance-qHQYwP/report.json`；最终 HTTP：`webcli-browser-acceptance-agzerk/report.json`。日志 `/tmp/weworker-http-auth-all-tests.log`、`/tmp/weworker-http-auth-final-focused.log`、`/tmp/weworker-http-auth-bundled-final.log`、`/tmp/weworker-http-auth-browser-final.log`。最后聚焦已覆盖完整回归之后的 canonical content-type 支持与 malformed scope 版本守卫，最终 bundle/HTTP 实机也已重跑。
+- 实机包含默认/其他 top-level site/不同 ancestor flag 的同名 Cookie，与显式 store/分区正确隔离；双 profile HttpOnly/CSRF 和缺失零请求回归通过。Chrome 初次拒绝跨站 topLevelSite + ancestor=false 的不合法 fixture，改用自身 schemeful site 的合法双 ancestor 分区后通过。单测初次发现 NUL 经 process.env 赋值被 Node 截断、占位包重新安装需显式 downgrade 参数，已修正测试夹具；没有修改真实环境/安装数据。所有测试安装都使用隔离 options.paths。
+- 未重载日常 Chrome、未重启日常 Bridge、未重跑 B 站；未验证其他浏览器/平台/隐身 store。HTTP 请求级测试另实测四种 auth 的跨 origin 重定向不携带凭据、SHA256/SHA512 与两种编码签名重算、缺失环境零请求、认证头覆盖拒绝、权限升级。
+- 剩余优先级：① 无页面 API 发现/探索；② 动态页面、多步 UI、写命令生成与副作用验证；③ 知识冲突、共享/跨命令/写命令修复；④ 自定义控件、目录上传、跨 frame 拖拽、AX/子 frame 标注、Worker 网络；⑤ CDP/Electron、外部 CLI/插件/补全/输出等逐项矩阵与业务覆盖；⑥ 独立 Agent、跨平台/实际安装包验收。HTTP source-level trace、站点专有签名/OAuth 和 WeWorker UI/聊天复用单独保留，整体目标未完成。

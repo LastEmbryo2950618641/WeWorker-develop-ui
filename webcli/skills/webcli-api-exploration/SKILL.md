@@ -43,11 +43,13 @@ webcli call exploration.generate --args '{"taskId":"example-task","plan":{"tools
 
 ### 策略选择与失败后重做计划
 
-在写草稿前先说明来源为什么适合目标。UI/DOM 与公开接口都可以是合适选择，不按 XHR 数量或“API 比 DOM 更好”判断。默认 API 执行仍为 PAGE_FETCH；显式 PUBLIC_API/COOKIE_API 使用独立 HTTP Runner。页面策略必须绑定实际 observe/intercept/query 返回的来源。
+在写草稿前先说明来源为什么适合目标。UI/DOM 与公开接口都可以是合适选择，不按 XHR 数量或“API 比 DOM 更好”判断。默认 API 执行仍为 PAGE_FETCH；显式 PUBLIC_API/COOKIE_API/AUTH_API 使用独立 HTTP Runner。页面策略必须绑定实际 observe/intercept/query 返回的来源。
 
-PUBLIC_API/COOKIE_API 计划必须提供 readReason、strategyNote 和单个 sourceApiIndexes，并为每个命令编写 cases。PUBLIC_API 的安装后调用无需浏览器；COOKIE_API 必须声明 `cookies:{origin:"https://example.com",names:["example_session","example_csrf"],csrf:{cookie:"example_csrf",header:"x-csrf-token",decode:true}}`，csrf 可省略。不得把实际 Cookie 值写入源码、参数、用例或知识。origin 必须是观察接口的准确 origin。只读取选定 profile 的默认 Cookie store；缺失/歧义失败，不自动换浏览器。分区 Cookie、Bearer/环境凭据和通用签名仍未支持。
+PUBLIC_API/COOKIE_API/AUTH_API 计划必须提供 readReason、strategyNote 和单个 sourceApiIndexes，并为每个命令编写 cases。PUBLIC_API/AUTH_API 的安装后调用无需浏览器；COOKIE_API 必须声明 `cookies:{origin:"https://example.com",names:["example_session","example_csrf"],csrf:{cookie:"example_csrf",header:"x-csrf-token",decode:true}}`，csrf 可省略。不得把实际 Cookie 值写入源码、参数、用例或知识。origin 必须是观察接口的准确 origin。默认读取选定 profile 的默认 Cookie store 和非分区 Cookie；可显式增加 `storeId` 与 `partitionKey:{topLevelSite:"https://example.org",hasCrossSiteAncestor:true}`，必须使用浏览器实际身份。生成器使用 version 2，要求 http_credentials_v2；旧扩展、缺失/歧义失败，不猜分区、不自动换浏览器。
 
-HTTP 草稿位于 `http/commands/*.js`，导出 `module.exports = async (args, api) => ...`；`api.request({url,method,headers,json|body,response})` 返回 JSON 或 text，可引用同包 `http/internal`。参数不按 Schema 转型，默认返回原接口 JSON，作者应按目标编辑字段映射并用精确断言验证。PUBLIC 不带凭据；COOKIE 临时注入声明 Cookie/CSRF；凭据不暴露给命令代码。精确 origin 授权、30 秒/50 请求/4 MiB 限额，重定向限已声明 origin 和五跳，每跳重新匹配凭据，不重试失败请求。验证仍绑定原任务页，普通 PUBLIC 调用无此依赖。HTTP 只读命令可 repair，保留运行时/权限/共享文件；写命令生成仍未开放。
+AUTH_API 计划提供 `auth:{type:"bearer",origin:"https://example.com",env:"EXAMPLE_API_TOKEN"}`，仅声明环境名。还支持 type=header（env/header）、basic（usernameEnv/passwordEnv）和 hmac（env/header/algorithm=sha256|sha512/encoding=hex|base64/canonical/separator，可选 prefix/timestamp/nonce）。HMAC canonical 使用 `{field:"method"|"origin"|"pathQuery"|"bodySha256"|"timestamp"|"nonce"}`、`{header:"x-example-kind"}` 或 `{literal:"example"}`；timestamp 需 header/unit=seconds|milliseconds，nonce 需 header。密钥为 UTF-8、每跳按实际请求重签。COOKIE_API 可叠加 auth；新 auth/scope 会要求安装权限升级。预览使用 Bridge 宿主环境，普通 AUTH_API 使用 CLI 环境；不要把真实值放入参数、草稿、知识或命令行，不读取/改写 .env。该契约不支持任意站点签名或 OAuth 自动刷新。
+
+HTTP 草稿位于 `http/commands/*.js`，导出 `module.exports = async (args, api) => ...`；`api.request({url,method,headers,json|body,response})` 返回 JSON 或 text，可引用同包 `http/internal`。参数不按 Schema 转型，默认返回原接口 JSON，作者应按目标编辑字段映射并用精确断言验证。PUBLIC 不带凭据；COOKIE 临时注入声明 Cookie/CSRF；AUTH 由宿主注入凭据/签名，不暴露给命令代码。精确 origin 授权、30 秒/50 请求/4 MiB 限额，重定向限已声明 origin 和五跳，每跳重新匹配凭据，不重试失败请求。验证仍绑定原任务页，普通 PUBLIC/AUTH 调用无此依赖。HTTP 只读命令可 repair，保留运行时/权限/共享文件；写命令生成仍未开放。
 
 显式计划可填写 `strategyNote:{"reason":"选择该来源的事实理由","alternatives":"已检查的替代来源及不适用原因","limitations":"数量、稳定性或页面状态限制"}`。对 PAGE_FETCH/INTERCEPT，若提供 note，alternatives 必填；Agent 应主动填写完整说明，不因兼容旧计划允许省略就跳过判断。reason 不能只是“有请求”或“有 JSON”。API 只有非 JSON 响应时不能生成 JSON 命令；只有模糊 JSON 或已存在页面替代来源时，省略计划会返回 STRATEGY_PLAN_REQUIRED。strategy 和 note 会写进 trace 和验证后的站点知识。
 

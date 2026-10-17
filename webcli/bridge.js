@@ -845,9 +845,9 @@ export class WebSocketBridge extends EventEmitter {
   async _routeClientRequest(msg, ws) {
     try {
       if (ws._browserConnection) throw profileError('LOCAL_CLIENT_REQUIRED', 'Extension connections cannot submit client commands.');
-      // Toolkit and public HTTP runs never select or depend on a browser.
+      // Toolkit and host HTTP without cookies never select a browser.
       const command = msg.type === 'call_tool' ? resolveAdapterCall(msg.toolName)?.command : null;
-      if (command?.runtime === 'wewright' || (command?.runtime === 'http' && command.http.strategy === 'PUBLIC_API')) return await this._handleClientRequest(msg, ws);
+      if (command?.runtime === 'wewright' || (command?.runtime === 'http' && !command.http.cookies)) return await this._handleClientRequest(msg, ws);
       return await this._runInProfile(msg, ws, () => this._handleClientRequest(msg, ws));
     } catch (error) { this._reply(ws, { type: 'call_tool_error', id: msg.id, error: error.message, code: error.code }); }
   }
@@ -1513,6 +1513,11 @@ export class WebSocketBridge extends EventEmitter {
     let connection;
     try {
       connection = this._profiles ? this._profiles.assertConnection(this._route.getStore() || this._profiles.select()) : { ws: this._extensionWs };
+      if (msg.type === 'http_credentials') {
+        const version = msg.payload?.version ?? 1;
+        if (![1, 2].includes(version) || (version === 1 && (msg.payload?.storeId !== undefined || msg.payload?.partitionKey !== undefined))) throw profileError('HTTP_CREDENTIALS_UNAVAILABLE', 'Unsupported HTTP credential scope version.');
+        if (!(connection.capabilities || this._extensionCapabilities).includes(version === 2 ? 'http_credentials_v2' : 'http_credentials_v1')) throw profileError('HTTP_CREDENTIALS_UNAVAILABLE', 'Reload the selected browser extension for scoped HTTP credentials.');
+      }
     } catch (error) { return Promise.reject(error); }
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -1628,7 +1633,6 @@ export class WebSocketBridge extends EventEmitter {
       const { runHttpTool } = await import('./http-runner.js');
       const completed = await runHttpTool(selected, args || {}, { traceID,
         resolveCookies: async payload => {
-          if (!this._extensionCapabilities.includes('http_credentials_v1')) throw profileError('HTTP_CREDENTIALS_UNAVAILABLE', 'Reload the selected browser extension for HTTP credentials.');
           const result = await this._request({ type: 'http_credentials', payload }, 10_000);
           return result.cookies;
         },

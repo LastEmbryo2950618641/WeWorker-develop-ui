@@ -163,8 +163,10 @@ it('rejects invalid or cross-runtime contracts before loading code', async () =>
   expect(() => validateV2Manifest(f.manifest)).toThrow(/HTTP runtime/);
 });
 
-it('generates host HTTP, verifies every authored case against real HTTP, repairs assertions and installs', async () => {
+it.each(['PUBLIC_API', 'AUTH_API'])('generates %s, verifies every authored case against real HTTP, repairs assertions and installs', async strategy => {
+  vi.stubEnv('EXAMPLE_HTTP_GENERATION_KEY', 'example-generation-placeholder');
   const f = await fixture('module.exports = () => null;');
+  const auth = strategy === 'AUTH_API' ? { auth: { type: 'bearer', origin: f.origin, env: 'EXAMPLE_HTTP_GENERATION_KEY' } } : {};
   const paths = resolveAdapterPaths({ home: f.root, env: f.env });
   const requestExtension = vi.fn(async msg => {
     if (msg.type === 'exploration_list_tabs') return { tabs: [{ id: 7, url: f.origin + '/' }] };
@@ -179,7 +181,7 @@ it('generates host HTTP, verifies every authored case against real HTTP, repairs
   expect(started.ok).toBe(true); const taskId = started.data.taskId;
   await service.jobs.get(taskId);
   const generated = await service.execute('generate', { taskId, plan: { tools: [{ name: 'host_items', risk: 'read', sourceApiKind: 'list', sourceApiIndexes: [0],
-    strategy: 'PUBLIC_API', readReason: 'Observed GET list request', strategyNote: { reason: 'Public example endpoint', limitations: 'Validate without browser credentials' } }] } });
+    strategy, ...auth, readReason: 'Observed GET list request', strategyNote: { reason: 'Public example endpoint', limitations: 'Validate without browser credentials' } }] } });
   expect(generated).toMatchObject({ ok: true, data: { status: 'draft' } });
   const tool = '127.0.0.1.host-items';
   expect((await service.execute('validate', { taskId })).error.code).toBe('VERIFICATION_REQUIRED');
@@ -200,12 +202,13 @@ it('generates host HTTP, verifies every authored case against real HTTP, repairs
   const match = resolveAdapterCall(tool, { paths });
   expect((await runHttpTool(match, { id: '007' })).result.id).toBe('007');
   expect(f.requests).toHaveLength(15);
+  expect(f.requests.every(req => req.headers.authorization === (strategy === 'AUTH_API' ? 'Bearer example-generation-placeholder' : undefined))).toBe(true);
   expect(requestExtension.mock.calls.some(([msg]) => msg.type === 'validate_generation_preview')).toBe(false);
 
   const repairStart = await service.execute('start', { tabId: 7, goal: 'Repair public example mapping', requestId: 'example-http-repair' });
   const repairId = repairStart.data.taskId; await service.jobs.get(repairId);
   const repaired = await service.execute('repair', { taskId: repairId, site: match.adapter.name, expectedDigest: match.adapter.digest,
-    plan: { tools: [{ name: 'host-items', strategy: 'PUBLIC_API', risk: 'read', sourceApiKind: 'list', sourceApiIndexes: [0],
+    plan: { tools: [{ name: 'host-items', strategy, ...auth, risk: 'read', sourceApiKind: 'list', sourceApiIndexes: [0],
       readReason: 'Observed read-only GET', strategyNote: { reason: 'Repair the same public endpoint' } }] } });
   expect(repaired.ok).toBe(true);
   const repairBefore = await service.execute('verification-read', { taskId: repairId, tool });

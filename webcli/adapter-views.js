@@ -68,7 +68,8 @@ export function managedAdapterSkill(adapter) {
     'Use JSON literals only for individual object/array parameters. Whole-object --args is a compatibility fallback, not the default. In PowerShell, JSON quoting may be altered when invoking native programs; do not retry the same broken quoting.', '');
   for (const tool of adapter.tools) {
     lines.push('## ' + tool.name, '', tool.description, '', 'Runtime: ' + ({ wewright: 'Toolkit', extension: 'Extension', http: 'HTTP' }[tool.runtime]), '');
-    if (tool.http) lines.push('Strategy: ' + tool.http.strategy + '. ' + (tool.http.strategy === 'PUBLIC_API' ? 'Runs without a browser or desktop.' : 'Uses only declared cookies from the selected browser profile; never provide cookie values in arguments.'), '');
+    if (tool.http) lines.push('Strategy: ' + tool.http.strategy + '. ' + (!tool.http.cookies ? 'Runs without a browser or desktop.' : 'Uses only declared cookies and store/partition scope from the selected browser profile; never provide cookie values in arguments.'),
+      ...(tool.http.auth ? ['Authentication: ' + tool.http.auth.type + '; declared environment names are read only by the executing host. Never pass credential values as arguments.'] : []), '');
     if (tool.aliases.length) lines.push('Compatible names: ' + tool.aliases.map((name) => '`' + name + '`').join(', '), '');
     if (tool.execution?.runtime === 'background') lines.push('Execution: background API. A matching website tab is needed only when a runtime helper explicitly requests page context.', '');
     if (tool.requires_confirmation) lines.push('Confirmation: required. Ask the user to confirm this action before submission, then pass `__confirmed: true`.', '');

@@ -30,7 +30,7 @@ export const explorationCommands = {
   'draft-add': { description: 'Add a new Extension helper or command source file, or guidance.md. Existing files cannot be replaced.', params: ['taskId', 'file', 'content'] },
   'verification-read': { description: 'Read a generated tool’s authored runtime cases and current hash.', params: ['taskId', 'tool'] },
   'verification-write': { description: 'Set 1–10 real read-only test cases with exact field/type/pattern/count assertions. Use public test arguments; cases persist in the task.', params: ['taskId', 'tool', 'cases', 'expectedHash'] },
-  validate: { description: 'Run static checks and real read-only browser preview validation.', params: ['taskId'] },
+  validate: { description: 'Run static checks and real read-only browser or host HTTP validation against authored cases.', params: ['taskId'] },
   review: { description: 'Review the validated package, permissions and installation changes.', params: ['taskId'] },
   install: { description: 'Install a validated package locally after explicit user consent to the current review.', params: ['taskId', 'reviewId', 'confirmed'] },
 };

@@ -2,7 +2,7 @@
 
 核查日期：2026-10-17。本机 opencli --version 为 1.8.6；另从 npm 官方 registry 读取并解包 [@jackwener/opencli 1.8.8](https://www.npmjs.com/package/@jackwener/opencli/v/1.8.8)，未全局安装、未修改用户 OpenCLI 环境。以下是发布包静态接口核查，不等于所有上游命令实机通过；本项目实测状态见 [能力台账](opencli_parity.md)。
 
-最新 HTTP 增量：已补独立 `http` Runner，PUBLIC_API 无浏览器普通调用、COOKIE_API 按 profile 临时读取 Cookie/CSRF，以及生成、作者断言、审阅安装和只读 repair；双真实 Chromium 与打包 CLI 已验证。上游 PUBLIC/COOKIE 策略的基础执行差距缩小，但本项目尚无通用签名、环境/Bearer 凭据、分区 Cookie和无页面 API 发现；下文最初审计中的“独立 runner 未实现”保留为历史，不代表当前状态。详见 [HTTP 契约](http_adapter_runtime.md)。
+最新 HTTP 增量：已补独立 `http` Runner，PUBLIC_API/AUTH_API 无浏览器普通调用、COOKIE_API 按 profile 临时读取 Cookie/CSRF，以及生成、作者断言、审阅安装和只读 repair。version 2 增加环境 Bearer/header/Basic/声明式 HMAC 与 Cookie store/分区选择；双真实 Chromium 与打包 CLI 已验证。无页面 API 发现、任意站点签名/OAuth 仍未完成；下文最初审计中的“独立 runner 未实现”保留为历史，不代表当前状态。详见 [HTTP 契约](http_adapter_runtime.md)。
 
 来源：package.json、cli-manifest.json、dist/src/cli.js、dist/src/browser/analyze.js、README.md、包内 opencli-adapter-author 技能。公开发布包 tarball 为 https://registry.npmjs.org/@jackwener/opencli/-/opencli-1.8.8.tgz 。没有复制上游业务实现。
 

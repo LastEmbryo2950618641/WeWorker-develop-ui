@@ -26,6 +26,7 @@ import { writePackageDraft } from './generation-harness/package-draft.js';
 import { normalizePathParameters } from './generation-harness/path-parameters.js';
 import { normalizeInterceptSource, interceptValues } from './exploration-intercept.js';
 import { isHttpStrategy, httpToolContract, buildHttpTool } from './exploration-http.js';
+import { httpCredentialsCapability } from './http-contract.js';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const active = new Set(['collecting', 'validating', 'installing']);
@@ -45,7 +46,7 @@ export class ExplorationService {
     this.request = requestExtension;
     this.tabLocks = tabLocks;
     this.capabilities = capabilities;
-    this.runtimeValidator = runtimeValidator || createPreviewRuntimeValidator({ requestExtension, restrictToExpectedTools: true, paths: this.paths });
+    this.runtimeValidator = runtimeValidator || createPreviewRuntimeValidator({ requestExtension, restrictToExpectedTools: true, paths: this.paths, capabilities: () => this.capabilities().capabilities });
     this.publisher = publisher || createAdapterPublisher({ paths: this.paths });
     this.runs = new Map();
     this.controllers = new Map();
@@ -420,7 +421,7 @@ export class ExplorationService {
       }
       const candidate = run.candidates[tool.sourceApiIndexes?.[0]];
       if (tool.risk !== 'read' || tool.sourceApiKind !== 'list' || !candidate || !candidates.some(item => item.id === candidate.id)) throw fail('INVALID_PLAN', 'Each tool must reference a successful observed read query by index.');
-      if (tool.strategy !== undefined && tool.strategy !== 'PAGE_FETCH' && !isHttpStrategy(tool.strategy)) throw fail('STRATEGY_UNSUPPORTED', 'Choose PAGE_FETCH, PUBLIC_API or COOKIE_API for observed API sources.');
+      if (tool.strategy !== undefined && tool.strategy !== 'PAGE_FETCH' && !isHttpStrategy(tool.strategy)) throw fail('STRATEGY_UNSUPPORTED', 'Choose PAGE_FETCH, PUBLIC_API, COOKIE_API or AUTH_API for observed API sources.');
       tool.strategy ||= 'PAGE_FETCH';
       if (isHttpStrategy(tool.strategy)) {
         httpToolContract(tool, candidate);
@@ -505,7 +506,10 @@ export class ExplorationService {
     }
     if ((run.pageSources || []).some(item => item.source.mode === 'query') && !this.capabilities().capabilities.includes('page_query_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating navigation-aware page queries.');
     const pageTools = (run.plan?.tools || []).filter(tool => tool.sourcePageId || isHttpStrategy(tool.strategy)).map(tool => `${run.siteKey}.${tool.name.replace(/_/g, '-')}`);
-    if (run.plan?.tools?.some(tool => tool.strategy === 'COOKIE_API') && !this.capabilities().capabilities.includes('http_credentials_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating COOKIE_API credentials.');
+    for (const command of readPackageDirectory(run.draft.adapterDir).commands.filter(command => run.draft.toolNames.includes(command.name))) {
+      const capability = httpCredentialsCapability(command.http);
+      if (capability && !this.capabilities().capabilities.includes(capability)) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating scoped HTTP cookies.');
+    }
     if (run.plan?.tools?.some(tool => tool.strategy === 'INTERCEPT') && !this.capabilities().capabilities.includes('intercept_read_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating intercepted queries.');
     if (run.plan?.tools?.some(tool => tool.sourcePageId) && !this.capabilities().capabilities.includes('page_sources_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating page sources.');
     if ((run.repairScope ? run.draft.toolNames : pageTools).some(tool => !run.verification?.[tool]?.length)) throw fail('VERIFICATION_REQUIRED', 'Every repaired or page-based command needs authored verification cases; read or write cases before validation.');

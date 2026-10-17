@@ -1,7 +1,8 @@
 import { Worker } from 'node:worker_threads';
 import { randomUUID } from 'node:crypto';
 import { readPackageDirectory, adapterError } from './adapter-package-files.js';
-import { validateHttpContract } from './http-contract.js';
+import { validateHttpContract, httpAuthHeaders } from './http-contract.js';
+import { createHttpAuthenticator } from './http-auth.js';
 import { httpWorkerMain } from './http-worker.js';
 
 const MAX_BYTES = 4 * 1024 * 1024;
@@ -20,6 +21,8 @@ export async function runHttpTool(match, args = {}, options = {}) {
   const spec = command.http;
   const controller = new AbortController();
   const secrets = new Set();
+  const authenticate = createHttpAuthenticator(spec, secrets);
+  const managedHeaders = [...httpAuthHeaders(spec.auth), ...(spec.cookies?.csrf ? [spec.cookies.csrf.header.toLowerCase()] : [])];
   const redact = value => {
     if (typeof value === 'string') {
       for (const secret of [...secrets].sort((a, b) => b.length - a.length)) value = value.split(secret).join('[REDACTED]');
@@ -42,7 +45,7 @@ export async function runHttpTool(match, args = {}, options = {}) {
     const headers = new Headers();
     if (input.headers !== undefined && (!input.headers || typeof input.headers !== 'object' || Array.isArray(input.headers))) throw fail('INVALID_HEADERS', 'Headers must be an object.');
     for (const [name, value] of Object.entries(input.headers || {})) {
-      if (deniedHeaders.test(name) || typeof value !== 'string' || /[\r\n\0]/.test(value)) throw fail('INVALID_HEADERS', 'Credential and transport headers must not be authored in a command.');
+      if (deniedHeaders.test(name) || managedHeaders.includes(name.toLowerCase()) || typeof value !== 'string' || /[\r\n\0]/.test(value)) throw fail('INVALID_HEADERS', 'Credential and transport headers must not be authored in a command.');
       try { headers.set(name, value); } catch { throw fail('INVALID_HEADERS', 'Invalid request header.'); }
     }
     let body = input.body;
@@ -55,7 +58,9 @@ export async function runHttpTool(match, args = {}, options = {}) {
     if (spec.cookies && url.origin === spec.cookies.origin) {
       if (!options.resolveCookies) throw fail('CREDENTIALS_REQUIRED', 'COOKIE_API requires a selected browser profile.');
       let cookies;
-      try { cookies = await options.resolveCookies({ url: url.href, names: spec.cookies.names }); }
+      try { cookies = await options.resolveCookies({ url: url.href, names: spec.cookies.names,
+        ...(spec.version === 2 ? { version: 2, ...(spec.cookies.storeId !== undefined ? { storeId: spec.cookies.storeId } : {}),
+          ...(spec.cookies.partitionKey ? { partitionKey: spec.cookies.partitionKey } : {}) } : {}) }); }
       catch (error) { throw fail(error.code === 'PROFILE_DISCONNECTED' ? 'PROFILE_DISCONNECTED' : 'CREDENTIALS_UNAVAILABLE', 'Cannot read declared credentials from the selected browser connection.'); }
       if (controller.signal.aborted) throw fail('ABORTED', 'HTTP operation cancelled.');
       if (!Array.isArray(cookies) || spec.cookies.names.some(name => cookies.filter(cookie => cookie.name === name).length !== 1)) throw fail('CREDENTIALS_MISSING', 'Declared cookies are missing or ambiguous. Restore the selected browser session.');
@@ -73,6 +78,7 @@ export async function runHttpTool(match, args = {}, options = {}) {
         secrets.add(value);
       }
     }
+    authenticate({ url, method, body, headers });
     let response;
     try {
       response = await (options.fetch || fetch)(url, { method, headers, body, redirect: 'manual', signal: controller.signal });

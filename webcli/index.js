@@ -466,7 +466,7 @@ async function cmdCall(toolName, argsStr, options = {}) {
   const v2Match = resolveAdapterCall(toolName);
   if (v2Match) {
     if ((v2Match.command.requires_confirmation ?? v2Match.command.safety === "write") && args.__confirmed !== true) throw new Error("Explicit confirmation is required for this command.");
-    if (v2Match.command.runtime === 'http' && v2Match.command.http.strategy === 'PUBLIC_API') {
+    if (v2Match.command.runtime === 'http' && !v2Match.command.http.cookies) {
       try {
         const { runHttpTool } = await import('./http-runner.js');
         const completed = await runHttpTool(v2Match, args);

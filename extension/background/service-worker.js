@@ -47,6 +47,7 @@ const EXTENSION_CAPABILITIES = [
   'browser_commands_v1',
   'browser_profiles_v1',
   'http_credentials_v1',
+  'http_credentials_v2',
   'browser_frames_v1',
   'browser_downloads_v1',
   'browser_frame_pointer_v1',

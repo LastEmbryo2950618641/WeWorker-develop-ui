@@ -47,6 +47,7 @@
     "adapter-state-watch.js",
     "toolkit-runner.js",
     "http-contract.js",
+    "http-auth.js",
     "http-runner.js",
     "http-worker.js",
     "http-preview.js",

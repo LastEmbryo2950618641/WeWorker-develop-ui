@@ -14,7 +14,7 @@ async function strictVerifier() {
   return verifier;
 }
 
-export async function verifyHttpDraft({ pkg, adapterDir, commands, verification, requestExtension, signal }) {
+export async function verifyHttpDraft({ pkg, adapterDir, commands, verification, requestExtension, signal, capabilities }) {
   const verify = await strictVerifier();
   const errors = [], counts = { attempted: 0, passed: 0, failed: 0, skipped: 0 };
   for (const command of commands) {
@@ -25,7 +25,12 @@ export async function verifyHttpDraft({ pkg, adapterDir, commands, verification,
       let failures;
       try {
         const { result } = await runHttpTool({ adapter: { root: adapterDir, digest: pkg.digest }, command }, test.args,
-          { signal, resolveCookies: async payload => (await requestExtension({ type: 'http_credentials', payload }, 10_000)).cookies });
+          { signal, resolveCookies: async payload => {
+            // Standalone callers can fail early. Worker IPC also passes through
+            // Bridge._request, which checks the actual pinned connection.
+            if (payload.version === 2 && capabilities && !capabilities().includes('http_credentials_v2')) throw new Error('Scoped HTTP cookie capability unavailable.');
+            return (await requestExtension({ type: 'http_credentials', payload }, 10_000)).cookies;
+          } });
         failures = verify(result, test.expect);
         if (result?.ok === false || result?.error) failures.push({ code: 'HTTP_TOOL_ERROR' });
       } catch (error) { failures = [{ code: error.code || 'HTTP_VALIDATION_FAILED' }]; }

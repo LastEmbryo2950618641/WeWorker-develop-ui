@@ -7,6 +7,7 @@ import { generationEvidenceDir } from './generation-harness/package-draft.js';
 import { buildApiSourceEvidence } from './generation-harness/source-evidence.js';
 import { verifyRepairRetention } from './generation-harness/existing-site.js';
 import { pageSourceEvidence } from './exploration-page.js';
+import { isHttpStrategy } from './exploration-http.js';
 
 export function repairTarget(site, paths) {
   textArg(site, 'site', 128);
@@ -24,7 +25,7 @@ export function writeRepairDraft({ site, expectedDigest, plan, memory, candidate
   const commandIds = plan.tools.map(tool => tool.name);
   for (const tool of plan.tools) {
     const command = pkg.commands.find(item => item.id === tool.name);
-    if (command?.runtime === 'http' ? command.http.strategy !== tool.strategy : ['PUBLIC_API', 'COOKIE_API'].includes(tool.strategy)) throw fail('REPAIR_RUNTIME_MISMATCH', 'Repair must preserve the installed command runtime and strategy.');
+    if (command?.runtime === 'http' ? command.http.strategy !== tool.strategy : isHttpStrategy(tool.strategy)) throw fail('REPAIR_RUNTIME_MISMATCH', 'Repair must preserve the installed command runtime and strategy.');
   }
   const scope = { name: site, digest: pkg.digest, commandIds };
   verifyRepairRetention(pkg, pkg, scope);

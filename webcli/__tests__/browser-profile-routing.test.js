@@ -8,8 +8,10 @@ import { WebSocketBridge } from '../bridge.js';
 import { callLocalCommand } from '../exploration-client.js';
 
 vi.mock('../adapter-host.js', async original => ({ ...await original(), resolveAdapterCall: name => name === 'example.toolkit'
-  ? { command: { runtime: 'wewright', id: 'read', module: 'example.js' }, adapter: { root: '/example' } } : null }));
+  ? { command: { runtime: 'wewright', id: 'read', module: 'example.js' }, adapter: { root: '/example' } }
+  : name === 'example.http' ? { command: { runtime: 'http', id: 'read', http: { version: 2, strategy: 'AUTH_API' } }, adapter: { root: '/example' } } : null }));
 vi.mock('../toolkit-runner.js', () => ({ runToolkitTool: vi.fn(async () => ({ exitCode: 0, result: { example: 'toolkit' } })) }));
+vi.mock('../http-runner.js', () => ({ runHttpTool: vi.fn(async () => ({ exitCode: 0, result: { example: 'http' } })) }));
 
 const resources = [];
 afterEach(async () => {
@@ -27,11 +29,11 @@ async function setup() {
   await new Promise(resolve => bridge._wss.on('listening', resolve));
   const url = `ws://127.0.0.1:${bridge._wss.address().port}`;
   const call = (ns, cmd, args = {}, profile) => callLocalCommand(ns, cmd, args, { url, profile });
-  async function peer(contextId = randomUUID()) {
+  async function peer(contextId = randomUUID(), extraCapabilities = []) {
     const ws = new WebSocket(url), messages = [], received = [];
     ws.on('message', data => { const msg = JSON.parse(String(data)); messages.push(msg); if (msg.type !== 'extension_connected') received.push(msg); });
     await new Promise(resolve => ws.on('open', resolve));
-    ws.send(JSON.stringify({ type: 'extension_hello', contextId, capabilities: ['browser_commands_v1', 'browser_profiles_v1', 'passive_exploration_v1'], version: '1.0.0' }));
+    ws.send(JSON.stringify({ type: 'extension_hello', contextId, capabilities: ['browser_commands_v1', 'browser_profiles_v1', 'passive_exploration_v1', ...extraCapabilities], version: '1.0.0' }));
     await vi.waitFor(() => expect(messages.some(msg => msg.type === 'extension_hello_ack' || msg.type === 'extension_hello_error')).toBe(true));
     const reply = (msg, result) => ws.send(JSON.stringify({ type: 'call_tool_result', id: msg.id, result }));
     let hold = null;
@@ -43,6 +45,7 @@ async function setup() {
       if (msg.type === 'exploration_capture_passive') reply(msg, { requests: [] });
       if (msg.type === 'validate_generation_preview') reply(msg, { passed: true, tools: [] });
       if (msg.type === 'call_tool') reply(msg, { contextId, args: msg.args });
+      if (msg.type === 'http_credentials') reply(msg, { cookies: [], contextId });
       if (msg.type === 'get_trace_logs') ws.send(JSON.stringify({ type: 'get_trace_logs_result', id: msg.id, logs: [contextId] }));
     });
     return { ws, contextId, messages, received, reply, setHold(fn) { hold = fn; } };
@@ -55,6 +58,25 @@ async function setup() {
   }
   return { root, bridge, url, call, peer, rpc };
 }
+
+it('rejects scoped cookie requests on v1 peers before dispatch and pins v2 requests to the capable peer', async () => {
+  const { bridge, peer } = await setup();
+  const old = await peer(randomUUID(), ['http_credentials_v1']), current = await peer(randomUUID(), ['http_credentials_v1', 'http_credentials_v2']);
+  const payload = { version: 2, url: 'https://example.com/api/items', names: ['example_session'], storeId: '0', partitionKey: { topLevelSite: 'https://example.org', hasCrossSiteAncestor: true } };
+  const request = profile => bridge._route.run(bridge._profiles.select(profile), () => bridge._request({ type: 'http_credentials', payload }));
+  await expect(request(old.contextId)).rejects.toMatchObject({ code: 'HTTP_CREDENTIALS_UNAVAILABLE' });
+  await expect(bridge._route.run(bridge._profiles.select(old.contextId), () => bridge._request({ type: 'http_credentials', payload: { ...payload, version: undefined } }))).rejects.toMatchObject({ code: 'HTTP_CREDENTIALS_UNAVAILABLE' });
+  expect(old.messages.some(message => message.type === 'http_credentials')).toBe(false);
+  expect(await request(current.contextId)).toEqual({ cookies: [], contextId: current.contextId });
+  expect(current.messages.find(message => message.type === 'http_credentials').payload).toEqual(payload);
+});
+
+it('routes host AUTH_API desktop calls without a profile, whether zero or multiple browsers are online', async () => {
+  const { rpc, peer } = await setup();
+  expect((await rpc({ type: 'call_tool', toolName: 'example.http', args: {}, browserProfile: 'example-offline' })).result).toEqual({ example: 'http' });
+  await peer(); await peer();
+  expect((await rpc({ type: 'call_tool', toolName: 'example.http', args: {} })).result).toEqual({ example: 'http' });
+});
 
 it('isolates same session names and tab IDs, replies only to the caller, and routes desktop requests and trace', async () => {
   const { call, peer, rpc } = await setup(); const a = await peer(), b = await peer();

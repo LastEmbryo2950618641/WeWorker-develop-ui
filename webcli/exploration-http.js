@@ -2,13 +2,15 @@ import { normalizePathParameters, resolvePathRequest } from './generation-harnes
 import { buildApiSourceEvidence } from './generation-harness/source-evidence.js';
 import { validateHttpContract } from './http-contract.js';
 
-export const isHttpStrategy = strategy => ['PUBLIC_API', 'COOKIE_API'].includes(strategy);
+export const isHttpStrategy = strategy => ['PUBLIC_API', 'COOKIE_API', 'AUTH_API'].includes(strategy);
 
 export function httpToolContract(tool, candidate) {
   if (!Array.isArray(tool.sourceApiIndexes) || tool.sourceApiIndexes.length !== 1 || !Number.isInteger(tool.sourceApiIndexes[0])) {
     throw Object.assign(new Error('Host HTTP plans require exactly one observed API source index.'), { code: 'INVALID_PLAN' });
   }
-  const spec = { version: 1, strategy: tool.strategy, origins: [new URL(candidate.url).origin],
+  const version = tool.auth !== undefined || tool.cookies?.storeId !== undefined || tool.cookies?.partitionKey !== undefined ? 2 : 1;
+  const spec = { version, strategy: tool.strategy, origins: [new URL(candidate.url).origin],
+    ...(tool.auth !== undefined ? { auth: tool.auth } : {}),
     ...(tool.cookies !== undefined ? { cookies: tool.cookies } : {}) };
   validateHttpContract({ runtime: 'http', http: spec });
   return spec;

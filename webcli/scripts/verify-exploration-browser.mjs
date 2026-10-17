@@ -57,7 +57,8 @@ try {
   const cliEntry = path.join(copy, 'index.js');
   await fs.writeFile(cliEntry, (await fs.readFile(cliEntry, 'utf8')).replaceAll('homedir()', JSON.stringify(path.join(root, 'cli-config-root'))));
   const env = { ...process.env, WEWORKER_USER_ADAPTERS_DIR: path.join(root, 'user'), WEBCLI_ADAPTERS_DIR: path.join(root, 'user'),
-    WEWORKER_ADAPTER_DATA_DIR: path.join(root, 'data'), WEWORKER_BUILTIN_ADAPTERS_DIR: path.join(root, 'builtin'), WEWORKER_BUILD_PROFILE: 'public' };
+    WEWORKER_ADAPTER_DATA_DIR: path.join(root, 'data'), WEWORKER_BUILTIN_ADAPTERS_DIR: path.join(root, 'builtin'), WEWORKER_BUILD_PROFILE: 'public',
+    EXAMPLE_HTTP_ACCEPTANCE_KEY: 'example-host-auth-placeholder' };
   delete env.WEWORKER_RESOURCES_PATH;
   await fs.mkdir(env.WEWORKER_BUILTIN_ADAPTERS_DIR);
   await fs.writeFile(path.join(copy, 'acceptance-bridge.mjs'), "import { WebSocketBridge } from './bridge.js'; new WebSocketBridge();\n");
