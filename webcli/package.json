@@ -9,6 +9,10 @@
   },
   "files": [
     "index.js",
+    "exploration-commands.js",
+    "exploration-client.js",
+    "exploration-evidence.js",
+    "exploration-service.js",
     "bridge.js",
     "metrics.js",
     "stats.js",

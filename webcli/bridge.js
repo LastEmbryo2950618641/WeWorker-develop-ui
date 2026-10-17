@@ -582,6 +582,8 @@ export class WebSocketBridge extends EventEmitter {
 
       this._wss.on("connection", (ws, req) => {
         const origin = req?.headers?.origin;
+        const remoteAddress = req?.socket?.remoteAddress || '';
+        ws._explorationLocal = !origin && /^(127\.0\.0\.1|::1|::ffff:127\.0\.0\.1)$/.test(remoteAddress);
         if (!isAllowedBridgeOrigin(origin)) {
           process.stderr.write(`[${ts()}] [Bridge] Rejected WebSocket origin: ${origin}\n`);
           ws.close(1008, "Forbidden origin");
@@ -641,6 +643,10 @@ export class WebSocketBridge extends EventEmitter {
             if (msg.type === 'extension_hello' || msg.type === 'call_tool_result' || msg.type === 'call_tool_error' || msg.type === 'get_active_tab_result' || msg.type === 'get_trace_logs_result' || msg.type === 'validate_generation_preview_result') {
               // 来自Chrome扩展的消息
               this._handleExtensionMessage(msg);
+            } else if (msg.type === 'exploration_command') {
+              // Reply only to the requesting local client. Task evidence must not
+              // be broadcast to the extension or unrelated CLI connections.
+              this._handleExplorationCommand(msg, ws);
             } else if (msg.type === 'write_adapter_file') {
               // 来自扩展的文件写入请求
               this._handleWriteAdapterFile(msg, ws);
@@ -805,6 +811,24 @@ export class WebSocketBridge extends EventEmitter {
   }
 
   // ─── 处理来自CLI客户端的请求 ─────────────────────────────────────────────────
+
+  async _handleExplorationCommand(msg, ws) {
+    try {
+      if (ws === this._extensionWs || ws._explorationLocal !== true) throw new Error('Exploration commands require a local CLI connection.');
+      if (!this._explorationServicePromise) {
+        this._explorationServicePromise = import('./exploration-service.js').then(({ ExplorationService }) => new ExplorationService({
+          requestExtension: (message, timeout) => this._request(message, timeout),
+          capabilities: () => ({ connected: this.isExtensionConnected(), capabilities: [...this._extensionCapabilities] }),
+        })).catch(error => { this._explorationServicePromise = null; throw error; });
+      }
+      const service = await this._explorationServicePromise;
+      const result = await service.execute(msg.command, msg.args);
+      if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'exploration_command_result', id: msg.id, result }));
+    } catch {
+      if (ws.readyState === 1) ws.send(JSON.stringify({ type: 'exploration_command_result', id: msg.id,
+        result: { schemaVersion: 1, ok: false, error: { code: 'EXPLORATION_UNAVAILABLE', message: 'Unable to initialize standalone exploration. Check the local Adapter profile and task store.' } } }));
+    }
+  }
 
   /**
    * 记录一次 call_tool 的分段观测起点（仅日志用途；按 traceID 关联，缺 traceID 时不做）。

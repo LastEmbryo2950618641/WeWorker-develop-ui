@@ -100,6 +100,7 @@ export function createPreviewRuntimeValidator({ requestExtension } = {}) {
         plan,
         memory,
       });
+      if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
       const execution = await requestExtension({
         type: 'validate_generation_preview',
         previewAdapterId: preview.previewAdapterId,

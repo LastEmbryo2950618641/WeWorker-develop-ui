@@ -1,134 +1,84 @@
-# API 自动探索 CLI 开发设计（待审阅）
+# API 自动探索 CLI 开发设计与首版实现
 
-更新：2026-10-17。分支与验证记录见 [交接文档](api_exploration_cli_handoff.md)。本文命令、协议及新增文件均为设计，尚未实现。
+更新：2026-10-17。历史分支、同步步骤与验证结果见 [交接文档](api_exploration_cli_handoff.md)。
 
-## 1. 本次要交付什么
+## 需求修正
 
-用户可以对聊天助手说：“分析我打开的 example.com 列表页，生成可复用的查询命令。”助手通过 WebCLI 启动探索、观察进度、补充信息、生成验证并展示安装预览；用户确认后安装 Adapter，以后通过普通 `webcli call example.com.search` 复用。
+用户明确要求：只安装 WebCLI + 浏览器插件，Codex、Claude 等可执行 CLI 的 Agent 就能对话探索 API、编写和验证 Adapter，无需启动 WeWorker 客户端，不配置第二套模型 Key。此前“首版依赖客户端 Backend”的设计已撤销。
 
-首版支持明确参数的 CLI 和由聊天 Agent 编排的自然语言调用。CLI 的 `goal` 接收自然语言目标，由现有探索协调器处理；CLI 不再启动第二个外层模型来解释任意命令。外部 Agent 通过 Skill 使用同样的命令。
+Python 网站探索agent完全排除在任务范围之外。本轮没有修改其源码、测试、运行环境或界面。API 探索界面后续再迁入公共契约，本轮保留现有界面和聊天工具行为。
 
-**范围只包含 TypeScript API 探索链路。Python 网站探索agent及其界面、服务、存储、生命周期和测试均不改动。** 不把两条探索链路合成一个服务，不调用 Python 探索接口。
-
-## 2. 当前代码事实
-
-| 现有位置 | 已有能力 | 本次工作 |
-| --- | --- | --- |
-| `weworker/backend-ts/src/exploration-agent.ts` | ExplorationAgentCoordinator，任务创建/保存/查询/取消、动作补采、生成/恢复/安装 | 作为业务执行核心，补齐公共命令契约 |
-| `weworker/backend-ts/src/server.ts` 的 `/exploration/*` | 界面 HTTP 入口，任务、补采和生成控制 | 薄化为契约适配层，保持旧接口兼容 |
-| `weworker/backend-ts/src/tools.ts` | dev 分支已有列标签页、开始探索、列任务、生成/查询/恢复/安装等聊天工具 | 逐步统一到同一命令分发，避免双份行为 |
-| `weworker/renderer/src/api/exploration-api.js` | API 探索页面请求封装 | 后续改用统一契约，保持原交互 |
-| `webcli/index.js`、`bridge.js` | CLI 调用入口、浏览器与生成通信 | 暴露探索命令与受限宿主通信 |
-| Extension 现有探索消息与 WebCLI 生成组件 | 被动采集、安全探测、回放、生成验证与安装 | 优先复用，不增加第二套 Runner |
-
-现有任务已有持久化和启动恢复逻辑，应沿用并补齐测试，不能假定需要新数据库。探索状态与生成状态是两套现有状态，不把“探索完成”包装成“工具已可用”。
-
-## 3. 参考 OpenCLI 的部分
-
-参考依据：本机 OpenCLI 1.8.6 的 `browser --help`、`browser network --help`，以及本地 opencli-usage、opencli-adapter-author 技能。未审计其远端最新源码，也未在真实站点验证。
-
-- 明确会话与 tab 身份，避免“当前页”随焦点变化而误操作。
-- 先获取证据，再选择策略，最后生成和验证；不把 HTTP 200 当业务成功。
-- 命令输出机器可读结果、明确错误和可执行的下一步。
-- 采集证据以结构摘要为主，验证字段含义和分页，失败保留可排查线索。
-- 公开契约优先；遇到动态签名或登录阻塞，使用既有合法页面能力或请求用户处理，不猜测接口。
-
-不照搬它的完整原始响应读取、任意 eval 或新浏览器守护进程。WeWorker 继续遵守自己的证据脱敏、确认规则和 `webcli call` 入口。旧 `opencli explore` 已在技能中标记移除，不据此设计兼容层。
-
-## 4. 推荐架构
+## 架构
 
 ```text
-自然语言 / 外部 Agent → Skill → webcli call exploration.<command>
-                                      ↓
-                           受限且鉴权的宿主命令通道
-                                      ↓
-界面 HTTP / 兼容聊天工具 → ExplorationCommandService（新增）
-                                      ↓
-                       ExplorationAgentCoordinator（现有）
-                                      ↓
-                  现有 Bridge → Extension / 生成与验证组件
+Codex / Claude / 其他 CLI Agent + Skill
+            ↓ webcli call exploration.<command>
+     现有 WebCLI Bridge（本地后台服务）
+            ↓ ExplorationService（无模型依赖）
+     任务持久化 / 证据结构化 / 草稿 / 验证 / 安装
+            ↓ 现有消息、预览验证器和 Adapter 安装器
+       WeWorker 浏览器插件
 ```
 
-`exploration` 是拟定保留命名空间，作为内置管理命令目录展示，不伪装为网站 Extension Adapter 或 Python Toolkit。在 CLI 的 call 分发和帮助系统中显式注册，防止用户包覆盖此命名空间；不改两类业务 Adapter 的 Runner。
+外部 Agent 负责理解目标、选策略、命名工具、编写/修复代码和向用户提问。WebCLI 负责确定性操作；`generate` 是依据已观察证据生成隔离草稿，不是调用模型自主创作。Agent 用 `draft-read` / `draft-write` 完成语义改造。
 
-新增服务负责参数校验、权限、状态前置条件、幂等、结果摘要及错误映射。WebCLI 不按业务 Schema 自动转换类型；服务在边界明确解析 tabId 等十进制字符串，拒绝空值/小数/溢出。旧 HTTP 与聊天入口复用服务，不复制校验。
+借鉴 OpenCLI 的会话绑定、证据先行、渐进帮助与验证闭环。参考为本机 1.8.6 help 及本地 usage/adapter-author 技能，不宣称审计了远端最新源码。不复制其任意 eval、原始响应读取或第二套浏览器守护进程。
 
-首版依赖运行中的 WeWorker Backend、Bridge 和浏览器扩展。独立 npm WebCLI 没有宿主时返回可操作的 `HOST_UNAVAILABLE`，不悄悄启动 Python 或另一个模型运行时。纯 CLI 无桌面宿主模式暂不包含。
+## 实际命令
 
-### 宿主通道是 P0 的前置决策
+命令以 `webcli call exploration.help` 为事实来源，所有结果为 JSON。
 
-Backend HTTP 使用 `X-WeWorker-Auth`，不能假定终端 CLI 能拿到 Electron 启动 token，更不能去读设置文件取得凭据。
+| 命令 | 含义 |
+| --- | --- |
+| capabilities / tabs | 插件状态和可探索标签页，不需要桌面 Backend |
+| start | tabId、goal、requestId 创建任务；重载指定页面采集证据 |
+| list / get / events / evidence | 找回任务、查看状态、游标事件和结构化接口证据 |
+| collect | 用户操作页面后补采，不重载 |
+| actions / probe | 复用插件安全搜索、筛选和分页候选，每任务最多三次探测 |
+| cancel | 停止后续阶段，丢弃迟到结果；已经派发的浏览器操作可能完成 |
+| generate | 从成功的只读 GET 证据生成隔离 v2 草稿，可接受 Agent 编写的 plan |
+| draft-read / draft-write | 列文件、读取内容和 hash、按 expectedHash 修改现有文件 |
+| validate | 静态检查及真实浏览器只读预览验证 |
+| review / install | 展示当前权限/工具/版本差异；以当前 reviewId 和用户确认安装本地 Adapter |
 
-推荐由现有 Bridge 增加固定探索命令转发：Backend 建立认证连接并注册白名单处理器，CLI 通过现有本地调用通道发出结构化命令；Bridge 只转发固定命令/参数，不接受任意 URL、文件路径或 shell。Backend → Bridge 的业务调用继续按各自 requestId 处理，不能让等待宿主结果阻塞同一连接处理下游消息。
+复杂 plan/content 使用现有 `--args` JSON 通道，普通参数使用 `--key=value`。不增加 WebCLI 通用业务类型转换。
 
-开发前先做协议验证：双向请求不死锁、宿主断连明确失败、超时不重新启动任务、旧版本能力检查、CLI 调用方权限与确认来源可识别。不能仅凭 loopback 或一个 `confirmed=true` 就认定获得授权。若现有通道无法提供调用身份，先实现受限本地授权握手，再开放有副作用命令；不暴露通用 HTTP token。接口安全评审通过才进入完整实现。
+## Agent 使用流程
 
-## 5. 建议命令清单
+1. capabilities → tabs，确认页面与目标。start 会重载，用户有未保存输入时先处理。
+2. start 返回 collecting，持续 get/events 观察；CLI 进程退出不终止 Bridge 任务。
+3. evidence 分析端点、参数名和响应结构；必要时 actions/probe 或人工操作后 collect。
+4. generate 生成草稿；Agent 检查和修改参数、分页、结果映射和业务错误。
+5. validate，失败回到 draft-read/write 修复；不把注册成功或跳过执行当验收。
+6. review 展示安装变更，用户同意后 install，再以普通 `webcli call <adapter>.<command>` 使用。
 
-全部通过 `webcli call exploration.<command>`，首版输出 JSON，沿用现有 CLI 参数方式。以下命令名待审阅。
+`webcli install --skills --target <目标目录>` 会安装新增的 webcli-api-exploration Skill，不限于某个模型供应商。即使 Agent 没有 Skill 机制，也能通过完整命令帮助调用。
 
-| 阶段 | 命令 | 作用 |
-| --- | --- | --- |
-| P1 | `capabilities` / `tabs` | 判断宿主/扩展/模型条件，列出可探索页面 |
-| P1 | `start` | `tabId` + 自然语言 `goal`；快速返回 taskId |
-| P1 | `list` / `get` / `events` | 找回任务、查询状态和游标增量事件 |
-| P1 | `cancel` | 停止任务及其活动子阶段，幂等 |
-| P1 | `generate` | 复用 auto，返回 generationRunId；不自动安装 |
-| P1 | `answer` | 回答当前 questionId，按实际阶段恢复 |
-| P1 | `review` / `install` | 查看工具/权限/验证差异；以当前 reviewId 确认本地安装 |
-| P2 | `capture-start` / `capture-stop` | 为指定任务补采用户操作，绑定 tab 与 action |
-| P2 | `capture-get` / `capture-analyze` / `capture-select` | 查询补采、仅重试分析、选择候选 |
+## 协议与状态
 
-`events` 首版使用有界轮询和 cursor，不要求长连接。`generate` 自动沿用现有保存证据逻辑，不要求用户多执行一个 save。`review` 只能查看已经生成的草稿；安装是本地动作，不是上传市场。
+- 固定消息 `exploration_command` / `exploration_command_result`，使用唯一 request ID。结果仅回发起连接，不广播证据。新命令只接受无浏览器 Origin 的 loopback 连接；拒绝扩展/网页与远端连接。
+- 保留命名空间 exploration，CLI 在业务 Adapter 查找前处理，用户包不能覆盖此入口。不改变 Extension / Toolkit Runner 分工。
+- 服务在 Bridge 中按需初始化，存储于既有 profile workspace 的 exploration 子目录；与桌面 API 探索旧任务分开，避免未经设计的数据迁移。
+- 状态为 created → collecting → evidence_ready → draft → validating → review_ready → installing → installed，另有 failed/interrupted/cancelled。
+- start 的 requestId 在重连和重启后保持幂等；同 key 不同参数拒绝。generate 不覆盖已存在草稿。
+- Bridge 重启将进行中的任务标为 interrupted，不自动重放操作；同一 tab 的在途采集/验证互斥，取消后等待已派发请求收尾才释放。
+- 修改草稿使验证和 review 失效；安装核对包摘要、基线与当前 review。安装开始后不能取消，重复查询安装结果不会再次安装。
+- 不增加数据库 schema、模型 SDK 或依赖，不访问客户端设置和模型 Key。
 
-示例（占位参数，尚不可执行）：
+## 证据与验证边界
 
-```bash
-webcli call exploration.tabs
-webcli call exploration.start --tabId=7 --goal='分析列表查询与分页，生成只读工具' --requestId=example-request-1
-webcli call exploration.get --taskId=example-task
-webcli call exploration.events --taskId=example-task --cursor=0
-webcli call exploration.generate --taskId=example-task --mode=auto
-webcli call exploration.review --taskId=example-task
-# 用户审阅并同意当前草稿后：
-webcli call exploration.install --taskId=example-task --reviewId=example-review
-```
+持久化与输出只含请求/响应结构、字段名称、状态及端点。省略响应值和请求头，移除凭据查询字段，其余查询值变为占位；常见数字 ID、UUID 和邮箱路径段结构化为 :id。跨源流量不自动增加权限。
 
-不推出默认“一句话自动安装”。目标不清、多标签页匹配、需要登录或写入验证时，返回问题并等待明确输入。
+首版生成范围：同源、已观察成功的 GET 查询，最多两个新命令；动态 :id 路径不自动生成。POST 查询、写命令和跨源授权待后续明确设计。已有包的命令按原有增量机制保留；只执行新生成的查询验证，不运行保留的写命令。
 
-## 6. 状态、输出和权限
+验证复用现有 static validator、preview runtime validator 和 publisher。所有目标工具必须真实执行且通过，不能跳过。任务仅保存验证计数/错误码，不保存预览结果值。安装是本地行为，不上架市场，也不等于授权执行业务写操作。
 
-统一结果信封拟为 `schemaVersion / ok / command / taskId / data / error`。data 中保留 `explorationStatus`、`generationStatus`，增加 `phase`、`nextActions` 和 `pendingQuestion`；事件有单调序号和 cursor。摘要不返回 Cookie、密钥、真实响应内容或用户绝对路径。
+## 后续 UI 统一
 
-- 异步命令返回成功表示“已接受”，不是探索成功；失败任务由状态明确表达。
-- 调用失败使用非零退出码和稳定 error.code，详细日志写 stderr，stdout 保持可解析 JSON。
-- 错误至少覆盖 INVALID_ARGUMENT、HOST_UNAVAILABLE、CAPABILITY_UNAVAILABLE、AUTH_REQUIRED、TASK_NOT_FOUND、INVALID_STATE、TAB_CHANGED、TIMEOUT、CONFIRMATION_REQUIRED、STALE_REVIEW。
-- `start` 和 `generate` 支持 requestId 幂等；相同 key 不同参数拒绝，任务存储中记录有界去重信息，避免跨重连重复创建。
-- 同一任务的写入命令串行化；cancel 传播到活动采集/生成，迟到结果不覆盖 cancelled；等待命令超时只结束等待，取消必须显式请求。
-- taskId/tabId/站点身份联检；页面变化后不能把原站点证据用于另一个站点。
-- questionId 与当前状态匹配，旧答案拒绝；reviewId 绑定草稿摘要、权限和验证结果，草稿变化使旧确认失效。
-- 安装确认不等于授权执行工具的业务写入。写工具继续使用已有 mock 与确认门禁，默认不做真实写验证。
-- 进程重启后只恢复可恢复阶段，不自动重放有副作用操作；复用既有记录格式并保持旧任务可读，不在本轮引入数据库迁移。
+本轮独立命令不经过 TypeScript Backend。后续由 Backend 的薄适配层调用相同 Bridge 命令，使 API 探索页面、内置聊天工具与外部 Agent 共用任务状态和校验。UI 不需要启动 shell；不得借此改动 Python 网站探索agent。
 
-## 7. 自然语言与 UI 如何接入
+## 验证与未完成范围
 
-新增 API 探索 Skill：识别“把这个页面变成工具/探索接口”等意图，先检查能力和页面，再 start → get/events → generate → review。等待人处理时只问具体问题；生成完成后列出命令、参数、验证范围和安装差异。
+具体命令和数量见交接日志。单测包括真实 WebSocket 协议、CLI 帮助进程、任务恢复、取消、陈旧草稿/确认、结构脱敏以及实际生成 JavaScript 在模拟浏览器中执行并安装的闭环。离线通过不等于真实登录站点或 Codex/Claude 实际对话验收。
 
-已有聊天工具作为兼容入口先调用同一服务；新自然语言路径使用 CLI，避免在一次请求里同时走两套入口创建重复任务。将原 full 权限约束映射到新调用方能力，不能因开放 CLI 而降低限制。
-
-UI 后续改为调用同一命令服务的 HTTP 适配层，消费同样状态和事件。UI 无需为了“接 CLI”而启动 shell 子进程；命令语义、权限与任务执行一致即可。只迁移 API 探索页面，不触及 Python 网站探索agent页面。
-
-## 8. 分阶段交付与验收
-
-1. **P0：契约与通信验证。** 固化参数/输出/错误，确定命令目录注册和调用身份方案；完成受限双向通道测试。验收：无任意代理、断连/超时/旧版本明确报错，业务命令执行不死锁。
-2. **P1：只读探索闭环。** 实现 tabs/start/get/list/events/cancel/generate/review/install/answer、帮助及 Skill。验收：命令行发起任务、换进程找回、生成查询 Adapter、审阅安装并以普通 call 调用；模拟与真实验证分别记录。
-3. **P2：补采与恢复。** 接入现有补采全流程、候选选择和分析重试。验收：补采不丢旧证据、重试分析不重新操作页面，登录/证据不足/用户中断均可解释。
-4. **P3：API 探索 UI 统一。** 旧 HTTP/聊天兼容层共享契约，迁移 UI。验收：CLI 启动的任务 UI 可见，UI 启动的任务 CLI 可查可控，跨入口取消/恢复一致。
-
-聚焦测试覆盖参数字符串解析、重复提交、跨 tab、陈旧确认、取消竞争、重启恢复、权限不足、脱敏、业务错误与真实空态。运行 Backend 类型检查、WebCLI 测试/打包入口校验；涉及 Renderer 时跑单测、构建和语法检查。真实验收至少覆盖公开查询、需登录查询、分页及生成失败恢复，写操作仅 mock/门禁验证。
-
-首版不做通用浏览器 CLI 重写、任意自动化脚本执行、自动上架市场、Python 探索接口或无人确认安装。
-
-## 9. 本轮审阅建议
-
-建议接受：保留 exploration 命名空间；P1 先交付只读闭环；首版依赖 WeWorker 宿主；自然语言由 Skill/Agent 编排；UI 共享命令服务；安装保留显式审阅。实现前优先完成宿主授权通道验证，避免命令已经写完却无法安全调用现有 Backend。
+待做：真实 Chrome 全链路、Codex/Claude 各一次对话生成验收；API 探索 UI/旧聊天入口统一；按业务需要扩展 POST、跨源和写工具能力。未测试事项不标记已完成。

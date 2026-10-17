@@ -9,6 +9,8 @@ allowed-tools: Bash(webcli *), Bash(npm install *), Bash(npm view *)
 
 通过 Chrome 扩展适配器操控网站。每个受支持的网站都有自己的适配器和专属工具。
 
+需要探索新网站 API 或生成 Adapter 时，使用随包提供的 `webcli-api-exploration` Skill，并先运行 `webcli call exploration.help`。该链路由当前 Agent 分析和编写代码，只需 WebCLI + 浏览器插件，不依赖桌面客户端或额外模型 Key。
+
 ## 环境准备（agent 自动完成，无需让用户操作）
 
 **第一步——每次使用前先确保 `webcli` 是最新版**。旧版本可能缺少适配器或修复，必须先比对版本、落后则更新：

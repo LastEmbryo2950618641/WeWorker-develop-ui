@@ -9,10 +9,10 @@ const overlaps = (left, right) => {
 };
 
 /** Resolve ownership before planning, without changing any catalog selection. */
-export function prepareGenerationRun(run) {
+export function prepareGenerationRun(run, { paths } = {}) {
   const memory = run.snapshot.input?.memory;
   if (!memory?.siteKey || memory.generationBaseline) return memory;
-  const catalog = buildAdapterCatalog();
+  const catalog = buildAdapterCatalog(paths ? { paths } : {});
   const host = memory.siteHost || memory.siteKey;
   if (catalog.diagnostics.some(item => !item.name || item.name === memory.siteKey)) {
     throw adapterError('ADAPTER_CATALOG_REVIEW_REQUIRED', '请先解决工具包目录中的冲突，再生成增量工具。');

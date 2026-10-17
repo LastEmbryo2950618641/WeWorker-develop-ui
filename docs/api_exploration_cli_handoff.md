@@ -1,6 +1,6 @@
 # API 自动探索 CLI 改造跟进与交接
 
-> 更新日期：2026-10-17。当前阶段：已建立集成基线并解决冲突，开发设计待审阅；尚未实现新 CLI。
+> 更新日期：2026-10-17。当前阶段：独立 WebCLI 探索首版已实现并通过离线验证；真实站点/外部 Agent 验收待完成。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
 
 ## 最新状态
@@ -188,3 +188,26 @@ git diff --name-only LAST_DEV_SHA origin/dev-1.1.0
 - develop `4c3d5bd` 与 dev-1.1.0 `dae8932` 均已纳入历史；后续同步用这两个 SHA 起算，不再合入 #106/#91 分支。
 - 最后成功完成聚焦验证的集成提交为 `baf9f98`；全量验证仍未完成，限制见上。最终 Python 冲突文件与 dev 原文件一致，先前手工合并版本的 AST 检查不视为最终 Python 验证。
 - 未推送、未创建 PR。后续同步继续采用“上游 → api-exploration-base → api-exploration-cli”，Python 模块若再次冲突，交对应负责人处理，不在本功能开发中改造。
+
+
+### 2026-10-17：独立 Agent 模式首版
+
+- 用户明确纠正：WebCLI + 插件必须独立运行，Codex/Claude 等外部 Agent 负责推理。旧设计的桌面宿主前置条件已撤销，开发设计全文更新。
+- 新增 exploration 命令服务、JSON 客户端、结构证据模块和命令帮助；集成现有 Bridge，新增 API 探索 Skill 并纳入 npm files/skills 包。无新依赖、无 lockfile 变更。
+- 已实现 start/list/get/events/evidence/collect/actions/probe/cancel/generate/draft-read/draft-write/validate/review/install；独立任务保存在 profile workspace 中。默认不调用模型、不读 Backend 配置。
+- 复用 v2 草稿、验证、增量包与安装器；补充 prepareGenerationRun 的可选 paths 注入和 runtime validator 两阶段间的取消检查。
+- 当前只生成同源成功只读 GET，最多两个命令；POST/写操作/跨源/动态 ID 路径不自动生成。API 探索 UI 与旧聊天工具迁移属于后续，不触及 Python 网站探索agent。
+- 本轮 Python 目录差异必须为零（相对本轮起点 af8e082），不执行该模块测试或环境安装。
+- 上下文管理：用户授权必要时创建新会话接手；优先在当前会话持续工作并及时记录。若新建，传递本文件、设计文档、当前分支/HEAD、验证结果、未完成项；不能把新建成功当作后续开发完成。
+
+
+### 首版验证与接手步骤
+
+- 最终 WebCLI 全量：97 文件、1055 项通过（npm test --prefix webcli）。新增独立服务/协议 2 文件 14 项，覆盖真实 WebSocket 交互、独立 CLI 帮助进程和生成 JavaScript 在模拟浏览器中的执行及安装。没有调用真实模型。
+- 构建：WebCLI 与 Bridge bundle 通过，打包 CLI 显示全部 18 个命令，Skill 已复制。主目录缺 esbuild 的首次构建失败，随后用已有 backend-ts/node_modules 经 NODE_PATH 提供该依赖构建成功，未改 package/lockfile 依赖。
+- npm pack --dry-run（执行 prepack）通过，569 个文件；确认四个新增模块及 webcli-api-exploration Skill 在清单中。未发布 npm 包。打包仍提示已有可选列映射资源缺失。
+- 公开配置、JS 语法与 git diff --check 通过。相对 af8e082，Python 目录差异为零。
+- 测试波动：与构建同时运行时旧 generation-output-recovery 用例未及时进入预期状态；单文件复跑通过，再完整顺序运行全量 1055 项通过。不据此认定其根因已经解决。
+- 没有验收真实 Chrome、登录站点、Codex/Claude 实际对话、各平台安装包。本轮未改 Renderer/Backend 业务源码，也未处理先前 Backend yauzl 类型问题。
+- 下一位 Agent：先查看当前 HEAD 和工作区；运行 `node webcli/index.js call exploration.help`，阅读产品内 Skill。下一步优先准备独立 WebCLI + 插件的真实验收，不能重启/占用未知 Bridge 或改动用户登录数据。之后再设计 API 探索 UI 适配；不把 Python 网站探索agent纳入任务。
+- 最后测试日志位于本机临时目录，不作为需提交的材料；以上验证摘要为可交接记录。代码提交 SHA 可从下一条 feat(exploration) 提交查得，未推送、未开 PR。

@@ -60,6 +60,9 @@ Service:
   service status                 查看服务状态
   service logs [-f, --follow]    查看服务日志
 
+API exploration (standalone, no desktop/model key required):
+  call exploration.help                    探索、草稿编辑、验证与安装命令
+
 Adapters:
   list                                     列出已安装的 adapter（adapter list 的简写）
   help                                     已安装 adapter 摘要（渐进式 help 第一级）
@@ -167,6 +170,7 @@ async function printGlobalHelp({ json = false } = {}) {
       description: "WeWorker 网站工具 CLI：调用浏览器站点自动化工具，管理适配器与统计",
       commands: [
         { name: "call <tool>", usage: "webcli call <tool_name> [--key=value ...]", description: "调用站点工具" },
+        { name: "exploration", usage: "webcli call exploration.help", description: "独立 API 探索、Agent 草稿编辑、验证与本地安装" },
         { name: "adapter", usage: "webcli adapter <command>", description: "管理网站适配器" },
         { name: "service", usage: "webcli service <start|stop|status|logs>", description: "管理 WebSocket bridge 服务" },
         { name: "stats", usage: "webcli stats", description: "调用频次统计" },
@@ -401,6 +405,27 @@ async function cmdCall(toolName, argsStr, options = {}) {
   catch (error) { console.error(`Error: ${error.message}`); process.exit(1); }
   // 合并 --key=value 标志参数（优先级低于 --args 中的同名字段）
   args = { ...flagArgs, ...args };
+
+  // Reserved management namespace. It never resolves a website/Toolkit package.
+  if (toolName.startsWith('exploration.')) {
+    const command = toolName.slice('exploration.'.length);
+    const { explorationCommands, explorationHelp } = await import('./exploration-commands.js');
+    if (command === 'help') {
+      console.log(JSON.stringify(explorationHelp(), null, 2));
+      return;
+    }
+    if (!Object.hasOwn(explorationCommands, command)) {
+      console.log(JSON.stringify({ schemaVersion: 1, ok: false, error: { code: 'UNKNOWN_COMMAND', message: 'Use webcli call exploration.help.' } }));
+      process.exitCode = 1;
+      return;
+    }
+    await ensureBridgeRunning();
+    const { callExploration } = await import('./exploration-client.js');
+    const result = await callExploration(command, args);
+    console.log(JSON.stringify(result, null, 2));
+    if (!result.ok) process.exitCode = 1;
+    return;
+  }
 
   const { resolveToolkitTool } = await import("./adapter-registry.js");
   const { resolveAdapterCall } = await import("./adapter-host.js");
@@ -827,6 +852,13 @@ async function main() {
   const cmd  = args[0];
   const sub  = args[1];
   const invocation = resolveCliInvocation(args);
+
+  if ((cmd === 'exploration' && (sub === 'help' || args.some(arg => ['--help', '-h'].includes(arg))))
+      || (cmd === 'call' && sub?.startsWith('exploration.') && args.some(arg => ['--help', '-h'].includes(arg)))) {
+    const { explorationHelp } = await import('./exploration-commands.js');
+    console.log(JSON.stringify(explorationHelp(), null, 2));
+    return;
+  }
 
   // --version / -v
   if (cmd === "--version" || cmd === "-v") {

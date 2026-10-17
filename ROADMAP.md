@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-17（独立 API 探索 CLI）：按用户修正移除桌面 Backend 前置条件，WebCLI Bridge 新增无模型探索任务、结构证据、安全探测、Agent 草稿读写、验证与审阅安装命令，提供外部 Agent Skill。当前首版范围为同源只读 GET；UI 统一、POST/跨源/写工具及真实外部 Agent 对话验收待后续。WebCLI 97 文件/1055 项通过，CLI/Bridge 构建、npm prepack dry-run、公开配置及语法检查通过；真实浏览器/模型未验收。详细记录见 `docs/api_exploration_cli_handoff.md`；本轮未修改 Python 网站探索agent。
+
 - 2026-10-17（API 探索 CLI 集成与设计）：#106/#91 已合入 develop；从 `4c3d5bd` 建集成基线并整合 dev-1.1.0 `dae8932`，解决 7 文件冲突。设计/交接见 `docs/api_exploration_cli_design.md`、`docs/api_exploration_cli_handoff.md`。聚焦 94 项、Renderer 构建与公开配置检查通过；Backend 类型检查缺 yauzl 声明，Python 聚焦测试缺 uv，尚未完成全量/真实验收。CLI 实现未开始。
 
 - 2026-10-17（PR #91 分支同步）：将含 #106 修复的最新 develop 合入 `chore/remove-legacy-extension-adapters`（无冲突），check-public-config 台账 fixture 随 legacy 目录移除精简（去掉 `extension/adapters/index.json` 桩）。worktree 聚焦复验：真实仓库校验通过、scripts 测试 4 项、webcli 两文件 37 项（即 #106 所修用例）、扩展 tool-route 与 wecli-runtime-helper 33 项全部通过。
