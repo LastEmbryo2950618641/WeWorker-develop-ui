@@ -1,7 +1,18 @@
 # API 自动探索 CLI 改造跟进与交接
 
-> 更新日期：2026-10-17。当前阶段：原生文件输入支持隐藏/语义/Shadow/AX/嵌套跨源 frame 上传，保留节点、验证文件名/顺序/大小并报告已派发状态；WebCLI 1133 项、扩展相关 122 项、隔离真实浏览器完整 38 项及最终上传聚焦通过。日常 Chrome 同类操作和 B 站 24 卡片回归通过。完整 OpenCLI 对齐继续进行；通用复杂控件/目录输入、多连接、独立 HTTP runner、独立 Agent 对话、UI 统一与平台安装包验收尚未完成。
+> 更新日期：2026-10-17。当前状态：应用户要求暂停本会话目标，交给新会话继续。最后完成的功能为文件输入目标扩展 `3e9a7ff`；WebCLI 1133 项、扩展相关 122 项、隔离真实浏览器完整 38 项及最终上传聚焦通过，日常 Chrome 与 B 站 24 卡片回归通过。随后只核查多浏览器路由并记录设计，尚未修改相关代码。整体对齐目标未完成。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
+
+## 新会话从这里接手
+
+- 继续使用当前分支 `codex/api-exploration-cli`。最后功能提交为 `3e9a7ff`，其后只有本次交接文档提交；先核对 `git status --short --branch` 与最近日志，不重新建分支或重复上传改造。
+- 先读根 AGENTS.md、ROADMAP.md、本节与本文末尾，再读 [多浏览器设计](api_exploration_cli_design.md) 和 [能力台账](opencli_parity.md)。前面各阶段的 active/下一步描述为历史，当前暂停状态以本节为准。
+- 下一项：实现浏览器 profile 的连接身份、明确选择、请求与响应路由，以及会话/任务/标签锁隔离。当前 Bridge 仍只有一个 `_extensionWs`，不能认为已有多连接支持。设计与必测场景已经写好，尚无半完成代码或待运行测试。
+- 独立 WebCLI + 插件面向任何能执行 CLI 的 Agent；自然语言由调用 Agent 处理，无桌面或第二套模型 Key 依赖。保持统一 `webcli call` 与 Extension/Toolkit Runner 分离。Python 网站探索agent源码、环境、测试、生命周期和数据全程不动。
+- 集成基线 `baf9f98`；已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`，#106/#91 已合入 develop。本次没有 fetch/merge/push/PR；后续同步依本文第 4 节“上游 → 集成基线 → 功能分支”，这些 SHA 只是已纳入快照。
+- 用户已安装 `weworker/build/extension-dist`，上一阶段已重载，不需要重复要求安装。真实目标仍为用户指定的 B 站 Excel 搜索页；使用前重新 doctor/tabs/bind，不照抄旧 tab/document 身份。源码 Bridge 在本次只读核对时仍为 PID 38679、日志 `/tmp/weworker-upload-live-bridge.log`；任何重启前重新核对完整命令和归属。
+- 报告位于系统临时目录，上传完整报告 `webcli-browser-acceptance-W5Q8Pm/report.json`、最终聚焦 `webcli-browser-acceptance-nlsrAp/report.json`、日常 Chrome `weworker-upload-live-Giy5xv/report.json`。这些是上阶段证据，本次文档收尾没有重新运行浏览器验收。临时文件可能被系统清理，缺失时依已提交验收脚本重跑。
+- 后续仍有独立 PUBLIC_API/COOKIE_API runner、多步 UI/写命令、自定义控件、知识修订/共享修复、API 探索 UI 与内置对话复用、独立 Agent 对话及平台分发。不要把多 profile 完成视为整个目标完成。
 
 ## 最新状态
 
@@ -11,7 +22,7 @@
 - 功能分支在集成提交后创建为 `codex/api-exploration-cli`，最终操作结果见文末。未推送或创建 PR，最终发布目标仍待明确。
 - [开发设计](api_exploration_cli_design.md) 为本次审阅入口。
 - [OpenCLI 能力对齐台账](opencli_parity.md) 为最新范围与缺口清单；用户要求尽力对齐完整能力，不能把当前 36 个 browser 命令或单站点验收视为目标完成。
-- 首版功能实现提交为 `821a7df`，本轮从复合字段检查点 `21f193c` 继续；后续实现、真实验收与本地检查点见文末和 Git 日志。集成基线仍为 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`。这些是已纳入快照，后续同步前应重新 fetch，不能据此推断远端未变化。
+- 首版功能实现提交为 `821a7df`，最新功能检查点为文件输入扩展 `3e9a7ff`；后续交接提交见 Git 日志。集成基线仍为 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`。这些是已纳入快照，后续同步前应重新 fetch，不能据此推断远端未变化。
 > 后续每次建分支、同步上游、解决冲突、实现功能或验证后，都应更新本文和 ROADMAP.md。未验证事项不得标为完成。
 
 ## 1. 目标与范围
@@ -523,3 +534,12 @@ npm run test:exploration:browser --prefix webcli -- \
 - 重载后重新选择 B 站 excel 用户页并绑定，主文档 AX 与 current-video-links 的 24 张可见视频卡片标题/规范化链接逐项一致，页面保持第一页；真实结果未入仓库。当前 source Bridge 快照 PID 38679、日志 `/tmp/weworker-upload-live-bridge.log`，插件加载工作区 extension-dist 且已重载；下次先核实完整进程命令、doctor/tabs，不照抄旧身份。
 - CLI/Bridge 构建、构建帮助的 ref/semantic/frame/shadow upload 参数、公开配置通过；npm pack dry-run 598 文件，包含 browser-upload.js 与最新 Skill。10 个 JS/MJS 语法、Git 差异格式和新增内容凭据/私网地址检查通过；原有可选列映射资源警告保留。Python 网站探索agent相对 `af8e082` 零差异，源码/环境/测试/生命周期/数据未触碰；CI/发布/schema/.env 未改，未推送或创建 PR。
 - 下一步优先多 profile/连接的明确选择与路由，再推进独立 PUBLIC_API/COOKIE_API runner；自定义组件/多步 UI/写命令、知识修订/共享修复、UI/聊天共用服务、独立 Agent 对话和平台分发仍属完整目标，goal 保持 active。保存本阶段本地检查点，SHA 见 Git 日志。
+
+### 2026-10-17：多浏览器路由核查与用户要求的会话暂停
+
+- 操作前 HEAD `3e9a7ff`，工作区干净；本阶段只读核查 Bridge/CLI/Extension 的多连接边界和 OpenCLI 1.8.8 profile 辅助实现，没有开始代码改造。
+- 用户表示上下文过多，准备新开对话，要求完成当前小工作后先结束目标。在当前无半完成代码的设计检查点收尾，目标按用户要求暂停，不标 complete，也不自动创建新会话。
+- 已记录当前单连接覆盖、响应来源未绑定、广播、服务持久根/锁单例、follow 与普通 Adapter 路由等问题；开发设计包含拟定契约、旧数据兼容待定项及双真实浏览器验证要求。不得将这份设计当作 profile 已实现或上游全行为已验证。
+- 更新本文顶部接手入口、开发设计、能力台账、OpenCLI 核查和 ROADMAP，共 5 份文档。没有新功能代码、测试进程、依赖、构建、fetch/merge/push/PR；功能验证数字沿用上传阶段，文档检查不冒充重跑测试。
+- 本次只读核实 source Bridge PID 38679 的完整命令仍指向本工作区 `webcli/index.js --service`。没有停止或重载服务，没有操作浏览器；上一阶段上传验收的用户插件和页面保留。新会话使用前重新核对进程和标签身份。
+- 收尾验证：检查 5 份文档差异和本地链接、Git 差异格式、修改范围；Python 网站探索agent相对 `af8e082` 保持零差异。提交 SHA 以本次文档提交的 Git 日志为准，提交后工作区应为干净状态。

@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-17（CLI 会话交接）：应用户要求，在已完成上传功能 `3e9a7ff` 后暂停当前目标。完成多浏览器连接的源码路由核查与下一阶段设计记录，尚未实现 profile；本次仅更新文档，未重跑功能验收。交接文档顶部新增接手入口、当前状态、验证证据与同步边界。整体 OpenCLI 对齐未完成，Python 网站探索agent未动。
+
 - 2026-10-17（文件输入目标扩展）：browser.upload 支持隐藏/语义/开放 Shadow/关闭 AX/明确 frame 文档，保留实际节点与 target session，派发前复核、派发后验证文件名/顺序/大小；禁用/歧义/替换/导航/过期失败不重放，报告 dispatched。WebCLI 1133 项、扩展相关 122 项、隔离 Chromium 完整 38 项及最终聚焦通过；日常 Chrome 实际文件内容和本地 multipart 接收、B 站 24 卡片回归通过。目录输入/自定义业务流程和其他 OpenCLI 差距继续进行，Python 网站探索agent零改动。
 
 - 2026-10-17（复合字段与结构读取）：DOM state/find 增加日期/下拉/文件元数据，独立读取保留列表第 50 项后的选中状态；get compound 支持隐藏输入、AX ref 和 frame，HTML JSON 树提供明确预算/截断并省略密码值和脚本。select 支持 by=value/label，歧义/禁用拒绝，页面撤回选择明确失败。WebCLI 1132 项、扩展相关 117 项、隔离 Chromium 完整 37 项及最终聚焦通过；日常 Chrome 真实上传/选择/读取和 B 站 24 卡片回归通过。通用自定义组件、Shadow 上传、多连接等继续进行；Python 网站探索agent零改动，详见跟进文档。

@@ -4,6 +4,8 @@
 
 来源：package.json、cli-manifest.json、dist/src/cli.js、dist/src/browser/analyze.js、README.md、包内 opencli-adapter-author 技能。公开发布包 tarball 为 https://registry.npmjs.org/@jackwener/opencli/-/opencli-1.8.8.tgz 。没有复制上游业务实现。
 
+多浏览器核查补充（文档交接，未实现）：继续读取该发布包的 dist/src/browser/profile.js，确认 alias 映射、持久 defaultContextId、显式 flag/OPENCLI_PROFILE 的选择，以及显式 contextId 与 preferredContextId 的路由参数区别；尚未据此核实 daemon 在全部冲突/断线场景的行为。WebCLI 拟保留更明确的离线失败规则，不将持久默认自动降级到其他浏览器；这属于本项目设计选择，不能声称与上游逐项相同。现有 `_extensionWs`、响应广播、单服务根与 tabId 锁的问题及完整验证要求见开发设计。用户要求在此检查点暂停，暂无 profile 实现或双浏览器实测证据。
+
 - cli-manifest.json 包含 1366 个命令条目、179 个 site 分组（包括桌面应用，不能全部称为网站）。策略字段计数：cookie 778、public 345、ui 195、local 26、intercept 22。这个枚举比作者技能中的六种策略更粗；不能只按标签数宣称能力相等。
 - 作者技能仍按 PUBLIC_API / COOKIE_API / PAGE_FETCH / INTERCEPT / DOM_STATE / UI_SELECTOR 选择，要求来源证据、契约与替代策略理由。analyze 对实际响应做业务数据、噪声、权限阻塞判别；页面请求多不等于接口可复用。WebCLI 本轮加入结构分析与保留失败 revision 后显式重做计划，未实现自动运行时静默回退。
 - 浏览器接口除既有基本操作外，仍包含 state 的 AX 对比选项、截图标注与临时视口尺寸、console/network since/until/follow、跨源 frame eval、download 等待。WebCLI 已补嵌套跨源 eval、download 等待、console/network 持续输出、AX/DOM 来源对比及编号/临时尺寸截图，并经真实 Chromium 与日常 Chrome 检查；各项覆盖与限制分别记录，不由普通截图通过推断全部能力。

@@ -1,6 +1,40 @@
 # API 自动探索 CLI 开发设计与首版实现
 
-更新：2026-10-17。历史分支、同步步骤与验证结果见 [交接文档](api_exploration_cli_handoff.md)。
+更新：2026-10-17。应用户要求，本会话在上传功能完成、多浏览器方案核查后暂停；下文已有功能与待实现设计分别标记。历史分支、同步步骤与验证结果见 [交接文档](api_exploration_cli_handoff.md)。
+
+## 多浏览器连接：下一阶段设计（未实现）
+
+2026-10-17 仅完成源码核查。最后功能提交 `3e9a7ff`，此节不是实现或验收声明。新会话可据此继续实现，具体存储兼容方案仍需确定。
+
+### 已确认的调用链与风险
+
+- `webcli/bridge.js` 的 extension_hello 直接覆盖单个 `_extensionWs` 和能力列表；`_send`、`_request`、普通 Adapter 能力检查都依赖该连接。多个浏览器会互相覆盖，单独添加 profile 列表无法解决。
+- `_handleExtensionMessage` 目前按消息 ID 查 pending，没有校验回复 socket；普通转发结果使用广播。改造需同时绑定请求和响应的浏览器及请求方，避免跨连接串单和把结果发给无关客户端。
+- `browser-service.js`、`exploration-service.js` 各只有一个实例及共享持久根；`tab-operation-locks.js` 仅按 tabId 加锁。不同 Chrome 的 tabId 可以重复，服务和锁必须带浏览器身份。
+- `exploration-client.js` 传 namespace/command/args，没有路由字段。`index.js` 的普通 Adapter call 使用另一条 WebSocket 路径；`browser-follow.js` 每轮建立新的本地请求。三者及 trace 都需传递一致的 profile。
+- `extension/background/service-worker.js` 的 hello 在初次连接和心跳发送，尚无稳定浏览器 ID。现有 `adapterSnapshot.profile` 是 Adapter/build profile，必须与浏览器 profile 分开命名和存储。
+
+### 拟采用的契约
+
+1. 扩展在 chrome.storage.local 保存随机浏览器 contextId；重载与重连保持不变，不使用账号、磁盘路径或浏览器指纹。连接另有本次 socket 身份。重复 contextId、旧插件无 ID 和跨实例复制 profile 的处理必须明确，不能采用“后连接覆盖”。
+2. 统一 call 入口提供 profile 的 list/rename/use（具体 namespace 与别名可在实现时确定），全局 `--profile` 和 `WEBCLI_PROFILE` 选择浏览器；参数应位于传输信封，不能进入 Adapter 业务 args。别名不能无提示覆盖其他 ID，配置需验证、原子保存，列出已知离线连接。
+3. 优先级为显式 flag、环境选择、持久默认、唯一在线连接。多连接且无明确选择时报歧义；指定或默认浏览器离线时报错，不回退到其他浏览器。Toolkit 调用不应因没有 Chrome 或存在多个 Chrome 而被阻止。
+4. 在一次操作开始时固定具体连接，后续异步阶段和后台探索任务不得重新选择“当前浏览器”。AsyncLocalStorage 可作为内部传播方案，但不能只依赖动态全局 getter；旧连接断开时对应 pending 立即失败、清理计时器，迟到/异源回复不得完成新请求。断线不自动重放动作。
+5. browser 与 exploration 使用按 contextId 隔离的服务、持久绑定/任务及共享 tab 锁；同浏览器同 tab 的操作仍串行，不同浏览器相同 tabId 不互相阻塞。普通 Extension Adapter、旧桌面转发、生成 Worker、动作分析上下文、截图/打开标签/重载及长观察都要核对路由。
+6. 结果仅回请求者；目录变更等全局事件仍可广播。扩展发起的目录/资源请求回原 socket，不能通过默认 profile 绕向另一个浏览器。命名会话、refs、游标和任务不得在选择变化时被静默复用。
+
+### 开始编码前需要收敛的兼容设计
+
+- 现有单连接数据已经包含用户的探索历史和知识，不能因引入 contextId 子目录就使它们不可访问。选择“保留旧根并显式归属”或“独立目录加明确迁入入口”后，提供可验证的兼容行为；不自动把旧 tabId 绑定给新浏览器，不删除或覆盖旧数据。
+- 离线 list/get/历史读取与需要实时浏览器的动作应区分。profile 选择、服务根及任务归属错误需结构化返回，不能被通用 BROWSER_UNAVAILABLE 吞掉。
+- 本设计没有决定旧插件和旧桌面消费者的兼容范围。至少保证单连接旧调用有明确行为，多连接时不能凭最后连接猜目标；profile 不支持时明确要求插件升级。
+
+### 必须完成的验证
+
+- 单测：ID 持久化、别名/default/env/flag 优先级、未知/离线/重复 ID、旧插件、请求期间切换默认、断开和重连、异 socket 冒用 ID、迟到回复、响应不广播给无关连接；同名会话、相同 tabId、探索后台任务和 tab 锁隔离；旧数据兼容及 Toolkit 无浏览器执行。
+- 使用两个独立临时 Chromium user-data-dir 加真实插件、独立 Bridge 与真实 CLI 验证路由；相同站点/会话名分别操作不同页面，并测试普通已安装 Adapter、探索采集/验证/安装、follow、断线、重载和 Bridge 重启。不要操作或终止用户无关浏览器进程。
+- 完成单连接完整探索回归与用户指定 B 站 Excel 搜索页回归；构建/公开配置/打包入口/帮助和 Skill 同步验证。构建或打包不与读取生成资产的浏览器验收并发。
+- Python 网站探索agent完全排除，CI/发布/schema/.env 等边界继续遵守项目规范。
 
 ## 需求修正
 
