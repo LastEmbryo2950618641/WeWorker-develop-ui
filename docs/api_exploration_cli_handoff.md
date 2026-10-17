@@ -1,6 +1,6 @@
 # API 自动探索 CLI 改造跟进与交接
 
-> 更新日期：2026-10-17。当前阶段：已扩展通用 browser CLI、跨源授权、POST/GraphQL 读取与多工具草稿；本地真实浏览器 17 项、用户指定公共视频搜索站点的 CLI 完整闭环通过。OpenCLI 全能力对齐仍进行中，Claude 独立对话与安装包验收尚未完成。
+> 更新日期：2026-10-17。当前阶段：来源分析与方案历史已实现；WebCLI 1116 项、扩展聚焦 53 项、隔离真实浏览器 26 项通过。真实 Chrome 完成 API 草稿留档→DOM 生成/验证/安装/调用并核对 24 张可见卡片。OpenCLI 1.8.8 静态核查已完成，全能力对齐仍进行中；独立 Agent 对话、UI 统一与平台安装包验收尚未完成。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
 
 ## 最新状态
@@ -11,7 +11,7 @@
 - 功能分支在集成提交后创建为 `codex/api-exploration-cli`，最终操作结果见文末。未推送或创建 PR，最终发布目标仍待明确。
 - [开发设计](api_exploration_cli_design.md) 为本次审阅入口。
 - [OpenCLI 能力对齐台账](opencli_parity.md) 为最新范围与缺口清单；用户要求尽力对齐完整能力，不能把当前 34 个 browser 命令或单站点验收视为目标完成。
-- 功能实现提交为 `821a7df`；本轮真实浏览器验收与修复见文末。上游整合 SHA 没有变化，仍从 develop `4c3d5bd` / dev-1.1.0 `dae8932` 继续同步。
+- 首版功能实现提交为 `821a7df`，本轮从跨文档查询检查点 `b2b7a32` 继续；后续实现、真实验收与本地检查点见文末和 Git 日志。集成基线仍为 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`。这些是已纳入快照，后续同步前应重新 fetch，不能据此推断远端未变化。
 > 后续每次建分支、同步上游、解决冲突、实现功能或验证后，都应更新本文和 ROADMAP.md。未验证事项不得标为完成。
 
 ## 1. 目标与范围
@@ -355,3 +355,21 @@ npm run test:exploration:browser --prefix webcli -- \
 - 接手下一步：策略选择/失败后明确回退；通用 CSRF/签名、动态页面路由和多步 UI；写命令语义与验证；知识冲突修订和共享文件修复；复杂 frame/Shadow/profile/连接/下载；UI 和内部聊天共享服务；独立 Codex/Claude 对话及平台分发验收；OpenCLI 1.8.8 实际差异审计。不要把当前单次查询闭环当成全部 OpenCLI 能力完成。
 
 - 最终复验：去掉 reload 诊断插桩后，隔离 Chromium 25 项再次全部通过，报告在系统临时目录 webcli-browser-acceptance-fQAFMd/report.json。最终 WebCLI 104 文件/1100 项、Extension 聚焦 58 项通过；23 个修改/新增 JS 文件语法与 git diff --check 通过。当前代码和交接记录将作为本地检查点提交，完整对齐目标仍进行中。
+
+### 2026-10-17：来源分析、显式重做计划与 OpenCLI 1.8.8 核查
+
+- 从 `b2b7a32` 继续，分支仍为 `codex/api-exploration-cli`。本轮未 fetch/合并上游，已纳入的 develop/dev-1.1.0/集成基线 SHA 不变；后续仍按“上游→集成基线→功能分支”同步。完整 OpenCLI 对齐目标保持 active。
+- 新增 exploration.analyze：根据已存响应字段结构、HTTP 状态、读取语义和路径提示分类，给出选中策略、来源契约、理由缺失与失败后建议。仅分析不请求、不自动切换，不从浏览器流量推断公开 API。API 生成明确 PAGE_FETCH；PUBLIC_API/COOKIE_API 标签拒绝，独立 host HTTP runner 未实现。成功但无 JSON 结构的候选不生成 JSON 工具；仅模糊 JSON/已有页面替代来源时要求显式 plan。
+- strategyNote 包含 reason/alternatives/limitations，PAGE_FETCH/INTERCEPT 若提供 note 必须解释替代来源；旧计划可省略以兼容，但 analyze 标记 needsRationale，Skill 要求 Agent 提供判断。策略理由进入 trace 与站点知识。鉴权错误先恢复访问；字段/HTTP 错误先诊断。活动、终结和 scoped repair 任务不会被建议执行不可用的 replan。
+- 新增 replan/revisions/revision-read。按当前 draftHash 保留原目录、计划、结构证据、作者 cases 和验证失败，再清空当前草稿/验证/review/cases。摘要包含原始文件字节、计划和 cases，支持损坏 manifest 留档、拒绝并发旧 hash；外部改写旧文件返回 REVISION_CHANGED。每任务最多 20 份，达到上限不破坏当前草稿；Agent 最多三轮尝试规则不变。禁止活动、已安装、取消及 scoped repair 任务重做计划。原安装包不被修改，重新生成/验证/审阅后才可安装。
+- 独立 passive capture/collect 增加 includeTelemetry 显式选项，将非静态 JSON 噪声交给 analyze 分类；默认业务过滤及 UI 行为不变。增加 source analysis、历史文件/20 次边界、cases hash、旧 review 撤销、错误策略标签、模糊/非 JSON 数据、终结/活动建议等测试。旧协议测试的文本断言同步此前页面队列实现，没有更改协议以适配测试。
+- 最终 WebCLI 全量 105 文件/1116 项、Extension 聚焦 53 项通过；CLI/Bridge 构建、公开配置、10 个修改/新增 JS 文件语法、git diff --check 通过。npm pack dry-run 590 文件，含 analysis/revisions 模块与 Skill；打包后的 CLI 帮助含四个新命令。无新增依赖/lockfile 变化，已有可选列映射资源警告未改。构建/pack 与依赖生成资源的测试顺序执行。
+- 隔离真实 Chromium 26 项通过，报告在系统临时目录 `webcli-browser-acceptance-O0TETr/report.json`。新流程：采集业务 JSON/telemetry→analyze→API 草稿→实际服务器 503→验证失败→分析且请求计数不变→replan 留档→观察 DOM→新草稿与作者精确断言→验证/安装/普通调用→知识保存。Bridge 重启后旧 manifest 字节、失败结果仍可读；既有流程全部继续通过。
+- 首次完整验收失败于缺少新 API 证据。独立诊断确认示例页未消费 no-store fetch 响应体，没有完成的 CDP 正文记录；fixture 改为消费 JSON 后捕获成功。随后发现旧采集过滤器提前排除 telemetry，增加上述显式开关才可验收分类。没有把失败当成功、删除断言或对生产请求增加自动重放。
+- 用户 Chrome：先核实本任务自建 source Bridge 完整命令，再更新源码进程并重载用户已装的工作区 extension-dist；doctor 就绪，重选并绑定 B 站搜索页。首次捕获是导航/推荐/广告等八个请求，没有搜索列表；调用既有 API 搜索 excel 后 collect 补采第九个搜索端点。分析的 likely_data 仅说明字段结构，不能据此把广告等来源当目标。
+- 真实站点策略切换是目标选择，不是虚构 API 失效：API 普通调用正常返回 17 视频，先生成比较草稿留档，再为“当前已渲染普通视频卡片”观察 DOM。生成新本地 `bilibili.com.explored-current-video-links`，作者补齐规范化 URL/关键词、精确字段和格式断言；预览通过，审阅无新增权限后增量安装。原工具/共享代码通过保留机制继续存在；未执行任何业务写操作。
+- 普通调用返回 24 张可见卡片，标题/链接逐项等于当前页面。首次核对脚本读到另外 12 张隐藏卡片，现场检查它们 getClientRects 为零；按命令既定的可见范围修正核对脚本后通过，生产读取未修改。旧 DOM 命令同样返回 24 张；页面保持 excel 第一页。新来源、cases、选择理由和限制已保存本地知识，stale=false。真实响应和生成包只在本地，不提交仓库。
+- 最终 source Bridge 已重启加载最后的分析建议修正，doctor 就绪；已安装任务 analyze 返回只读 trace 建议，API 旧 revision/源码与 DOM 当前策略均可读取，普通新命令再调用仍返回 24 张卡片。下次先 doctor/tabs/sessions 重新确认，不能复用历史 PID/tabId；只管理明确属于本任务的进程。扩展无需用户重新安装。
+- 新增 `docs/opencli_1_8_8_audit.md`，读取官方 npm tarball 的 manifest/help/技能/分析代码，没有全局升级用户 OpenCLI，也没有复制上游业务代码。发布包有 1366 个命令、179 个 site 分组（包含桌面应用），这些静态数量不代表本项目覆盖或上游实机验证。详细差距已更新能力台账。
+- Python 网站探索agent相对功能起点 `af8e082` 差异为零，未触碰其环境、测试、生命周期和数据。未推送、未开 PR；本阶段作为本地检查点提交，提交 SHA 以 Git 日志为准。
+- 接手下一步：优先补浏览器 frame eval/观测、下载与流式输出/profile 等差距；设计符合 Extension/Toolkit 边界的 PUBLIC_API/COOKIE_API 执行及凭据契约。仍需动态页面路由/多步 UI/写命令、知识冲突修订和共享文件修复、UI/内置聊天复用、独立 Codex/Claude 新对话与各平台分发验收。当前明确 replan 不等于自动运行时回退，不应关闭完整对齐目标。

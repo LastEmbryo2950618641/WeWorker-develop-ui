@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-17（来源分析与方案历史）：新增 exploration.analyze/replan/revisions/revision-read，结构分类、策略理由及失败建议；旧草稿/计划/cases/验证结果保留，切换来源后必须重新验证审阅。明确 PAGE_FETCH 执行范围，PUBLIC_API/COOKIE_API 尚无独立 runner。WebCLI 105 文件/1116 项、Extension 聚焦 53 项、隔离 Chromium 26 项通过，含 API 503→DOM→安装调用及重启读取历史。真实 Chrome 完成 API 草稿留档→DOM 生成→预览/安装/普通调用，24 张可见卡片标题/链接逐项一致，重启后历史与调用通过；原 API 正常，页面仍为 excel 第一页。CLI/Bridge 构建、配置及 npm pack dry-run 590 文件通过。OpenCLI 1.8.8 静态审计与缺口已记录，完整对齐继续进行；Python 网站探索agent零改动。
+
 - 2026-10-17（跨文档页面查询）：新增 exploration.query，单次读控件触发后等待同源固定结果路径、URL 参数与稳定 DOM/公开状态；生成命令通过后台续接跨文档返回结果，允许从结果页重复调用，参数命令至少两组不同值验证。修复目录刷新重载打断探索的问题，探索/预览/browser 与普通调用共用页面队列。WebCLI 104 文件/1100 项、Extension 聚焦 58 项、隔离 Chromium 25 项通过；真实 Chrome 两关键词预览、安装与普通调用通过，24/27 张视频卡片与当前 DOM 逐项一致，旧 API/DOM/下一页回归通过。B 站重复同词不触发查询时明确超时，已恢复 excel 第一页并保存知识。构建/配置与 npm pack dry-run 588 文件通过。动态页面路径、跨源查询导航、多步 UI、写命令及完整 OpenCLI 对齐仍未完成；Python 网站探索agent零改动。
 
 - 2026-10-17（页面触发查询 INTERCEPT）：新增搜索/原生筛选/下一页控件与新响应关联，显式 API 端点、query/body 参数关联、临时预览授权、两组不同参数验证；观察仅存结构。WebCLI 103 文件/1094 项、Extension 聚焦 63 项通过，隔离真实 Chromium 24 项包含跨域页面签名 GET/POST 与错误分支；CLI/Bridge 构建和公开配置通过。真实 Chrome 发现后台页吞原生点击，已修复前台激活；公共视频搜索页新增下一页命令完成预览/安装/普通调用，页码 4→5，返回 35 视频并排除 7 非视频，旧 API/DOM 回归通过。整页导航、自动策略回退、多步 UI、写命令和完整 OpenCLI 对齐仍未完成。Python 网站探索agent零改动；详细边界与最终验证见跟进文档。

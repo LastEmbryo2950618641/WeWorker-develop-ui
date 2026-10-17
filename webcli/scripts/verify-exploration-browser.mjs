@@ -97,9 +97,19 @@ try {
   let failApi = false;
   let renamedItemField = false;
   let renamedPageField = false;
+  let fallbackUnavailable = false, fallbackRequests = 0;
   server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
-    if (['/query-start', '/query-results'].includes(url.pathname)) {
+    if (url.pathname === '/fallback-only') {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<!doctype html><title>Example fallback</title><article class="fallback-row"><h3>Example stable visible item</h3></article><script>fetch("/api/fallback-list").then(r=>r.json());fetch("/api/telemetry/search").then(r=>r.json())</script>');
+    } else if (url.pathname === '/api/fallback-list') {
+      fallbackRequests++;
+      res.writeHead(fallbackUnavailable ? 503 : 200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify(fallbackUnavailable ? { error: 'Example API unavailable' } : { data: { items: [{ id: 'example-row', title: 'Example stable visible item' }] } }));
+    } else if (url.pathname === '/api/telemetry/search') {
+      res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"events":[{"name":"example-event"}]}');
+    } else if (['/query-start', '/query-results'].includes(url.pathname)) {
       const keyword = url.searchParams.get('q') || 'Initial example';
       const escaped = keyword.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
       res.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' });
@@ -661,6 +671,47 @@ try {
   await record('page-query-validation', queryValidation);
   passed('full-document search survives navigation in observation, two strict preview cases, installation and repeated ordinary calls on the result route');
 
+  const fallbackTab = (await cli('browser.open', { session: 'fallback', url: origin + '/fallback-only' })).data.tabId;
+  const fallbackTask = (await cli('exploration.start', { tabId: fallbackTab, goal: 'Read public items despite an unstable API', requestId: 'example-strategy-fallback' })).data.taskId;
+  await settle(fallbackTask);
+  const analysis = (await cli('exploration.analyze', { taskId: fallbackTask })).data;
+  const api = analysis.candidates.find(item => new URL(item.url).pathname === '/api/fallback-list');
+  assert.equal(api.verdict, 'likely_data');
+  assert.equal(analysis.candidates.find(item => new URL(item.url).pathname === '/api/telemetry/search').verdict, 'noise');
+  const fallbackPlan = { tools: [{ name: 'read_fallback_items', risk: 'read', sourceApiKind: 'list', sourceApiIndexes: [api.sourceApiIndex], strategy: 'PAGE_FETCH',
+    strategyNote: { reason: 'Inspect the observed item query', alternatives: 'The visible rows are also available; compare this endpoint with exact public item assertions.', limitations: 'Internal endpoint; reconsider if it becomes unavailable.' } }] };
+  const firstDraft = (await cli('exploration.generate', { taskId: fallbackTask, plan: fallbackPlan })).data;
+  fallbackUnavailable = true;
+  await cli('exploration.validate', { taskId: fallbackTask });
+  const failedAttempt = await settle(fallbackTask); assert.equal(failedAttempt.runtimeValidation.passed, false);
+  const requestCount = fallbackRequests;
+  const failedAnalysis = (await cli('exploration.analyze', { taskId: fallbackTask })).data;
+  assert.ok(failedAnalysis.nextActions.some(item => item.action === 'exploration.replan'));
+  assert.equal(fallbackRequests, requestCount, 'analysis must not replay a failed query');
+  const oldManifest = (await cli('exploration.draft-read', { taskId: fallbackTask, file: 'manifest.json' })).data;
+  const snapshot = (await cli('exploration.draft-read', { taskId: fallbackTask })).data;
+  await cli('exploration.replan', { taskId: fallbackTask, expectedDraftHash: snapshot.draftHash, reason: 'API now returns 503; the authorized visible rows retain the required titles.' });
+  assert.equal((await cli('exploration.revision-read', { taskId: fallbackTask, revision: 1, file: 'manifest.json' })).data.content, oldManifest.content);
+  await cli('exploration.observe', { taskId: fallbackTask, source: { strategy: 'UI_SELECTOR', selector: '.fallback-row', fields: { title: { selector: 'h3' } } }, reason: 'Visible item headings remain present.' });
+  await settle(fallbackTask);
+  const fallbackEvidence = (await cli('exploration.evidence', { taskId: fallbackTask })).data;
+  const secondDraft = (await cli('exploration.generate', { taskId: fallbackTask, plan: { tools: [{ name: 'read_fallback_items', risk: 'read', strategy: 'UI_SELECTOR', sourcePageId: fallbackEvidence.pageSources[0].id,
+    readReason: 'Read visible public headings', strategyNote: { reason: 'Visible headings expose the requested content without the unavailable endpoint', limitations: 'Only currently rendered rows' } }] } })).data;
+  assert.deepEqual(secondDraft.toolNames, firstDraft.toolNames);
+  const fallbackTool = secondDraft.toolNames[0];
+  const emptyCases = (await cli('exploration.verification-read', { taskId: fallbackTask, tool: fallbackTool })).data; assert.deepEqual(emptyCases.cases, []);
+  await cli('exploration.verification-write', { taskId: fallbackTask, tool: fallbackTool, expectedHash: emptyCases.hash,
+    cases: [{ id: 'visible-item', args: {}, expect: { equals: { 'data.items.0.title': 'Example stable visible item' }, rowCount: { path: 'data.items', min: 1, max: 1 } } }] });
+  await cli('exploration.validate', { taskId: fallbackTask }); assert.equal((await settle(fallbackTask)).status, 'review_ready');
+  const fallbackReview = (await cli('exploration.review', { taskId: fallbackTask })).data;
+  await cli('exploration.install', { taskId: fallbackTask, reviewId: fallbackReview.reviewId, confirmed: true }); await settle(fallbackTask);
+  assert.equal((await cli(fallbackTool)).data.items[0].title, 'Example stable visible item');
+  const fallbackKnowledge = (await cli('exploration.knowledge-read', { site: fallbackReview.name })).data;
+  await cli('exploration.knowledge-save', { taskId: fallbackTask, expectedHash: fallbackKnowledge.hash });
+  assert.equal((await cli('exploration.knowledge-read', { site: fallbackReview.name })).data.knowledge.commands[fallbackTool].strategy, 'UI_SELECTOR');
+  await record('fallback-analysis', failedAnalysis);
+  passed('API failure analyzed without replay; preserved revision switches to observed DOM, fresh cases/validation/install and ordinary call pass');
+
   const cancelledId = (await cli('exploration.start', { ...args, requestId: 'example-cancel' })).data.taskId;
   await cli('exploration.cancel', { taskId: cancelledId });
   await delay(5000);
@@ -678,7 +729,10 @@ try {
   const restoredKnowledge = (await cli('exploration.knowledge-read', { site: review.name })).data;
   assert.equal(restoredKnowledge.knowledge.commands[verificationTool].cases.length, 6);
   assert.equal(restoredKnowledge.stale, false);
-  assert.equal(restoredKnowledge.knowledge.pages.length, 7);
+  assert.equal(restoredKnowledge.knowledge.pages.length, 8);
+  const restoredAttempt = (await cli('exploration.revision-read', { taskId: fallbackTask, revision: 1 })).data;
+  assert.equal(restoredAttempt.runtimeValidation.passed, false);
+  assert.equal((await cli('exploration.revision-read', { taskId: fallbackTask, revision: 1, file: 'manifest.json' })).data.content, oldManifest.content);
   // Allow the extension's already-dispatched capture to finish before explicit resumption.
   await delay(5000);
   await cli('exploration.collect', { taskId: interruptedId });

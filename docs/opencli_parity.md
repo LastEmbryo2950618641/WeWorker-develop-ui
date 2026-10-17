@@ -2,7 +2,7 @@
 
 更新：2026-10-17。用户要求尽力实现与 OpenCLI 完全相同的能力；本文件保留完整目标，不把当前首版或单个测试站点视为完成标准。分支历史与同步约束见 [CLI 跟进文档](api_exploration_cli_handoff.md)。Python 网站探索agent全程排除。
 
-对照基线是本机 OpenCLI 1.8.6 的实际命令帮助和本地 usage / adapter-author / browser / autofix 技能；命令提示存在 1.8.8 更新，尚未核对其变更。按能力实现，保留本项目统一 `webcli call <namespace>.<command>` 入口和 Extension / Toolkit 分离边界，不复制上游实现。
+对照基线包括本机 OpenCLI 1.8.6 的实际命令帮助、本地技能与 npm 官方 1.8.8 发布包静态接口审计，见 [1.8.8 核查](opencli_1_8_8_audit.md)。静态接口不等于上游实机验收。按能力实现，保留本项目统一 `webcli call <namespace>.<command>` 入口和 Extension / Toolkit 分离边界，不复制上游业务实现。
 
 | 能力族 | 目标与验收证据 | 当前状态 |
 | --- | --- | --- |
@@ -10,7 +10,7 @@
 | 浏览器会话 | open/bind/unbind/close/tab、profile、多连接管理、doctor；用户页不误关闭、跨 CLI/重启恢复 | 命名会话、owned/bound 关闭规则、doctor、持久绑定、Chrome 会话身份守卫已实现；真实 owned/bound 验收通过；多 profile/连接待做 |
 | 页面操作 | state/find/get/extract、click/dblclick/fill/type/select/check/uncheck/focus/hover/scroll/keys/drag/upload/dialog；过期引用和模糊定位报错 | 主 frame 原生指针、拖拽、文件输入、弹窗及表单命令已实现并真实验收；子 frame 指针仍为 DOM 事件，Shadow DOM/复杂控件待补 |
 | 页面观察 | frames/screenshot/console/eval/wait、网络摘要/detail/filter/follow、有界响应读取、失效错误 | 主 frame eval、frames 列表、完整截图、console 游标、网络摘要/JSON 详情/子串/失败/时间筛选已真实验收；复杂 frame、下载等待和网络流待做 |
-| 探索策略 | PUBLIC/COOKIE/PAGE_FETCH/INTERCEPT/DOM_STATE/UI_SELECTOR；接口/页面状态/脚本发现与策略理由 | GET/POST 查询及声明式 UI_SELECTOR/DOM_STATE 已实现；页面列表、公开状态、JSON 脚本可单独或与 API 混合生成，精确路由、作者 cases、安装后调用及页面命令修复已真实验收；单步 INTERCEPT 已实现并通过本地跨域签名查询及真实翻页验收；单次跨文档 DOM/状态查询已实现并经本地与真实 Chrome 验证；自动选择/回退、多步 UI 工作流待做 |
+| 探索策略 | PUBLIC/COOKIE/PAGE_FETCH/INTERCEPT/DOM_STATE/UI_SELECTOR；接口/页面状态/脚本发现与策略理由 | PAGE_FETCH、声明式 UI_SELECTOR/DOM_STATE、单步 INTERCEPT 与跨文档页面查询已真实验收。analyze 提供结构分类/契约/错误建议，strategyNote 保存理由；Agent 可 replan 保留旧方案再换来源，API 失败→DOM 全流程通过。PUBLIC_API/COOKIE_API 独立 host HTTP runner、多步 UI 未实现；无运行时静默回退 |
 | 请求和鉴权 | POST 只读查询、GraphQL、动态路径、跨源、Cookie/CSRF/runtime 签名、写操作语义与确认 | 显式 API origin 授权、Agent 计划的 JSON/form POST 与 GraphQL query、API 路径参数已实现；动态 GET/POST 四组真实用例及安装后调用通过，固定域名/路径其余段，ID 不转数字；真实 B 站 PAGE_FETCH 关键词/分页完整闭环通过；INTERCEPT 可由页面生成临时请求头/签名；通用 CSRF/签名算法、动态页面路由和写命令待补 |
 | 生成与验证 | 任意目标数量、草稿文件编辑、字段映射、语义/样例验证、同站增量保留、审阅安装 | Agent 计划支持 1–50 工具，draft-add 支持新文件；每工具 1–10 组作者参数和精确路径/类型/非空/格式/值/数量断言，超过五组分批执行；六组真实用例含最后一组故意失败与修复已验收；更大计划需分任务 |
 | 维护与知识 | 站点 endpoints/field-map/notes/fixtures、有效期、trace、安装后自动修复、重试界限 | 已有任务历史、结构 trace、站点知识/过期标记；repair-info/repair 支持 Agent 定向修复已安装的只读命令，带入历史 cases 并重新验证、审阅安装；真实字段漂移后六组失败→修复通过已验收。知识冲突修订、共享文件/写命令修复待做；Agent 依 Skill 最多三轮修复 |
@@ -37,3 +37,7 @@ INTERCEPT 增量：`exploration-intercept.js`、扩展 `intercept-read.js` 与�
 真实 Chrome 的后台标签页暴露原生点击未送达问题，已在原生鼠标/按键和 INTERCEPT 执行前调用 Page.bringToFront。B 站新增 `bilibili.com.explored-next-videos` 本地生成→严格预览（页 3→4）→增量安装→普通调用（页 4→5）通过，后者返回 35 视频/排除 7 非视频，页码与 URL 一致；旧 API 三组回归 17/20/20 视频，DOM 当前卡片 25 张。关键词搜索发生整页导航，不作为当前单步 INTERCEPT 成功证据；页面驱动翻页返回本次页，不是任意页查询。用户页已回到 excel 第一页，来源/断言与限制记录在本地站点知识。
 
 跨文档查询增量：新增 exploration.query / page_query_v1，使用 UI_SELECTOR mode=query，声明固定同源结果路径、URL 参数关联和 DOM/状态读取。后台触发一次，重注入后通过独立 continuation 返回结果；pageWorkflow/additionalPaths 支持从结果页重复调用。WebCLI 104 文件/1100 项、Extension 聚焦 58 项、隔离 Chromium 25 项通过；本地 fixture 精确检查观察、两组预览、两次普通调用合计五次提交，没有重放。真实 B 站两关键词预览和普通调用通过，24/27 张卡片与当前 DOM 逐项一致；同词无新导航会明确超时。旧 API/DOM/下一页回归通过，已恢复 excel 第一页，知识 stale=false。CLI/Bridge 构建、配置及 npm pack dry-run 588 文件通过。目录刷新曾重载正在捕获的页面，调用栈确认后将探索/预览/browser 与 managed 调用纳入同一页面队列，弹窗处理例外以解除等待。动态路由、跨源查询导航、无 URL 关联筛选与多步 UI 仍未实现。
+
+来源分析/方案历史增量：新增 `exploration-analysis.js` / `exploration-revisions.js`，analyze 仅处理结构与失败摘要，不发请求；字段启发式不证明业务目标或公开契约，广告/推荐 JSON 也可能被标为 likely_data，必须由调用 Agent 再判断。replan 按文件/计划/cases 摘要保留旧方案，允许重新观察来源；旧 review 失效、cases 必须重写。最多 20 次历史存储，Agent 修复仍最多三轮，不适用于 scoped repair 或已安装任务。
+
+WebCLI 105 文件/1116 项、Extension 聚焦 53 项、隔离 Chromium 26 项通过。实际 loopback API 503 后分析没有重放请求，旧源码/失败结果保留，改用 DOM 后严格验证、安装与普通调用通过，Bridge 重启能读历史。首次 fixture 未消费 fetch 响应体，修正后可采到完成响应；独立采集显式保留 JSON 噪声用于分类，默认过滤不变。真实 Chrome 先保留正常 API 草稿，再按“当前卡片”目标改选 DOM；新普通命令返回 24 张可见卡片，与页面逐项一致。初次人工验收脚本误将 12 张隐藏卡片算入预期，修正可见性范围后通过，未修改生产读取或放宽断言。已保存来源理由与知识，stale=false；重启后历史读取与命令再调用通过。CLI/Bridge 构建、配置及 npm pack dry-run 590 文件通过。

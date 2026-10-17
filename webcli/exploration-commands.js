@@ -1,5 +1,9 @@
 /** Public, model-independent API exploration contract. */
 export const explorationCommands = {
+  analyze: { description: 'Assess structural API/page evidence, source contracts, failures and next actions without executing or silently substituting a strategy.', params: ['taskId'] },
+  replan: { description: 'Preserve the current unpublished draft, cases and failures as a read-only revision, then allow new evidence and a fresh plan. Nothing is installed or deleted.', params: ['taskId', 'expectedDraftHash', 'reason'] },
+  revisions: { description: 'List preserved strategy attempts and their validation summaries.', params: ['taskId'] },
+  'revision-read': { description: 'Read a preserved strategy attempt, its evidence/cases, or a source file. Historical validation is not current approval.', params: ['taskId', 'revision', 'file?'] },
   help: { description: 'Describe the standalone API exploration commands.', params: [] },
   capabilities: { description: 'Inspect Bridge and extension availability; no desktop or model key required.', params: [] },
   tabs: { description: 'List HTTP(S) tabs available for exploration.', params: [] },

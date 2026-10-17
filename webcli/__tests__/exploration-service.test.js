@@ -17,7 +17,7 @@ const capture = { network: { entries: [
   { url: 'https://example.com/api/list?page=2&token=placeholder-secret', method: 'GET', status: 200, responseContentType: 'application/json',
     responsePreview: JSON.stringify({ data: { items: [{ id: 'placeholder-id', name: 'placeholder-person' }] } }) },
   { url: 'https://example.com/api/delete', method: 'GET', status: 200 },
-  { url: 'https://example.org/api/list', method: 'GET', status: 200 },
+  { url: 'https://example.org/api/list', method: 'GET', status: 200, responsePreview: '{"items":[{"id":"example-public-id"}]}' },
 ] } };
 function setup(extra = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'exploration-')); roots.push(root);
@@ -247,7 +247,7 @@ it('generates more than two authored queries with JSON/form POST and rejects mut
     { url: 'https://example.com/graphql?operation=mutation', method: 'POST', status: 200, requestBody: '{"query":"mutation Delete { deleteItem(id: 1) }"}' },
     { url: 'https://example.com/query', method: 'POST', status: 200, requestBody: '{"op":"delete"}' },
     { url: 'https://example.com/graphql/persisted', method: 'POST', status: 200, requestBody: '{"extensions":{"persistedQuery":{"sha256Hash":"placeholder-hash"}}}' },
-  ] } : original(message));
+  ].map(item => ({ ...item, responsePreview: '{"items":[{"id":"example-public-id"}]}' })) } : original(message));
   const taskId = await start(f.service);
   const evidence = (await f.service.execute('evidence', { taskId })).data.candidates;
   expect(evidence.map(item => item.risk.level)).toEqual(['read', 'read', 'read', 'write', 'write', 'unknown']);
@@ -513,4 +513,100 @@ it.each(['intercept', 'query'])('observes %s without persisting supplied values,
   expect((await f.service.execute('get', { taskId })).data.status).toBe('review_ready');
   const old = setup(); const oldId = await start(old.service);
   expect((await old.service.execute(command, { taskId: oldId, source, reason: 'Query', values: { keyword: 'Example' } })).error.code).toBe('CAPABILITY_UNAVAILABLE');
+});
+
+it('preserves failed attempts, rejects stale replan and moves API generation to observed DOM with fresh approval', async () => {
+  const f = setup({ capabilities: () => ({ connected: true, capabilities: ['passive_exploration_v1', 'page_sources_v1', 'strict_output_contract_v1'] }) });
+  const taskId = await draft(f.service), tool = (await f.service.execute('get', { taskId })).data.toolNames[0];
+  const cases = (await f.service.execute('verification-read', { taskId, tool })).data;
+  await f.service.execute('verification-write', { taskId, tool, expectedHash: cases.hash, cases: [{ id: 'example-case', args: {}, expect: { requiredPaths: ['data'] } }] });
+  f.runtimeValidator.mockResolvedValue({ passed: false, executionSummary: { attempted: 1, passed: 0, skipped: 0, failed: 1 }, errors: [{ code: 'RESPONSE_NOT_JSON' }] });
+  await f.service.execute('validate', { taskId }); await f.service.jobs.get(taskId);
+  const previous = (await f.service.execute('draft-read', { taskId })).data;
+  const oldSource = (await f.service.execute('draft-read', { taskId, file: 'manifest.json' })).data;
+  expect((await f.service.execute('replan', { taskId, expectedDraftHash: 'stale', reason: 'Use visible content' })).error.code).toBe('STALE_DRAFT');
+  const result = await f.service.execute('replan', { taskId, expectedDraftHash: previous.draftHash, reason: 'Response changed; visible rows still expose the intended data' });
+  expect(result.data).toMatchObject({ status: 'evidence_ready', preservedRevisions: 1, draftRevision: 2, validation: null });
+  expect((await f.service.execute('review', { taskId })).ok).toBe(false);
+  const old = (await f.service.execute('revision-read', { taskId, revision: 1 })).data;
+  expect(old.runtimeValidation.passed).toBe(false); expect(old.verification[tool]).toHaveLength(1);
+  expect((await f.service.execute('revision-read', { taskId, revision: 1, file: 'manifest.json' })).data.content).toBe(oldSource.content);
+  const source = { strategy: 'UI_SELECTOR', selector: '.row', fields: { title: { selector: 'h3' } } };
+  const original = f.requestExtension.getMockImplementation();
+  f.requestExtension.mockImplementation(async msg => msg.type === 'exploration_observe_page' ? { ok: true, shape: { type: 'object' } } : original(msg));
+  await f.service.execute('observe', { taskId, source, reason: 'Read public row titles' }); await f.service.jobs.get(taskId);
+  const evidence = (await f.service.execute('evidence', { taskId })).data;
+  expect((await f.service.execute('generate', { taskId, plan: { tools: [{ name: tool.slice('example.com.'.length).replace(/-/g, '_'), risk: 'read', strategy: 'UI_SELECTOR', sourcePageId: evidence.pageSources[0].id,
+    readReason: 'Read public visible rows', strategyNote: { reason: 'Current visible headings have a stable semantic selector', limitations: 'Rendered rows only' } }] } })).ok).toBe(true);
+  expect((await f.service.execute('verification-read', { taskId, tool })).data.cases).toEqual([]);
+  expect((await f.service.execute('validate', { taskId })).error.code).toBe('VERIFICATION_REQUIRED');
+  const restored = new ExplorationService(f.options);
+  expect((await restored.execute('revisions', { taskId })).data.revisions).toHaveLength(1);
+  expect((await restored.execute('revision-read', { taskId, revision: 1, file: 'manifest.json' })).data.content).toBe(oldSource.content);
+  const trace = (await restored.execute('trace', { taskId })).data;
+  expect(trace.plannedTools[0].strategyNote.limitations).toBe('Rendered rows only');
+  expect(trace.revisions[0].runtimeValidation.passed).toBe(false);
+});
+
+it('draft hash includes authored cases and raw malformed manifest, and replan revokes a successful review', async () => {
+  const f = setup(); const taskId = await draft(f.service);
+  await f.service.execute('validate', { taskId }); await f.service.jobs.get(taskId);
+  const reviewed = await f.service.execute('review', { taskId }); expect(reviewed.ok).toBe(true);
+  const before = (await f.service.execute('draft-read', { taskId })).data;
+  const manifest = (await f.service.execute('draft-read', { taskId, file: 'manifest.json' })).data;
+  await f.service.execute('draft-write', { taskId, file: 'manifest.json', expectedHash: manifest.hash, content: '{invalid' });
+  expect((await f.service.execute('replan', { taskId, expectedDraftHash: before.draftHash, reason: 'Correct the source strategy' })).error.code).toBe('STALE_DRAFT');
+  const current = (await f.service.execute('draft-read', { taskId })).data;
+  expect((await f.service.execute('replan', { taskId, expectedDraftHash: current.draftHash, reason: 'Correct the source strategy' })).ok).toBe(true);
+  expect((await f.service.execute('install', { taskId, reviewId: reviewed.data.reviewId, confirmed: true })).ok).toBe(false);
+  expect((await f.service.execute('revision-read', { taskId, revision: 1, file: 'manifest.json' })).data.content).toBe('{invalid');
+});
+
+it('does not accept strategy labels whose execution the generator does not implement', async () => {
+  const f = setup(); const taskId = await start(f.service);
+  const plan = { tools: [{ name: 'search', risk: 'read', sourceApiKind: 'list', sourceApiIndexes: [0], strategy: 'PUBLIC_API' }] };
+  expect((await f.service.execute('generate', { taskId, plan })).error.code).toBe('STRATEGY_UNSUPPORTED');
+});
+
+it('detects externally changed revision bytes and bounds preserved attempts without resetting the current draft', async () => {
+  const f = setup(); const taskId = await draft(f.service);
+  const before = (await f.service.execute('draft-read', { taskId })).data;
+  await f.service.execute('replan', { taskId, expectedDraftHash: before.draftHash, reason: 'Compare another observed source' });
+  const run = f.service.runs.get(taskId);
+  fs.appendFileSync(path.join(run.revisions[0].draft.adapterDir, 'manifest.json'), '\n');
+  expect((await f.service.execute('revision-read', { taskId, revision: 1 })).error.code).toBe('REVISION_CHANGED');
+  expect((await f.service.execute('revision-read', { taskId, revision: 1, file: 'manifest.json' })).error.code).toBe('REVISION_CHANGED');
+  await f.service.execute('generate', { taskId });
+  const current = (await f.service.execute('draft-read', { taskId })).data;
+  run.revisions = Array.from({ length: 20 }, (_, i) => ({ ...run.revisions[0], revision: i + 1 }));
+  expect((await f.service.execute('replan', { taskId, expectedDraftHash: current.draftHash, reason: 'Compare another source' })).error.code).toBe('REVISION_LIMIT');
+  expect((await f.service.execute('draft-read', { taskId })).data.draftHash).toBe(current.draftHash);
+  expect(run.status).toBe('draft');
+});
+
+it('requires an explicit strategy plan for ambiguous JSON and rejects successful non-JSON evidence', async () => {
+  const f = setup(); const original = f.requestExtension.getMockImplementation();
+  f.requestExtension.mockImplementation(msg => msg.type === 'exploration_capture_passive' ? { entries: [
+    { url: 'https://example.com/api/search', method: 'GET', status: 200, responsePreview: '{"code":0}' },
+  ] } : original(msg));
+  const taskId = await start(f.service);
+  expect((await f.service.execute('analyze', { taskId })).data.candidates[0].verdict).toBe('maybe_data');
+  expect((await f.service.execute('generate', { taskId })).error.code).toBe('STRATEGY_PLAN_REQUIRED');
+  f.service.runs.get(taskId).candidates[0].responseEvidence = { bodyKind: 'opaque' };
+  expect((await f.service.execute('generate', { taskId })).error.code).toBe('NO_READ_EVIDENCE');
+});
+
+it('authored case edits invalidate replan hashes and active/terminal tasks cannot be reset', async () => {
+  const f = setup(); const taskId = await draft(f.service);
+  const before = (await f.service.execute('draft-read', { taskId })).data;
+  const tool = f.service.runs.get(taskId).draft.toolNames[0];
+  const v = (await f.service.execute('verification-read', { taskId, tool })).data;
+  await f.service.execute('verification-write', { taskId, tool, expectedHash: v.hash, cases: [{ id: 'example', args: {}, expect: { requiredPaths: ['data'] } }] });
+  expect((await f.service.execute('replan', { taskId, expectedDraftHash: before.draftHash, reason: 'Choose a different source' })).error.code).toBe('STALE_DRAFT');
+  const current = (await f.service.execute('draft-read', { taskId })).data;
+  const run = f.service.runs.get(taskId);
+  for (const [status, error] of [['validating', 'TASK_BUSY'], ['installing', 'TASK_BUSY'], ['installed', 'INVALID_STATE'], ['cancelled', 'INVALID_STATE']]) {
+    run.status = status;
+    expect((await f.service.execute('replan', { taskId, expectedDraftHash: current.draftHash, reason: 'Choose a different source' })).error.code).toBe(error);
+  }
 });

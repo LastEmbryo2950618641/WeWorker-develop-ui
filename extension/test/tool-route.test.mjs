@@ -8,6 +8,19 @@ import { runServiceWorkerInContext } from "./helpers/service-worker-test-loader.
 
 const ROOT = process.cwd();
 
+test('explicit structural analysis capture includes JSON telemetry without changing default filtering', () => {
+  const worker = loadServiceWorker();
+  const entries = [
+    { url: 'https://example.com/api/list', responseContentType: 'application/json' },
+    { url: 'https://example.com/telemetry/search', responseContentType: 'application/json' },
+    { url: 'https://example.com/telemetry/script.js', responseContentType: 'application/javascript' },
+  ];
+  assert.equal(worker.context.formatNetworkEntries(entries, { businessOnly: true }).entries.length, 1);
+  const analyzed = worker.context.formatNetworkEntries(entries, { businessOnly: true, includeTelemetry: true });
+  assert.equal(analyzed.entries.length, 2);
+  assert.equal(analyzed.entries.some(entry => entry.url.endsWith('.js')), false);
+});
+
 test('exploration and browser operations share the refresh queue; dialogs can unblock it', async () => {
   const worker = loadServiceWorker({ tabs: [{ id: 7, url: 'https://example.com/', status: 'complete' }] });
   const runtime = createHostAdapterRuntime({});

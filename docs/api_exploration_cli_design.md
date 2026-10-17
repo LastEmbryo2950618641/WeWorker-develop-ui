@@ -22,7 +22,7 @@ Codex / Claude / 其他 CLI Agent + Skill
 
 外部 Agent 负责理解目标、选策略、命名工具、编写/修复代码和向用户提问。WebCLI 负责确定性操作；`generate` 是依据已观察证据生成隔离草稿，不是调用模型自主创作。Agent 用 `draft-read` / `draft-write` 完成语义改造。
 
-借鉴 OpenCLI 的会话绑定、证据先行、渐进帮助与验证闭环。参考为本机 1.8.6 help 及本地 usage/adapter-author 技能，尚未审计 1.8.8 更新。当前增加 browser.* 页面操作、eval 和有界网络 JSON 读取，复用既有 Bridge；探索任务仍只持久化结构。完整对照见 [能力台账](opencli_parity.md)。
+借鉴 OpenCLI 的会话绑定、证据先行、渐进帮助与验证闭环。参考包括本机 1.8.6 help、本地技能与 npm 官方 1.8.8 发布包静态审计，见 [版本核查](opencli_1_8_8_audit.md)。当前增加 browser.* 页面操作、eval 和有界网络 JSON 读取，复用既有 Bridge；探索任务仍只持久化结构。完整对照见 [能力台账](opencli_parity.md)。
 
 ## 实际命令
 
@@ -33,6 +33,8 @@ Codex / Claude / 其他 CLI Agent + Skill
 | capabilities / tabs | 插件状态和可探索标签页，不需要桌面 Backend |
 | start | tabId、goal、requestId 创建任务；可用 allowedOrigins 显式增加精确 API origin；重载指定页面采集证据 |
 | list / get / events / evidence / trace | 找回任务、查看状态、游标事件、结构化接口证据和修复诊断 |
+| analyze | 按结构分析 API/页面来源、噪声、访问阻塞与验证错误，给出下一步提示；不执行请求或自动切换来源 |
+| replan / revisions / revision-read | 按当前 draftHash 留存未安装草稿、计划、cases 和验证记录；重做计划后可读取旧方案及源码 |
 | collect | 用户操作页面后补采，不重载 |
 | actions / probe | 复用插件安全搜索、筛选和分页候选，每任务最多三次探测 |
 | intercept | 触发已观察的搜索/筛选/下一页控件，按参数关联本次 JSON 响应；结构证据与页面路由绑定 |
@@ -53,9 +55,9 @@ Codex / Claude / 其他 CLI Agent + Skill
 
 1. capabilities → tabs，确认页面与目标。start 会重载，用户有未保存输入时先处理。
 2. start 返回 collecting，持续 get/events 观察；CLI 进程退出不终止 Bridge 任务。
-3. evidence 分析端点、参数名和响应结构；必要时 actions/probe 或人工操作后 collect。
-4. generate 生成草稿；Agent 检查和修改参数、分页、结果映射和业务错误。
-5. validate，失败回到 draft-read/write 修复；不把注册成功或跳过执行当验收。
+3. evidence/analyze 检查端点、参数名和响应结构；必要时 actions/probe、页面观察或人工操作后 collect。
+4. 明确来源与理由后 generate；Agent 检查和修改参数、分页、结果映射和业务错误。
+5. validate，失败先 analyze 与诊断，再修复代码；确需换来源时 replan 保留旧方案并重新采集/生成/验证。不把注册成功或跳过执行当验收。
 6. review 展示安装变更，用户同意后 install，再以普通 `webcli call <adapter>.<command>` 使用。
 
 `webcli install --skills --target <目标目录>` 会安装新增的 webcli-api-exploration Skill，不限于某个模型供应商。即使 Agent 没有 Skill 机制，也能通过完整命令帮助调用。
@@ -80,6 +82,14 @@ Codex / Claude / 其他 CLI Agent + Skill
 API 动态路径由显式 plan.pathParameters 绑定，包含 segmentIndex/name/description；索引是 pathname 去掉开头 `/` 后按 `/` 切分的零基位置。必须覆盖每个脱敏 :id，也可由作者参数化已观察的 slug 段。名称不能与 query/body 或其他路径参数冲突，必须说明读取理由；自动计划不猜测这些参数。生成 schema 使用必填 string，保留前导零，无捕获值默认参数。每个命令内联路径解析函数，按单段编码，保持固定 origin/其余路径；拒绝斜杠、百分号、控制字符和 dot traversal。已观察 query 键从参数提取到 URL，其余留给 GET query/POST body，路径键不会重复进入请求体。
 
 动态命令至少两组不同路径参数组合的作者 cases，仍要求真实执行、零失败/跳过；Agent 用精确返回字段确认参数生效。知识保存命令的路径映射，定向 repair 使用相同要求。当前不从页面自动提取鉴权参数或签名，也不为尚未观察的 URL 建立证据；动态页面 pageRoute 另行设计。
+
+## 来源分析与方案历史
+
+analyze 只读取已保存结构，区分 likely_data、maybe_data、noise、blocked、unavailable、not_json、excluded。字段名只能提示可能含业务数据，不能证明与用户目标相关，也不能证明官方接口或长期稳定性。独立 start/collect 显式保留非静态 JSON 噪声用于分类，其他入口默认过滤保持原样。成功响应但缺 JSON 结构不能生成 JSON 查询；仅有模糊 JSON 或已经观察到页面替代来源时必须提供显式 plan。
+
+API 草稿的执行策略明确为 PAGE_FETCH，不允许将其标成尚未实现的 PUBLIC_API/COOKIE_API。strategyNote 包括 reason 和可选 alternatives/limitations；PAGE_FETCH/INTERCEPT 若提供 note，必须说明替代来源。旧计划为兼容可省略，但 analyze 会返回 needsRationale，Skill 要求 Agent 主动补充。策略与说明进入 trace 和验证后的站点知识。已识别的鉴权错误先提示恢复访问；未知 HTTP/字段错误先诊断，不自动换来源。
+
+replan 只允许非活动、未终结的新工具草稿，不适用于定向 repair。draftHash 覆盖文件原始字节、计划和作者 cases，即使 manifest 损坏也可留存；旧目录原样保留，每任务最多 20 次。读取时重新核对摘要，外部修改返回 REVISION_CHANGED。新方案清空验证、review、cases 与当前草稿，但保留采集结构和已消耗的探测次数；重新观察、生成后必须重新编写 cases、验证及审阅。已安装包不会随 replan 修改，历史成功不能当作当前审批。存储上限不是 Agent 自动尝试次数，Skill 仍限制最多三轮修复。
 
 ## 页面触发查询与响应捕获
 
@@ -129,10 +139,10 @@ Agent 可以为最终命令输出声明 requiredPaths、types、notEmpty、patte
 
 ## 验证与未完成范围
 
-具体命令和数量见交接日志。当前 WebCLI 全量 104 文件、1100 项通过。真实 Chromium + 未打包插件 + 独立 CLI/Bridge + loopback 示例站点 25 项通过，包含浏览器操作、POST/GraphQL 工具、六组精确断言、知识持久化、API/DOM 定向修复、三个页面来源、动态 GET/POST 路径参数、跨域 INTERCEPT 及跨文档页面查询闭环。用户指定的真实公共视频搜索页已完成采集、生成、修复、验证、增量安装和普通 CLI 搜索/分页，DOM 命令也与当前页面逐项核对；原始页面/响应未进入仓库。动态路径本轮使用公开占位 loopback 示例站点验收，不代表已在该外部搜索站点验证动态详情接口。
+具体命令和数量见交接日志。当前 WebCLI 全量 105 文件、1116 项通过。真实 Chromium + 未打包插件 + 独立 CLI/Bridge + loopback 示例站点 26 项通过，包含浏览器操作、POST/GraphQL 工具、六组精确断言、知识持久化、API/DOM 定向修复、三个页面来源、动态 GET/POST 路径参数、跨域 INTERCEPT、跨文档页面查询，以及 API 503 后保留历史并切换 DOM 的闭环。用户指定的真实公共视频搜索页已完成采集、生成、修复、验证、增量安装和普通 CLI 搜索/分页，DOM 命令也与当前页面逐项核对；原始页面/响应未进入仓库。动态路径本轮使用公开占位 loopback 示例站点验收，不代表已在该外部搜索站点验证动态详情接口。
 
 验收脚本为 `webcli/scripts/verify-exploration-browser.mjs`；使用临时副本改变连接端口及 CLI 配置目录，生产协议和默认端口未改。只启动/停止脚本自己创建的服务和浏览器，Adapter 安装、任务和浏览器配置均隔离。Playwright 只用于测试浏览器启动与示例页面导航，探索/生成/验证/安装和业务调用均经过真实 CLI 与插件，不 mock 扩展传输、fetch 或验证器。
 
-待做：自动策略选择/回退、动态页面路由/多步 UI、通用 CSRF/签名、写命令、知识冲突修订与共享文件/写命令修复；Codex/Claude 各一次全新独立对话验收、各平台安装包；API 探索 UI/旧聊天入口统一，以及能力台账中的其他差距。当前证据不代表任意 Agent 在任意站点上的生成质量已验证。
+待做：独立 PUBLIC_API/COOKIE_API 执行、动态页面路由/多步 UI、通用 CSRF/签名、写命令、知识冲突修订与共享文件/写命令修复；Codex/Claude 各一次全新独立对话验收、各平台安装包；API 探索 UI/旧聊天入口统一，以及能力台账中的其他差距。当前由调用 Agent 通过 analyze/replan 明确切换策略，没有运行时静默回退。当前证据不代表任意 Agent 在任意站点上的生成质量已验证。
 
 跨文档查询真实增量：用户 Chrome 的新页面搜索命令以 excel/spreadsheet 两组严格预览通过；安装后普通调用分别读取 24/27 张视频卡片，标题与链接逐项等于当前页面，结果随关键词变化。旧 API 三组返回 17/20/20 视频、DOM 24 张、INTERCEPT 下一页返回 38 视频，均通过。B 站相同关键词不会触发新查询，命令明确 PAGE_QUERY_TIMEOUT，不能用同词搜索重置页码；已通过切换词恢复 excel 第一页。该限制写入本地知识，不作通用多步流程完成结论。

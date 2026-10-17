@@ -1,4 +1,6 @@
 import { normalizePageQuery, pageQueryValues } from './exploration-query.js';
+import { analyzeApiCandidate, analyzeExploration, normalizeStrategyNote } from './exploration-analysis.js';
+import { explorationDraftHash, archiveExplorationDraft, explorationRevisionView, readExplorationRevision } from './exploration-revisions.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -73,14 +75,15 @@ export class ExplorationService {
   }
 
   summary(run) {
-    const next = { collecting: ['get', 'cancel'], evidence_ready: ['evidence', 'actions', 'probe', 'observe', 'intercept', 'query', 'generate', 'repair-info', 'repair', 'collect'], draft: ['draft-read', 'draft-write', 'verification-read', 'verification-write', 'validate'],
-      validating: ['get', 'cancel'], installing: ['get'], review_ready: ['review', 'install'], failed: ['evidence', 'collect', 'draft-read', 'validate'], interrupted: ['get', 'collect', 'validate'] };
+    const next = { collecting: ['get', 'cancel'], evidence_ready: ['analyze', 'evidence', 'actions', 'probe', 'observe', 'intercept', 'query', 'generate', 'repair-info', 'repair', 'collect'], draft: ['analyze', 'draft-read', 'draft-write', 'verification-read', 'verification-write', 'validate', 'replan'],
+      validating: ['get', 'cancel'], installing: ['get'], review_ready: ['analyze', 'review', 'install', 'replan'], failed: ['analyze', 'evidence', 'collect', 'draft-read', 'validate', 'replan'], interrupted: ['analyze', 'get', 'collect', 'validate', 'replan'] };
     return { taskId: run.taskId, status: run.status, goal: run.goal, tabId: run.tabId, site: run.origin, adapter: run.siteKey,
       createdAt: run.createdAt, updatedAt: run.updatedAt, candidateCount: run.candidates.length,
       pageSourceCount: run.pageSources?.length || 0,
+      draftRevision: (run.revisions?.length || 0) + 1, preservedRevisions: run.revisions?.length || 0,
       toolNames: run.draft?.toolNames || [], validation: run.validation || null, runtimeValidation: run.runtimeSummary || null,
       ...(run.repairScope ? { repair: { ...run.repairScope, editableFiles: run.editableFiles, knowledge: run.repairKnowledge } } : {}),
-      error: run.error || null, nextActions: (next[run.status] || []).map(name => `exploration.${name}`) };
+      error: run.error || null, nextActions: (next[run.status] || []).filter(name => name !== 'replan' || (run.draft && !run.repairScope)).map(name => `exploration.${name}`) };
   }
 
   async execute(command, args = {}) {
@@ -176,6 +179,9 @@ export class ExplorationService {
     const run = this.runs.get(taskId);
     if (!run) throw fail('TASK_NOT_FOUND', 'Task not found; use exploration.list.');
     if (command === 'get') return this.summary(run);
+    if (command === 'analyze') return analyzeExploration(run, this.capabilities().capabilities);
+    if (command === 'revisions') return { taskId, revisions: (run.revisions || []).map(explorationRevisionView) };
+    if (command === 'revision-read') return readExplorationRevision(run, integerArg(args.revision, 'revision'), args.file === undefined ? undefined : textArg(args.file, 'file', 200));
     if (command === 'knowledge-save') {
       if (!['review_ready', 'installed'].includes(run.status) || !run.runtimeDigest || readPackageDirectory(run.draft.adapterDir).digest !== run.runtimeDigest) throw fail('VALIDATION_REQUIRED', 'Knowledge requires a successfully validated current draft.');
       const indexes = [...new Set((run.plan?.tools || []).flatMap(tool => tool.sourceApiIndexes || []))];
@@ -185,14 +191,17 @@ export class ExplorationService {
       const verifiedAt = run.verifiedAt || run.updatedAt;
       const commands = Object.fromEntries(run.draft.toolNames.map(tool => [tool, { verifiedAt, packageDigest: run.runtimeDigest,
         cases: clone(run.verification?.[tool] || []),
-        pathParameters: clone(run.plan?.tools?.find(item => `${run.siteKey}.${item.name.replace(/_/g, '-')}` === tool)?.pathParameters || []) }]));
+        pathParameters: clone(run.plan?.tools?.find(item => `${run.siteKey}.${item.name.replace(/_/g, '-')}` === tool)?.pathParameters || []),
+        strategy: run.plan?.tools?.find(item => `${run.siteKey}.${item.name.replace(/_/g, '-')}` === tool)?.strategy || null,
+        strategyNote: clone(run.plan?.tools?.find(item => `${run.siteKey}.${item.name.replace(/_/g, '-')}` === tool)?.strategyNote || null) }]));
       return this.knowledge.save(run.siteKey, { expectedHash: args.expectedHash, verifiedAt, packageDigest: run.runtimeDigest,
         endpoints, pages, commands, notes: args.notes, fields: args.fields });
     }
     if (command === 'trace') return { ...this.summary(run), events: clone(run.events),
       evidence: run.candidates.map(({ id, url, method, status, risk, requestSemantics }) => ({ id, url, method, status, risk, requestSemantics })),
       pageSources: clone(run.pageSources || []),
-      plannedTools: (run.plan?.tools || []).map(({ name, risk, sourceApiKind, sourceApiIndexes, strategy, sourcePageId, pathParameters }) => ({ name, risk, sourceApiKind, sourceApiIndexes, strategy, sourcePageId, pathParameters })),
+      plannedTools: (run.plan?.tools || []).map(({ name, risk, sourceApiKind, sourceApiIndexes, strategy, sourcePageId, pathParameters, strategyNote }) => ({ name, risk, sourceApiKind, sourceApiIndexes, strategy, sourcePageId, pathParameters, strategyNote })),
+      revisions: (run.revisions || []).map(({ revision, at, reason, draftHash, runtimeSummary }) => ({ revision, at, reason, draftHash, runtimeValidation: runtimeSummary })),
       files: run.draftFiles || [], structuralOnly: true };
     if (command === 'events') {
       const cursor = integerArg(args.cursor, 'cursor', 0);
@@ -209,8 +218,16 @@ export class ExplorationService {
     if (command === 'install' && run.status === 'installed') return this.summary(run);
     if (active.has(run.status)) throw fail('TASK_BUSY', 'Wait for the current operation or cancel the task.');
     if (terminal.has(run.status) && !['draft-read', 'verification-read'].includes(command)) throw fail('INVALID_STATE', 'This task is terminal. Start a new task.');
+    if (command === 'replan') {
+      const revisions = archiveExplorationDraft(run, args.expectedDraftHash, textArg(args.reason, 'reason'));
+      run.revisions = revisions;
+      for (const key of ['draft', 'plan', 'memory', 'validation', 'runtimeSummary', 'runtimeDigest', 'review', 'verifiedAt', 'error']) run[key] = null;
+      run.verification = {}; run.draftFiles = []; run.actions = [];
+      this.update(run, 'evidence_ready', 'Previous draft preserved. Inspect alternatives, collect evidence and generate a new plan; all verification must run again.');
+      return this.summary(run);
+    }
     if (['collect', 'actions', 'probe', 'observe', 'intercept', 'query'].includes(command)) {
-      if (run.draft) throw fail('INVALID_STATE', 'Start a new task to change source evidence after drafting.');
+      if (run.draft) throw fail('INVALID_STATE', 'Preserve the current attempt with exploration.replan before changing source evidence.');
     }
     if (command === 'observe' || command === 'intercept' || command === 'query') {
       if (!this.capabilities().capabilities.includes('page_sources_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension to observe page sources.');
@@ -294,7 +311,7 @@ export class ExplorationService {
       return { file, hash: hash(args.content) };
     }
     if (command === 'draft-read') {
-      if (args.file === undefined) return { files: run.draftFiles, ...(run.repairScope ? { editableFiles: run.editableFiles } : {}) };
+      if (args.file === undefined) return { files: run.draftFiles, draftHash: explorationDraftHash(run), revision: (run.revisions?.length || 0) + 1, ...(run.repairScope ? { editableFiles: run.editableFiles } : {}) };
       const file = textArg(args.file, 'file', 200);
       if (!run.draftFiles.includes(file)) throw fail('INVALID_ARGUMENT', 'File is not in this draft.');
       const content = fs.readFileSync(assertManagedFile(run.draft.adapterDir, file));
@@ -356,7 +373,7 @@ export class ExplorationService {
     return this.launch(run, 'collecting', async signal => {
       await this.checkTab(run);
       if (signal.aborted) return;
-      const capture = await this.request({ ...(probe || { type: reload ? 'exploration_capture_passive' : 'browser_network' }), tabId: run.tabId }, 90000);
+      const capture = await this.request({ ...(probe || { type: reload ? 'exploration_capture_passive' : 'browser_network', includeTelemetry: true }), tabId: run.tabId }, 90000);
       if (signal.aborted) return;
       await this.checkTab(run);
       if (signal.aborted) return;
@@ -369,27 +386,31 @@ export class ExplorationService {
   generate(run, proposedPlan, repair = null) {
     if (run.draft) return this.summary(run); // Repeated generation never overwrites an authored draft.
     if (repair && (!proposedPlan || typeof proposedPlan !== 'object')) throw fail('INVALID_PLAN', 'Repair requires an explicit plan naming existing command IDs and current source indexes.');
-    const candidates = run.candidates.filter(item => (item.method === 'GET' || (item.method === 'POST' && ['json', 'form'].includes(item.requestEvidence.bodyKind)))
-      && item.risk.level === 'read' && item.status >= 200 && item.status < 300);
+    const candidates = run.candidates.filter(item => analyzeApiCandidate(item).eligible);
     if (!candidates.length && !proposedPlan?.tools?.some(tool => tool?.sourcePageId)) throw fail('NO_READ_EVIDENCE', 'Collect a successful read query or observe a page source before generating.');
     if (!proposedPlan && candidates.length && candidates.every(item => new URL(item.url).pathname.includes(':id'))) throw fail('PATH_PLAN_REQUIRED', 'Dynamic endpoints need an explicit plan with pathParameters and authored verification cases.');
+    if (!proposedPlan && (run.pageSources?.length || !candidates.some(item => analyzeApiCandidate(item).verdict === 'likely_data'))) throw fail('STRATEGY_PLAN_REQUIRED', 'Use exploration.analyze and choose an explicit plan when page alternatives exist or target API data is uncertain.');
     // Keep original evidence indexes stable for agent-authored plans.
     run.memory = { siteKey: run.siteKey, siteHost: new URL(run.origin).hostname, siteOrigin: run.origin, canonicalEntryUrl: run.origin + '/',
       listApiCandidates: run.candidates.map(item => clone(item)), actionApiCandidates: [], pageSources: clone(run.pageSources || []) };
     const facade = this.facade(run);
     prepareGenerationRun(facade, { paths: this.paths });
     run.siteKey = facade.snapshot.siteKey; run.memory = facade.snapshot.input.memory;
-    const plan = proposedPlan || buildQuickGenerationPlan({ ...run.memory, listApiCandidates: run.memory.listApiCandidates.map(item => item.method === 'GET' && !new URL(item.url).pathname.includes(':id') && candidates.some(candidate => candidate.id === item.id) ? item : { ...item, url: '' }) });
+    const plan = clone(proposedPlan || buildQuickGenerationPlan({ ...run.memory, listApiCandidates: run.memory.listApiCandidates.map(item => item.method === 'GET' && !new URL(item.url).pathname.includes(':id') && analyzeApiCandidate(item).verdict === 'likely_data' && candidates.some(candidate => candidate.id === item.id) ? item : { ...item, url: '' }) }));
     if (!Array.isArray(plan.tools) || !plan.tools.length || plan.tools.length > 50) throw fail('INVALID_PLAN', 'Provide 1–50 read tools per draft. Split larger plans into incremental tasks.');
     for (const tool of plan.tools) {
       if (tool?.sourcePageId) {
         const observed = (run.pageSources || []).find(item => item.id === tool.sourcePageId);
         if (!observed || tool.risk !== 'read' || tool.strategy !== observed.source.strategy || tool.sourceApiIndexes !== undefined || tool.sourceApiKind !== undefined || tool.pathParameters !== undefined) throw fail('INVALID_PLAN', 'Page tools must bind an observed page ID and matching strategy without API evidence.');
         textArg(tool.readReason, 'readReason');
+        tool.strategyNote = normalizeStrategyNote(tool, tool.strategy);
         continue;
       }
       const candidate = run.candidates[tool.sourceApiIndexes?.[0]];
       if (tool.risk !== 'read' || tool.sourceApiKind !== 'list' || !candidate || !candidates.some(item => item.id === candidate.id)) throw fail('INVALID_PLAN', 'Each tool must reference a successful observed read query by index.');
+      if (tool.strategy !== undefined && tool.strategy !== 'PAGE_FETCH') throw fail('STRATEGY_UNSUPPORTED', 'API generation currently uses PAGE_FETCH. Observe DOM/state or INTERCEPT sources for those strategies; PUBLIC_API/COOKIE_API execution is not yet implemented.');
+      tool.strategy = 'PAGE_FETCH';
+      tool.strategyNote = normalizeStrategyNote(tool, tool.strategy);
       try { normalizePathParameters(candidate, tool.pathParameters); }
       catch (error) { throw fail('INVALID_PLAN', error.message); }
       if (tool.pathParameters?.length) textArg(tool.readReason, 'readReason');

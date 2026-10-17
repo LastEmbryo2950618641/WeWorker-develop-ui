@@ -304,7 +304,8 @@ function isLikelyBusinessEntry(entry) {
 function formatNetworkEntries(entries, options = {}) {
   const sorted = entries.slice().sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
   const businessOnly = !!options.businessOnly;
-  const filtered = businessOnly ? sorted.filter(isLikelyBusinessEntry) : sorted;
+  const filtered = businessOnly ? sorted.filter(entry => isLikelyBusinessEntry(entry)
+    || (options.includeTelemetry === true && !isStaticAssetEntry(entry) && /json/.test(getEntryContentType(entry)))) : sorted;
   const limit = options.limit ?? null;
   const limited = typeof limit === 'number' ? filtered.slice(0, limit) : filtered;
 
@@ -1030,7 +1031,7 @@ async function verifyPaginationProgress(tabId, beforePageState, paginationAction
   return { result, afterPageState };
 }
 
-async function runExploreWorkflow({ tabId = null, url = null } = {}) {
+async function runExploreWorkflow({ tabId = null, url = null, includeTelemetry = false } = {}) {
   let targetTabId = tabId;
   let opened = null;
 
@@ -1061,7 +1062,7 @@ async function runExploreWorkflow({ tabId = null, url = null } = {}) {
   }
 
   const pageStateBefore = await sendExplorationMessage(targetTabId, { type: 'browser_state' });
-  const initialNetwork = await getCdpNetworkSnapshot(targetTabId, { businessOnly: true, limit: 60 });
+  const initialNetwork = await getCdpNetworkSnapshot(targetTabId, { businessOnly: true, includeTelemetry, limit: 60 });
   const hydrated = await waitForHydratedPageState(targetTabId, pageStateBefore, {
     minWaitMs: 1200,
     maxWaitMs: 8000,
@@ -1075,7 +1076,7 @@ async function runExploreWorkflow({ tabId = null, url = null } = {}) {
   });
   const resultPageState = hydrated.state || pageStateBefore;
   const pageStateAfter = await sendExplorationMessage(targetTabId, { type: 'browser_state' });
-  const network = await getCdpNetworkSnapshot(targetTabId, { businessOnly: true, limit: 100 });
+  const network = await getCdpNetworkSnapshot(targetTabId, { businessOnly: true, includeTelemetry, limit: 100 });
   const verdictEntries = collectWorkflowNetworkEntries(initialNetwork?.entries, network?.entries);
   const verdict = classifySitePattern(pageStateAfter, verdictEntries);
 
@@ -2866,7 +2867,7 @@ async function handleNativeMessage(msg) {
     try {
       const tabId = await getExplorationTabId(msg.tabId);
       if (!tabId) throw new Error('未找到可用于探索的标签页');
-      const result = await getHostAdapterRuntime().exclusive(tabId, () => runExploreWorkflow({ tabId }));
+      const result = await getHostAdapterRuntime().exclusive(tabId, () => runExploreWorkflow({ tabId, includeTelemetry: msg.includeTelemetry === true }));
       sendToNative({ type: 'call_tool_result', id: msg.id, result });
     } catch (err) {
       sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
@@ -3323,7 +3324,7 @@ async function handleNativeMessage(msg) {
 
       let result;
       try {
-        result = await getCdpNetworkSnapshot(tabId, { businessOnly: true, limit: 60 });
+        result = await getCdpNetworkSnapshot(tabId, { businessOnly: true, includeTelemetry: msg.includeTelemetry === true, limit: 60 });
       } catch (cdpErr) {
         const fallback = await sendExplorationMessage(tabId, { type: 'browser_network' });
         result = {
