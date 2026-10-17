@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 describe('preview runtime validator', () => {
-  it('sends an inline preview bundle without relying on a shared extension directory', async () => {
+  it.each([false, true])('sends an inline preview bundle with requested-tool scope %s', async (restrictToExpectedTools) => {
     const draftAdapterDir = makeTmpDir('webcli-preview-draft-');
     fs.mkdirSync(path.join(draftAdapterDir, 'support'), { recursive: true });
     fs.writeFileSync(path.join(draftAdapterDir, 'support', 'runtime.js'), 'window.previewRuntimeLoaded = true;');
@@ -50,6 +50,9 @@ describe('preview runtime validator', () => {
             name: 'example.test.search_records',
             description: '查询记录',
             parameters: { type: 'object', properties: {}, required: [] },
+          }, {
+            name: 'example.test.check-login-status',
+            parameters: { type: 'object', properties: {}, required: [] },
           }],
         };
       }
@@ -60,7 +63,7 @@ describe('preview runtime validator', () => {
         toolResults: [{ toolName: 'example.test.search_records', attempted: true, passed: true }],
       };
     });
-    const validator = createPreviewRuntimeValidator({ requestExtension });
+    const validator = createPreviewRuntimeValidator({ requestExtension, restrictToExpectedTools });
     const result = await validator({
       run: {
         id: 'run-123',
@@ -97,5 +100,6 @@ describe('preview runtime validator', () => {
       execute: true,
       risk: { level: 'read' },
     });
+    expect(requestExtension.mock.calls[1][0].testCases).toHaveLength(restrictToExpectedTools ? 1 : 2);
   });
 });

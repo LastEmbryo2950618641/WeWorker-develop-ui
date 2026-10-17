@@ -76,6 +76,7 @@
     "test": "vitest --run",
     "test:ci": "vitest --run --testTimeout=20000",
     "test:e2e:real": "node scripts/run-real-e2e.js --profile public",
+    "test:exploration:browser": "node scripts/verify-exploration-browser.mjs",
     "test:api:inventory": "vitest --run __tests__/api-adapter-certification.test.js",
     "test:api:evidence": "vitest --run __tests__/api-adapter-test-evidence.test.js",
     "test:api:runtime": "cd .. && node --test extension/test/api-adapter-runtime-registration.test.mjs",

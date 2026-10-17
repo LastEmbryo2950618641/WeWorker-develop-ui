@@ -168,6 +168,10 @@ it('runs the actual preview validator and generated JavaScript before standalone
     vm.runInContext('var window = globalThis', context);
     for (const script of message.previewBundle.scripts) vm.runInContext(script.source, context);
     if (!message.testCases) return { passed: true, tools: tools.map(({ handler, ...tool }) => tool) };
+    // The real extension reports login utilities as skipped. Only requested
+    // generated tools belong in this workflow's strict all-executed gate.
+    expect(message.testCases).toHaveLength(1);
+    expect(message.testCases[0].toolName).not.toMatch(/check[-_]login/);
     const executable = message.testCases.filter(test => test.execute);
     expect(executable).toHaveLength(1);
     for (const test of executable) {
@@ -175,7 +179,7 @@ it('runs the actual preview validator and generated JavaScript before standalone
       const output = await tool.handler(test.args || {});
       expect(output.ok).toBe(true);
     }
-    return { passed: true, executionSummary: { attempted: executable.length, passed: executable.length, failed: 0, skipped: 0 } };
+    return { passed: true, executionSummary: { attempted: executable.length, passed: executable.length, failed: 0, skipped: message.testCases.length - executable.length } };
   });
   const taskId = await draft(f.service);
   await f.service.execute('validate', { taskId }); await f.service.jobs.get(taskId);

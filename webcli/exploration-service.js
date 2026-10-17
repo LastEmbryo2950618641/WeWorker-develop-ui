@@ -29,7 +29,7 @@ export class ExplorationService {
     fs.mkdirSync(this.root, { recursive: true, mode: 0o700 });
     this.request = requestExtension;
     this.capabilities = capabilities;
-    this.runtimeValidator = runtimeValidator || createPreviewRuntimeValidator({ requestExtension });
+    this.runtimeValidator = runtimeValidator || createPreviewRuntimeValidator({ requestExtension, restrictToExpectedTools: true });
     this.publisher = publisher || createAdapterPublisher({ paths: this.paths });
     this.runs = new Map();
     this.controllers = new Map();

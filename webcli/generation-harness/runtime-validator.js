@@ -53,7 +53,7 @@ function buildInlinePreviewBundle(adapterDir) {
   return { manifest, scripts };
 }
 
-export function createPreviewRuntimeValidator({ requestExtension } = {}) {
+export function createPreviewRuntimeValidator({ requestExtension, restrictToExpectedTools = false } = {}) {
   if (typeof requestExtension !== 'function') throw new Error('runtime validator requires requestExtension');
   return async ({ run, draft, signal, plan, memory, validation }) => {
     if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
@@ -93,7 +93,9 @@ export function createPreviewRuntimeValidator({ requestExtension } = {}) {
       const evidence = previewBundle.manifest.schema_version === 2 ? readGenerationEvidence(draft.adapterDir) : null;
       const retained = evidence ? verifyRetainedPackage(packageDraftBundle(draft.adapterDir).pkg, evidence) : new Set();
       const testCases = buildRuntimeTestCases({
-        registeredTools: (registration.tools || []).filter(tool => !retained.has(tool.name.slice(previewBundle.manifest.name?.length + 1))).map(tool => {
+        registeredTools: (registration.tools || []).filter(tool =>
+          !retained.has(tool.name.slice(previewBundle.manifest.name?.length + 1))
+          && (!restrictToExpectedTools || (draft.toolNames || []).includes(tool.name))).map(tool => {
           const source = evidence?.commands?.[tool.name.slice(previewBundle.manifest.name?.length + 1)];
           return source ? { ...tool, generationSource: source.generationSource } : tool;
         }),
