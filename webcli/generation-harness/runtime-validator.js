@@ -54,7 +54,7 @@ function buildInlinePreviewBundle(adapterDir) {
   return { manifest, scripts };
 }
 
-export function createPreviewRuntimeValidator({ requestExtension, restrictToExpectedTools = false } = {}) {
+export function createPreviewRuntimeValidator({ requestExtension, restrictToExpectedTools = false, paths } = {}) {
   if (typeof requestExtension !== 'function') throw new Error('runtime validator requires requestExtension');
   return async ({ run, draft, signal, plan, memory, validation, verification }) => {
     if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
@@ -63,12 +63,14 @@ export function createPreviewRuntimeValidator({ requestExtension, restrictToExpe
       transport: 'inline_bundle',
     };
     const previewBundle = buildInlinePreviewBundle(draft.adapterDir);
+    const repairScope = run.snapshot.repairScope;
     if (previewBundle.packageDigest && validation?.packageDigest && previewBundle.packageDigest !== validation.packageDigest) throw new Error('Draft changed after static validation.');
     run.setArtifact('previewAdapter', { ...preview, packageDigest: previewBundle.packageDigest || null });
     try {
       const writeVerification = await verifyGeneratedWriteTools({
         adapterDir: draft.adapterDir,
         expectedSiteKey: run.snapshot.siteKey,
+        paths, repairScope,
       });
       run.setArtifact('writeVerification', writeVerification);
       if (!writeVerification.passed) {
@@ -92,7 +94,7 @@ export function createPreviewRuntimeValidator({ requestExtension, restrictToExpe
         return { validator: 'adapter_runtime_validator_v1', ...registration };
       }
       const evidence = previewBundle.manifest.schema_version === 2 ? readGenerationEvidence(draft.adapterDir) : null;
-      const retained = evidence ? verifyRetainedPackage(packageDraftBundle(draft.adapterDir).pkg, evidence) : new Set();
+      const retained = evidence ? verifyRetainedPackage(packageDraftBundle(draft.adapterDir).pkg, evidence, { paths, repairScope }) : new Set();
       const testCases = applyVerificationCases(buildRuntimeTestCases({
         registeredTools: (registration.tools || []).filter(tool =>
           !retained.has(tool.name.slice(previewBundle.manifest.name?.length + 1))

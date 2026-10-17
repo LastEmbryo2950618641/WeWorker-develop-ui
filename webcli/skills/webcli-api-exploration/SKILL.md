@@ -39,6 +39,18 @@ webcli call exploration.generate --args '{"taskId":"example-task","plan":{"tools
 
 types 支持 object/array/string/number/integer/boolean/null 及 `|` 联合；equals 只支持标量。patterns 必须以 `^`/`$` 锚定，不支持分组、选择或反向引用，最多两个可变重复量词，待检查字符串最长 2048 字符。空结果用 rowCount min/max=0；对空列表不要求每行存在，但 requiredPaths 应声明列表本身。改变草稿或 cases 都会使旧验证/审阅失效。插件需要 strict_output_contract_v1 能力；旧插件会明确拒绝，不忽略断言。
 
+## 已安装命令修复
+
+普通命令失败后，先核对当前页面与错误；不要修改安装目录中的文件。`repair-info --site=example.com` 返回当前包摘要、命令定义和历史 cases/过期提示。新建探索任务并采集当前接口证据，然后用 repair 的 plan 指定**已有 canonical kebab-case 命令 ID**，不采用新增命令的自动改名：
+
+```bash
+webcli call exploration.repair --args '{"taskId":"example-task","site":"example.com","expectedDigest":"<repair-info 返回的 digest>","plan":{"tools":[{"name":"search-items","purpose":"修复查询结果字段映射","risk":"read","sourceApiKind":"list","sourceApiIndexes":[0]}]}}'
+```
+
+返回 editableFiles 限定可改文件。只修改选中的命令模块、manifest 中该命令的 schema/description；其他命令、共享文件、权限、路由和命令身份必须保留，不增加文件。需要跨命令共享重构时报告当前边界，不绕过守卫。任务复制的是当前包，尚未覆盖已安装命令。
+
+有历史 cases 时自动带入并显示 stale 信息；阅读并核对断言，不为得到通过而删掉仍有效的字段要求。每个修复命令必须有至少一组作者用例，重新 validate；失败最多修复三轮，报告具体错误。通过后 review → 授权范围内 install → 普通 call → knowledge-save。安装基线或草稿变化会使审阅失效。没有自动后台模型，修复由当前 Agent 完成；写命令与混合 Toolkit 包暂不走此入口。
+
 ## 恢复和限制
 
 - 新会话先 `list`，再 `get`/`evidence`/`draft-read` 找回状态。CLI 退出不会取消 Bridge 任务。
@@ -47,6 +59,6 @@ types 支持 object/array/string/number/integer/boolean/null 及 `|` 联合；eq
 - start 可传 allowedOrigins 数组，显式授权额外 API origin，如 `https://api.example.com`；只允许精确 origin，无路径、凭据或通配符。流量不会自动扩大权限，安装 review 会列出新域名。
 - 默认 GET + Agent 计划下的只读 POST JSON/form/GraphQL query 已支持。动态 :id 路径、写命令与没有 API 证据的纯 DOM/UI 草稿尚未支持；报告限制，不伪装成功。
 - 使用 webcli-browser Skill 的 browser.* 触发搜索、翻页或检查页面状态，再 collect。采集/验证进行中不要操作同一页；TAB_BUSY 时等待。
-- trace 输出结构诊断、事件、文件清单与计划，便于交接修复；不含捕获正文或代码。verification-read 与 knowledge-read 可恢复作者测试用例；当前还没有完整安装后自动修复入口。
+- trace 输出结构诊断、事件、文件清单与计划，便于交接修复；不含捕获正文或代码。verification-read 与 knowledge-read 可恢复作者测试用例；安装后修复使用 repair-info/repair，再走相同的验证、审阅与安装流程。
 - 证据的 URL 参数值被省略；不要把 `<value>` 作为实际查询值。业务参数来自用户输入，登录信息由既有浏览器运行时取得。
 - 不操作 Python 网站探索agent，不要求启动桌面客户端，不读取客户端模型 Key。

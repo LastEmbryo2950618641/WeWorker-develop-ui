@@ -16,6 +16,8 @@ export const explorationCommands = {
   probe: { description: 'Execute one freshly inspected safe read action and collect its network delta (three probes per task).', params: ['taskId', 'candidateId', 'value?'] },
   cancel: { description: 'Cancel task processing; an already dispatched browser request may finish but its result is discarded.', params: ['taskId'] },
   generate: { description: 'Create an isolated read-only draft from evidence. Optional plan is authored by the calling agent; no model is called.', params: ['taskId', 'plan?'] },
+  'repair-info': { description: 'Inspect an active Extension Adapter digest, command identities and historical test knowledge before scoped repair.', params: ['site'] },
+  repair: { description: 'Copy an installed Adapter into an isolated draft for selected read commands bound to fresh API evidence. Preserves other commands and shared files.', params: ['taskId', 'site', 'expectedDigest', 'plan'] },
   'draft-read': { description: 'List draft files or read one file and its content hash.', params: ['taskId', 'file?'] },
   'draft-write': { description: 'Replace an existing draft file using an expected hash; invalidates validation and review.', params: ['taskId', 'file', 'content', 'expectedHash'] },
   'draft-add': { description: 'Add a new Extension helper or command source file, or guidance.md. Existing files cannot be replaced.', params: ['taskId', 'file', 'content'] },

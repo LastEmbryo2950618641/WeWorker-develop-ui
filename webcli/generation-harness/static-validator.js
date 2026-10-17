@@ -39,9 +39,9 @@ function walkFiles(rootDir) {
   return files;
 }
 
-export function validateAdapterDraft({ adapterDir, expectedSiteKey = '', expectedToolNames = [] }) {
+export function validateAdapterDraft({ adapterDir, expectedSiteKey = '', expectedToolNames = [], paths, repairScope }) {
   try {
-    if (isPackageDraft(adapterDir)) return validatePackageDraft({ adapterDir, expectedSiteKey, expectedToolNames });
+    if (isPackageDraft(adapterDir)) return validatePackageDraft({ adapterDir, expectedSiteKey, expectedToolNames, paths, repairScope });
   } catch { /* Legacy validator reports malformed or missing manifests below. */ }
   if (fs.existsSync(path.join(generationEvidenceDir(adapterDir), 'source.json'))) {
     return { passed: false, validator: 'adapter_static_validator_v2', errors: [result('PACKAGE_FORMAT_CHANGED', 'A generated v2 draft cannot switch to the historical package format.')], warnings: [], checkedFiles: 0 };

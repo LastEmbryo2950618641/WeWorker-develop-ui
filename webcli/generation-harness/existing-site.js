@@ -47,12 +47,18 @@ export function allocateGenerationPlan(memory, plan) {
 }
 
 /** Task-side retention claims never exempt bytes that differ from the active baseline. */
-export function verifyRetainedPackage(pkg, evidence, { paths } = {}) {
-  if (!evidence?.retainedPackage) return new Set();
+export function verifyRetainedPackage(pkg, evidence, { paths, repairScope } = {}) {
+  if (!evidence?.retainedPackage) {
+    if (repairScope) throw adapterError('RETAINED_ADAPTER_CHANGED', 'Repair baseline evidence is missing.');
+    return new Set();
+  }
   const baseline = evidence.retainedPackage;
   const active = buildAdapterCatalog(paths ? { paths } : {}).effective.find(entry => entry.name === pkg.name);
   if (baseline.name !== pkg.name || !active || active.digest !== baseline.digest) throw adapterError('ADAPTER_BASE_CHANGED', '保留工具的安装基线已变化，请重新生成。');
   const before = readPackageDirectory(active.root);
+  // Only the owning service's scope can authorize replacements. Draft evidence
+  // and plans are author-editable and must never expand that scope themselves.
+  if (repairScope) return verifyRepairRetention(before, pkg, repairScope);
   for (const [name, contents] of before.files) {
     if (name !== 'manifest.json' && !pkg.files.get(name)?.equals(contents)) throw adapterError('RETAINED_ADAPTER_CHANGED', '生成草稿修改了已有工具文件。');
   }
@@ -68,4 +74,31 @@ export function verifyRetainedPackage(pkg, evidence, { paths } = {}) {
     if ((before.manifest[key] || []).some(value => !pkg.manifest[key]?.includes(value))) throw adapterError('RETAINED_ADAPTER_CHANGED', '生成草稿删除了已有权限。');
   }
   return new Set(before.manifest.commands.map(command => command.id));
+}
+
+export function verifyRepairRetention(before, pkg, scope) {
+  const reject = () => { throw adapterError('REPAIR_SCOPE_CHANGED', 'Repair may change only selected command modules, descriptions and schemas; other files, routes and grants must remain unchanged.'); };
+  if (scope.name !== before.name || scope.digest !== before.digest || !Array.isArray(scope.commandIds) || !scope.commandIds.length
+    || scope.commandIds.length > 50 || new Set(scope.commandIds).size !== scope.commandIds.length) reject();
+  const selected = new Set(scope.commandIds), modules = new Set();
+  for (const id of selected) {
+    const command = before.manifest.commands.find(item => item.id === id);
+    if (!command || command.runtime !== 'extension' || command.safety !== 'read'
+      || !command.module.startsWith('extension/commands/')
+      || before.manifest.commands.some(other => other.id !== id && other.module === command.module)) reject();
+    modules.add(command.module);
+  }
+  if (before.files.size !== pkg.files.size) reject();
+  for (const [name, contents] of before.files) {
+    if (!pkg.files.has(name) || (name !== 'manifest.json' && !modules.has(name) && !pkg.files.get(name).equals(contents))) reject();
+  }
+  const omit = (value, keys) => Object.fromEntries(Object.entries(value).filter(([key]) => !keys.includes(key)));
+  if (!isDeepStrictEqual(omit(before.manifest, ['version', 'commands']), omit(pkg.manifest, ['version', 'commands']))) reject();
+  if (!isDeepStrictEqual(before.manifest.commands.map(item => item.id), pkg.manifest.commands.map(item => item.id))) reject();
+  for (const command of before.manifest.commands) {
+    const next = pkg.manifest.commands.find(item => item.id === command.id);
+    const allowed = selected.has(command.id) ? ['description', 'schema'] : [];
+    if (!isDeepStrictEqual(omit(command, allowed), omit(next, allowed))) reject();
+  }
+  return new Set(before.manifest.commands.filter(item => !selected.has(item.id)).map(item => item.id));
 }

@@ -7,6 +7,9 @@ import { ExplorationService } from '../exploration-service.js';
 import { extractExplorationEvidence } from '../exploration-evidence.js';
 import { resolveAdapterPaths } from '../paths.js';
 import { buildAdapterCatalog } from '../adapter-catalog.js';
+import { readPackageDirectory } from '../adapter-package-files.js';
+import { verifyRetainedPackage } from '../generation-harness/existing-site.js';
+import { readGenerationEvidence } from '../generation-harness/package-inspection.js';
 
 const roots = [];
 afterEach(() => { vi.unstubAllEnvs(); for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
@@ -305,4 +308,91 @@ it('promotes only validated structural evidence and authored cases into site kno
   expect(JSON.stringify(saved)).not.toMatch(/placeholder-person|placeholder-id|placeholder-secret/);
   const restored = new ExplorationService(f.options);
   expect((await restored.execute('knowledge-read', { site: 'example.com' })).data.knowledge.notes[0].text).toBe('Example query verified.');
+});
+
+async function installedForRepair(f, { withKnowledge = true } = {}) {
+  const taskId = await draft(f.service);
+  const tool = f.service.runs.get(taskId).draft.toolNames[0];
+  const verification = (await f.service.execute('verification-read', { taskId, tool })).data;
+  await f.service.execute('verification-write', { taskId, tool, expectedHash: verification.hash,
+    cases: [{ id: 'example-query', args: {}, expect: { requiredPaths: ['data'] } }] });
+  await f.service.execute('validate', { taskId }); await f.service.jobs.get(taskId);
+  const review = (await f.service.execute('review', { taskId })).data;
+  await f.service.execute('install', { taskId, reviewId: review.reviewId, confirmed: true }); await f.service.jobs.get(taskId);
+  expect(f.service.runs.get(taskId).status).toBe('installed');
+  if (withKnowledge) {
+    const known = (await f.service.execute('knowledge-read', { site: 'example.com' })).data;
+    expect((await f.service.execute('knowledge-save', { taskId, expectedHash: known.hash })).ok).toBe(true);
+  }
+  const info = (await f.service.execute('repair-info', { site: 'example.com' })).data;
+  const id = tool.slice('example.com.'.length);
+  const plan = { tools: [{ name: id, risk: 'read', sourceApiKind: 'list', sourceApiIndexes: [0] }] };
+  const repairId = await start(f.service, 'example-repair');
+  const args = { taskId: repairId, site: info.site, expectedDigest: info.digest, plan };
+  return { taskId: repairId, info, args, tool, id };
+}
+
+it('repairs only selected installed commands, imports cases, revalidates and publishes without changing shared files', async () => {
+  const f = setup(); const { taskId, info, args, tool } = await installedForRepair(f);
+  const before = readPackageDirectory(buildAdapterCatalog({ paths: f.paths }).effective[0].root);
+  const created = await f.service.execute('repair', args);
+  expect(created).toMatchObject({ ok: true, data: { status: 'draft', repair: { digest: info.digest, knowledge: { importedTools: [tool] } } } });
+  const run = f.service.runs.get(taskId);
+  const file = run.editableFiles.find(file => file !== 'manifest.json');
+  const old = (await f.service.execute('draft-read', { taskId, file })).data;
+  await f.service.execute('draft-write', { taskId, file, expectedHash: old.hash, content: old.content + '\n// Example repair\n' });
+  // Author-controlled evidence cannot grant a repair exception to other callers.
+  expect(() => verifyRetainedPackage(readPackageDirectory(run.draft.adapterDir), readGenerationEvidence(run.draft.adapterDir), { paths: f.paths })).toThrow(/已有工具文件/);
+  const restored = new ExplorationService(f.options);
+  expect((await restored.execute('get', { taskId })).data.repair.commandIds).toEqual([args.plan.tools[0].name]);
+  await restored.execute('validate', { taskId }); await restored.jobs.get(taskId);
+  expect((await restored.execute('get', { taskId })).data.status).toBe('review_ready');
+  const review = (await restored.execute('review', { taskId })).data;
+  expect(review.repair.commandIds).toEqual(run.repairScope.commandIds);
+  await restored.execute('install', { taskId, reviewId: review.reviewId, confirmed: true }); await restored.jobs.get(taskId);
+  expect((await restored.execute('get', { taskId })).data.status).toBe('installed');
+  const after = readPackageDirectory(buildAdapterCatalog({ paths: f.paths }).effective[0].root);
+  for (const [name, contents] of before.files) if (!run.editableFiles.includes(name)) expect(after.files.get(name)).toEqual(contents);
+  expect(after.digest).not.toBe(before.digest);
+  expect(after.manifest.commands).toEqual(before.manifest.commands);
+});
+
+it('refuses protected files, added helpers and manifest changes outside the selected schema/description', async () => {
+  const f = setup(); const { taskId, args } = await installedForRepair(f);
+  expect((await f.service.execute('repair', { ...args, expectedDigest: 'stale' })).error.code).toBe('ADAPTER_BASE_CHANGED');
+  expect((await f.service.execute('repair', { ...args, plan: { tools: [{ ...args.plan.tools[0], name: 'missing-command' }] } })).error.code).toBe('REPAIR_SCOPE_CHANGED');
+  expect((await f.service.execute('repair', args)).ok).toBe(true);
+  const run = f.service.runs.get(taskId), read = file => f.service.execute('draft-read', { taskId, file });
+  const protectedFile = run.draftFiles.find(file => file.startsWith('extension/internal/'));
+  const prior = (await read(protectedFile)).data;
+  expect((await f.service.execute('draft-write', { taskId, file: protectedFile, expectedHash: prior.hash, content: prior.content + '\n' })).error.code).toBe('REPAIR_SCOPE_CHANGED');
+  expect((await f.service.execute('draft-add', { taskId, file: 'extension/internal/new-helper.js', content: '' })).error.code).toBe('REPAIR_SCOPE_CHANGED');
+  const original = (await read('manifest.json')).data.content;
+  for (const change of [
+    manifest => manifest.match.push('example.org'),
+    manifest => { manifest.commands.find(item => item.id === args.plan.tools[0].name).safety = 'write'; },
+    manifest => { manifest.commands.find(item => item.id !== args.plan.tools[0].name).description += ' modified'; },
+  ]) {
+    const manifest = JSON.parse(original); change(manifest);
+    const current = (await read('manifest.json')).data;
+    await f.service.execute('draft-write', { taskId, file: 'manifest.json', expectedHash: current.hash, content: JSON.stringify(manifest) });
+    await f.service.execute('validate', { taskId }); await f.service.jobs.get(taskId);
+    expect((await f.service.execute('get', { taskId })).data.validation.passed).toBe(false);
+    expect((await f.service.execute('review', { taskId })).ok).toBe(false);
+  }
+});
+
+it('requires authored cases for repairs and refuses a baseline changed after validation', async () => {
+  const f = setup(); const { taskId, args, tool } = await installedForRepair(f, { withKnowledge: false });
+  await f.service.execute('repair', args);
+  expect((await f.service.execute('validate', { taskId })).error.code).toBe('VERIFICATION_REQUIRED');
+  const cases = (await f.service.execute('verification-read', { taskId, tool })).data;
+  await f.service.execute('verification-write', { taskId, tool, expectedHash: cases.hash,
+    cases: [{ id: 'query', args: {}, expect: { requiredPaths: ['data'] } }] });
+  await f.service.execute('validate', { taskId }); await f.service.jobs.get(taskId);
+  expect((await f.service.execute('get', { taskId })).data.status).toBe('review_ready');
+  const active = buildAdapterCatalog({ paths: f.paths }).effective[0];
+  const manifestPath = path.join(active.root, 'manifest.json');
+  fs.appendFileSync(manifestPath, '\n');
+  expect((await f.service.execute('review', { taskId })).ok).toBe(false);
 });

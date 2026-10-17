@@ -274,3 +274,18 @@ npm run test:exploration:browser --prefix webcli -- \
 - 验证：WebCLI 全量 100 文件/1077 项通过；后续能力守卫与日志修改聚焦 3 文件/20 项通过；扩展两组共 60 项通过；隔离真实 Chromium 全流程 19 项通过。CLI/Bridge 构建、公开配置、差异检查通过。npm pack dry-run 580 文件，含两个新增模块和探索 Skill；无新依赖或 lockfile 变化。
 - Python 相对 `af8e082` 差异为零。真实用户 Chrome 仍运行上一阶段 source Bridge/插件，当前新 cases/knowledge 能力已在隔离真实浏览器验证；使用用户页前需核实自建服务身份并更新扩展。不可把隔离验收写成用户 Chrome 新能力已验证。
 - 下一步：已安装命令的定向修复，确保未选中的命令与共享文件保持原样，再补其他策略。完整 OpenCLI 对齐仍进行中；未推送、未开 PR。
+
+### 2026-10-17：已安装命令修复与真实站点精确验收
+
+- 上一阶段提交 `6ebf7f9`，包含精确验证、站点知识及刷新队列；本轮从该提交继续。上游整合 SHA 与同步流程未变。
+- 新增 repair-info/repair，先读取当前包摘要，再用当前采集的成功只读证据绑定已有命令 ID，复制到隔离草稿。服务保存修复 scope，任务证据不能自行扩大范围；静态、运行、发布检查都核对当前基线。
+- 允许修改所选命令的独占模块、schema/description；其他文件、共享代码、命令元数据、路由、权限、命令次序保持原样。不能新增 helper，不能删除命令；写命令与混合 Toolkit 包暂不支持。默认增量生成仍保留全部原文件，无修复 scope 时不会放宽。
+- 从站点知识带入作者 cases，显示过期原因。每个目标至少一组，重新实际执行；草稿/用例变化后重新验证和审阅。Agent 根据 Skill 最多修复三轮，仍由调用 Agent 理解和编辑，没有额外模型调用。
+- 自动化：WebCLI 全量 100 文件/1080 项通过；后续 nextActions/状态赋值调整及 Skill 更新聚焦 2 文件/20 项通过。CLI/Bridge 构建、公开配置、JS 语法和差异检查通过；npm pack dry-run 581 文件，含 exploration-repair.js 和新版 Skill。首次 pack 在仓库根运行未找到 package.json，切到 webcli 后成功；无依赖/lockfile 变化。
+- 隔离真实 Chromium 全流程 20 项通过：实际将示例接口 name 字段改成 title，导入的六组旧 cases 全部失败并阻止安装；通过 draft-write 修复映射后六组全部通过，审阅安装后普通命令及四个已有查询均通过；其他模块字节一致。还包含原有取消/Bridge 重启、POST/GraphQL、页面操作、知识与精确断言验收。
+- 用户 Chrome：确认先前自建 source Bridge 身份后重启为当前源码，通过既有协议重载工作区扩展，strict_output_contract_v1 已就绪；仅重新绑定本任务的公共搜索页。新建维护任务，采集当前搜索请求并建立 repair 草稿。
+- 真实站点精确验证发现：第一页接口混入课程类型，bvid 为空，旧“只检查 string 类型”验收没有识别。三组 cases 中第一页 BV 格式失败，其他两组通过。局部修复本地生成命令为只返回 type=video，课程等类型计入 excludedTypes；视频缺有效 BV 时明确报错，total/pages 的接口总量语义写入命令说明。
+- 修复后静态和真实三组 cases 全通过；按已有全流程授权审阅本地安装，无新增权限，其他内置命令和共享文件未改。普通调用第一页 17 个视频/排除 3 个课程，第二页和另一关键词各 20 个视频；ID 有效、分页/关键词结果不同。站点知识保存三组 cases、字段含义和混排说明，读取 stale=false。仅保存于本地用户 profile，未将生成包、响应、账号或会话信息加入仓库。
+- 本轮 source Bridge 和工作区扩展已更新；下次先用 browser.doctor / exploration.list 查询当前状态，不在文档固定 PID、taskId 或 tabId。维护页面绑定会话为本任务所有；重载扩展后仍应验证身份并重新选择页面。不要关闭用户标签页。
+- Python 相对 `af8e082` 差异为零；没有触及 Python 环境、测试、生命周期或用户持久目录。未推送、未开 PR。
+- 接手下一步：纯 DOM/UI/INTERCEPT 策略、动态路径与请求签名、知识冲突修订，之后完善 UI 共用服务及跨 Agent 独立对话验收。完整 OpenCLI 对齐目标仍 active；本轮只完成安装后只读命令维护这一项，不代表全部对齐。

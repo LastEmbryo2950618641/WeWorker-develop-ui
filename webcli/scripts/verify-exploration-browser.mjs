@@ -91,6 +91,7 @@ try {
   const apiRequests = [];
   const postRequests = [];
   let failApi = false;
+  let renamedItemField = false;
   server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
     if (['/api/post-search', '/api/form-query', '/graphql'].includes(url.pathname)) {
@@ -107,7 +108,7 @@ try {
       const unavailable = failApi || q === 'example-http-error';
       res.writeHead(unavailable ? 503 : 200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
       res.end(JSON.stringify(unavailable ? { error: 'Example service unavailable' }
-        : { data: { items: q === 'example-empty' ? [] : [{ id: `example-${page}`, name: q || 'Example item' }], page, total: 4 } }));
+        : { data: { items: q === 'example-empty' ? [] : [{ id: `example-${page}`, [renamedItemField ? 'title' : 'name']: q || 'Example item' }], page, total: 4 } }));
     } else { res.writeHead(200, { 'content-type': 'text/html' }); res.end(html); }
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -343,6 +344,56 @@ try {
   assert.ok(postRequests.some(entry => entry.path === '/graphql' && entry.data.variables?.keyword === 'Example authored'));
   assert.equal((await cli('exploration.trace', { taskId: postTaskId })).data.structuralOnly, true);
   passed('three authored JSON/form/GraphQL read queries, new helper, real validation, installation and ordinary calls');
+
+  // A real response-schema change makes the installed command's historical
+  // output contract fail. Repair its mapping without changing any sibling.
+  renamedItemField = true;
+  const repairInfo = (await cli('exploration.repair-info', { site: review.name })).data;
+  const repairId = (await cli('exploration.start', { ...args, requestId: 'example-installed-repair' })).data.taskId;
+  await settle(repairId);
+  const repairEvidence = (await cli('exploration.evidence', { taskId: repairId })).data.candidates;
+  const repairIndex = repairEvidence.findIndex(candidate => new URL(candidate.url).pathname === '/api/items');
+  const repairPlan = { tools: [{ name: 'search-items', purpose: 'Repair renamed response field', risk: 'read', sourceApiKind: 'list', sourceApiIndexes: [repairIndex] }] };
+  assert.equal((await cli('exploration.repair', { taskId: repairId, site: review.name, expectedDigest: 'stale', plan: repairPlan }, false)).error.code, 'ADAPTER_BASE_CHANGED');
+  const repairedDraft = (await cli('exploration.repair', { taskId: repairId, site: review.name, expectedDigest: repairInfo.digest, plan: repairPlan })).data;
+  assert.equal(repairedDraft.repair.knowledge.stale, true);
+  assert.deepEqual(repairedDraft.repair.knowledge.importedTools, [verificationTool]);
+  const repairFiles = (await cli('exploration.draft-read', { taskId: repairId })).data;
+  const protectedContents = {};
+  for (const file of repairFiles.files.filter(file => !repairFiles.editableFiles.includes(file))) protectedContents[file] = (await cli('exploration.draft-read', { taskId: repairId, file })).data;
+  const protectedFile = Object.keys(protectedContents)[0];
+  assert.equal((await cli('exploration.draft-write', { taskId: repairId, file: protectedFile, expectedHash: protectedContents[protectedFile].hash, content: 'changed' }, false)).error.code, 'REPAIR_SCOPE_CHANGED');
+  await cli('exploration.validate', { taskId: repairId });
+  const brokenInstalled = await settle(repairId);
+  assert.equal(brokenInstalled.status, 'draft');
+  assert.equal(brokenInstalled.runtimeValidation.executionSummary.failed, 6);
+  assert.equal((await cli('exploration.review', { taskId: repairId }, false)).error.code, 'VALIDATION_REQUIRED');
+  const repairFile = (await cli('exploration.draft-read', { taskId: repairId, file: moduleFile })).data;
+  const repairedSource = `(function () { window.__webcliRegisterCommand('search-items', async function (args = {}) {
+    const url = new URL('/api/items', location.href);
+    for (const [key, value] of Object.entries({ page: 1, limit: 2, ...args })) url.searchParams.set(key, String(value));
+    const response = await fetch(url, { credentials: 'same-origin' });
+    if (!response.ok) return { ok: false, error: 'Example query failed' };
+    const payload = await response.json();
+    return { ok: true, data: { ...payload, data: { ...payload.data, items: payload.data.items.map(row => ({ ...row, name: row.title })) } } };
+  }); })();`;
+  await cli('exploration.draft-write', { taskId: repairId, file: moduleFile, expectedHash: repairFile.hash, content: repairedSource });
+  await cli('exploration.validate', { taskId: repairId });
+  const repairValidation = await settle(repairId);
+  assert.equal(repairValidation.status, 'review_ready', JSON.stringify(repairValidation));
+  assert.deepEqual(repairValidation.runtimeValidation.executionSummary, { attempted: 6, passed: 6, skipped: 0, failed: 0 });
+  const repairReview = (await cli('exploration.review', { taskId: repairId })).data;
+  assert.deepEqual(repairReview.repair.commandIds, ['search-items']);
+  assert.deepEqual(repairReview.addedPermissions, []);
+  await cli('exploration.install', { taskId: repairId, reviewId: repairReview.reviewId, confirmed: true });
+  assert.equal((await settle(repairId)).status, 'installed');
+  const repairedCall = await cli(verificationTool, { q: 'Example repaired', page: 2 });
+  assert.equal(repairedCall.data.data.items[0].name, 'Example repaired');
+  assert.equal(repairedCall.data.data.page, 2);
+  for (const [file, prior] of Object.entries(protectedContents)) assert.equal((await cli('exploration.draft-read', { taskId: repairId, file })).data.hash, prior.hash);
+  for (const tool of [incremental.data.toolNames[0], ...postDraft.toolNames]) assert.equal((await cli(tool)).ok, true);
+  await record('installed-repair-validation', repairValidation);
+  passed('installed command repaired after real response drift; six imported cases revalidated, protected files preserved and sibling commands still run');
 
   const cancelledId = (await cli('exploration.start', { ...args, requestId: 'example-cancel' })).data.taskId;
   await cli('exploration.cancel', { taskId: cancelledId });

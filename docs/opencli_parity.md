@@ -13,7 +13,7 @@
 | 探索策略 | PUBLIC/COOKIE/PAGE_FETCH/INTERCEPT/DOM_STATE/UI_SELECTOR；接口/页面状态/脚本发现与策略理由 | 既有同源 GET 闭环已验收；完整策略选择与回退待做 |
 | 请求和鉴权 | POST 只读查询、GraphQL、动态路径、跨源、Cookie/CSRF/runtime 签名、写操作语义与确认 | 显式 API origin 授权、Agent 计划的 JSON/form POST 与 GraphQL query 已实现；真实 B 站 PAGE_FETCH 关键词/分页完整闭环通过；动态路径、CSRF/签名通用策略和写命令待补 |
 | 生成与验证 | 任意目标数量、草稿文件编辑、字段映射、语义/样例验证、同站增量保留、审阅安装 | Agent 计划支持 1–50 工具，draft-add 支持新文件；每工具 1–10 组作者参数和精确路径/类型/非空/格式/值/数量断言，超过五组分批执行；六组真实用例含最后一组故意失败与修复已验收；更大计划需分任务 |
-| 维护与知识 | 站点 endpoints/field-map/notes/fixtures、有效期、trace、安装后自动修复、重试界限 | 已有任务历史、草稿修复、结构 trace、按站点保存的结构端点/字段解释/备注/作者用例、30 天与包摘要过期标记；重启恢复通过；完整安装后自动修复与知识冲突修订仍待做 |
+| 维护与知识 | 站点 endpoints/field-map/notes/fixtures、有效期、trace、安装后自动修复、重试界限 | 已有任务历史、结构 trace、站点知识/过期标记；repair-info/repair 支持 Agent 定向修复已安装的只读命令，带入历史 cases 并重新验证、审阅安装；真实字段漂移后六组失败→修复通过已验收。知识冲突修订、共享文件/写命令修复待做；Agent 依 Skill 最多三轮修复 |
 | 分发与工具生态 | 对应 plugin / adapter 管理能力、输出格式、补全、现有 Adapter 能力对照 | 复用已有 v2/AdapterHub；逐项差异和覆盖率待核对 |
 | 扩展运行目标 | Electron/CDP 接入、外部 CLI passthrough 等 OpenCLI 能力 | 尚未实现/核对，不据当前浏览器验收宣称完成 |
 | 产品复用 | API 探索 UI 和内置对话复用同一命令服务 | 待接入；不涉及 Python 模块 |
@@ -23,3 +23,7 @@
 2026-10-17 本轮证据：`webcli/browser-service.js`、`extension/background/browser-*.js`、`webcli/exploration-service.js` 及共享 plan/scaffold；WebCLI 98 文件/1069 项，Extension 聚焦 42 项；`webcli/scripts/verify-exploration-browser.mjs` 17 项真实检查通过。外部搜索页三次普通 CLI 调用（两页及不同关键词）各返回 20 条、页码正确、ID 集合发生变化、标题/链接等字段有效。API 为内部接口，仍需维护，不能据此推断长期稳定性。
 
 后续验证/知识增量：`exploration-verification.js`、`exploration-knowledge.js`、`strict-output-contract.js` 和共享 preview batching。发现并修复扩展每次只执行前五组导致大计划无法完成的限制；另修复安装后目录刷新重载页面与普通调用竞争。WebCLI 全量当前 100 文件/1077 项，真实浏览器新增六组断言与知识持久化检查。安装后自动修复还未实现，不能把草稿修复视为该项完成。
+
+安装后修复增量：`exploration-repair.js` 与共享 retention/static/runtime/publisher 的显式 scope 支持。WebCLI 全量 100 文件/1080 项通过，隔离真实浏览器 20 项通过；实际改变示例站点响应字段，旧六组 cases 全部失败，Agent 通过 draft-write 修复映射后六组全部通过，安装后普通调用及其他已有命令通过。共享文件与其他命令保持原字节，安装基线变更拒绝覆盖；npm pack dry-run 581 文件含新模块。该能力依赖调用 Agent 分析和编辑，没有后台第二模型。
+
+真实站点维护：新精确断言发现接口混入无 BV 标识的课程类型，局部修复生成命令的筛选/说明并重新验证、安装。三组真实查询通过：第一页 17 个视频并报告排除 3 个课程，第二页及另一关键词各 20 个视频；结果随页码和关键词变化。cases/字段含义保存为本地站点知识。此前“20 条且类型有效”记录是历史证据，不代表那一版的全部条目都是普通视频。

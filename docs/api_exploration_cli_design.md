@@ -37,6 +37,7 @@ Codex / Claude / 其他 CLI Agent + Skill
 | actions / probe | 复用插件安全搜索、筛选和分页候选，每任务最多三次探测 |
 | cancel | 停止后续阶段，丢弃迟到结果；已经派发的浏览器操作可能完成 |
 | generate | 默认最多两个 GET；Agent plan 支持 1–50 个读取工具及 JSON/form POST、GraphQL query，POST 必须有 readReason |
+| repair-info / repair | 查看当前安装包摘要/历史 cases，从新证据建立所选已有只读命令的修复草稿；其他文件与命令保留 |
 | draft-read / draft-write / draft-add | 列文件、读取内容和 hash、按 expectedHash 修改现有文件，或新增 helper/command/guidance 文件 |
 | verification-read / verification-write | 按工具读写带 hash 的 1–10 组真实参数及精确输出断言；修改后重新验证 |
 | knowledge-read / knowledge-save | 按 Adapter 名读取历史知识；从验证成功的任务保存选中端点、字段含义、作者测试用例和备注 |
@@ -87,14 +88,18 @@ Agent 可以为最终命令输出声明 requiredPaths、types、notEmpty、patte
 
 目录变化触发的页面刷新与 managed page 调用共用扩展侧队列，等待在途调用完成后才清除注册和重载，后续调用等待刷新结束。它不重试已经执行的业务 handler。
 
+## 已安装命令修复
+
+已安装命令维护使用 repair-info/repair：先读取当前包摘要并采集新证据，再将已有只读命令复制到隔离草稿，绑定当前任务的修复范围。只允许改所选模块、schema 和 description，其他文件/命令、身份、路由、权限不变，禁止新增共享代码。静态检查、运行验证及发布三处均核对当前包摘要和服务保存的修复范围；草稿文件内的声明不能扩大范围。历史 cases 会带入并标记过期信息，每个目标至少一组，全部重新运行通过才能安装。当前支持 Extension-only 包；写命令、共享文件重构仍待后续。
+
 ## 后续 UI 统一
 
 本轮独立命令不经过 TypeScript Backend。后续由 Backend 的薄适配层调用相同 Bridge 命令，使 API 探索页面、内置聊天工具与外部 Agent 共用任务状态和校验。UI 不需要启动 shell；不得借此改动 Python 网站探索agent。
 
 ## 验证与未完成范围
 
-具体命令和数量见交接日志。当前 WebCLI 全量 100 文件、1077 项通过。真实 Chromium + 未打包插件 + 独立 CLI/Bridge + loopback 示例站点 19 项通过，包含浏览器操作、三个 POST/GraphQL 工具闭环、六组精确断言以及知识持久化。用户指定的真实公共视频搜索页已完成采集、生成、修复、验证、增量安装和普通 CLI 搜索/分页，结果结构和页面变化通过；原始页面/响应未进入仓库。
+具体命令和数量见交接日志。当前 WebCLI 全量 100 文件、1080 项通过。真实 Chromium + 未打包插件 + 独立 CLI/Bridge + loopback 示例站点 20 项通过，包含浏览器操作、三个 POST/GraphQL 工具闭环、六组精确断言、知识持久化和已安装命令在响应字段变化后的定向修复。用户指定的真实公共视频搜索页已完成采集、生成、修复、验证、增量安装和普通 CLI 搜索/分页，结果结构和页面变化通过；原始页面/响应未进入仓库。
 
 验收脚本为 `webcli/scripts/verify-exploration-browser.mjs`；使用临时副本改变连接端口及 CLI 配置目录，生产协议和默认端口未改。只启动/停止脚本自己创建的服务和浏览器，Adapter 安装、任务和浏览器配置均隔离。Playwright 只用于测试浏览器启动与示例页面导航，探索/生成/验证/安装和业务调用均经过真实 CLI 与插件，不 mock 扩展传输、fetch 或验证器。
 
-待做：纯 DOM/拦截等策略生成、动态路径、写命令、知识冲突修订与安装后修复；Codex/Claude 各一次全新独立对话验收、各平台安装包；API 探索 UI/旧聊天入口统一，以及能力台账中的其他差距。当前证据不代表任意 Agent 在任意站点上的生成质量已验证。
+待做：纯 DOM/拦截等策略生成、动态路径、写命令、知识冲突修订与共享文件/写命令修复；Codex/Claude 各一次全新独立对话验收、各平台安装包；API 探索 UI/旧聊天入口统一，以及能力台账中的其他差距。当前证据不代表任意 Agent 在任意站点上的生成质量已验证。

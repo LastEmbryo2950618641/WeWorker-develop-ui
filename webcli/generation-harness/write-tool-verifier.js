@@ -76,7 +76,7 @@ function compareRequest(observed, expected) {
   return true;
 }
 
-export async function verifyGeneratedWriteTools({ adapterDir, expectedSiteKey = '' }) {
+export async function verifyGeneratedWriteTools({ adapterDir, expectedSiteKey = '', paths, repairScope }) {
   const errors = [];
   const cases = [];
   const requests = [];
@@ -113,7 +113,7 @@ export async function verifyGeneratedWriteTools({ adapterDir, expectedSiteKey = 
   try {
     if (isPackageDraft(adapterDir)) {
       const bundle = packageDraftBundle(adapterDir);
-      const retained = verifyRetainedPackage(bundle.pkg, readGenerationEvidence(adapterDir));
+      const retained = verifyRetainedPackage(bundle.pkg, readGenerationEvidence(adapterDir), { paths, repairScope });
       const fixtures = readGenerationEvidence(adapterDir, 'write-verification.json', { optional: true });
       const rawHandlers = new Map();
       window.__webmcpRegister = () => {};
