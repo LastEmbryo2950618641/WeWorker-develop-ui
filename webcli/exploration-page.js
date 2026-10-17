@@ -39,7 +39,7 @@ export function normalizePageSource(input) {
 
 export function pageObservation({ source, url, shape, reason }) {
   const page = new URL(url);
-  if (page.pathname.includes(':id')) throw fail('PAGE_SOURCE_DYNAMIC_ROUTE', 'Dynamic page routes need explicit parameter design before generation.');
+  if (page.pathname.includes(':id') && !(source.mode === 'navigate' && source.resultPathname === page.pathname)) throw fail('PAGE_SOURCE_DYNAMIC_ROUTE', 'Dynamic page routes need a navigation query with explicit path parameters.');
   const target = { expectedOrigin: page.origin, expectedPath: page.pathname };
   const id = 'page-v1-' + createHash('sha256').update(JSON.stringify({ ...target, source })).digest('hex').slice(0, 20);
   const clean = (value, depth = 0) => {
@@ -61,17 +61,23 @@ export function pageSourceEvidence(observation) {
 export function buildPageTool(site, tool, observation) {
   const name = `${site}.${tool.name}`, id = draftCommandId(tool.name);
   const payload = { source: observation.source, expectedOrigin: observation.expectedOrigin, expectedPath: observation.expectedPath };
-  const intercept = observation.source.strategy === 'INTERCEPT', query = observation.source.mode === 'query';
-  const parameter = (intercept || query) && observation.source.trigger.parameter;
+  const intercept = observation.source.strategy === 'INTERCEPT', navigation = observation.source.mode === 'navigate', query = ['query', 'navigate'].includes(observation.source.mode);
+  const parameter = (intercept || query) && observation.source.trigger?.parameter;
   const parameters = { type: 'object', properties: parameter ? { [parameter]: { type: 'string', minLength: 1, maxLength: 1000, description: observation.source.trigger.description } } : {}, required: parameter ? [parameter] : [], additionalProperties: false };
+  if (navigation) for (const binding of observation.source.pathParameters) {
+    parameters.properties[binding.name] = { type: 'string', minLength: 1, maxLength: 512, description: binding.description };
+    parameters.required.push(binding.name);
+  }
   return { toolDefinition: { name, access: 'read', description: tool.purpose || `Read the observed ${observation.source.strategy} source on the current page.`,
-    pageRoute: { origin: observation.expectedOrigin, pathname: observation.expectedPath, ...(query && observation.source.resultPathname !== observation.expectedPath ? { additionalPaths: [observation.source.resultPathname] } : {}) },
+    pageRoute: { origin: observation.expectedOrigin, pathname: observation.expectedPath,
+      ...(navigation ? { navigation: { pathname: observation.source.resultPathname, pathParameters: observation.source.pathParameters } }
+        : query && observation.source.resultPathname !== observation.expectedPath ? { additionalPaths: [observation.source.resultPathname] } : {}) },
     ...(query ? { pageWorkflow: true } : {}),
     pageStrategy: observation.source.strategy,
     parameters, generationSource: pageSourceEvidence(observation) },
     v2Content: `(function () {
   window.__webcliRegisterCommand(${JSON.stringify(id)}, async function (args = {}, continuation) {
-    if (Object.keys(args).some(key => !${JSON.stringify(parameter ? [parameter] : [])}.includes(key))) return { ok: false, error: 'Unexpected page query parameters.' };
+    if (Object.keys(args).some(key => !${JSON.stringify(parameters.required)}.includes(key))) return { ok: false, error: 'Unexpected page query parameters.' };
     ${query ? `if (continuation?.kind !== 'page_query_result') return { __webcli_page_query: { version: 1, ...${JSON.stringify(payload)}, values: args } };
     const reply = { ok: true, result: continuation.result };` : `const reply = await chrome.runtime.sendMessage({ type: 'wecli_runtime_request', action: ${JSON.stringify(intercept ? 'intercept_read' : 'page_read')}, payload: { ...${JSON.stringify(payload)}, values: args } });`}
     if (!reply?.ok) throw new Error(reply?.error?.message || 'Page query helper unavailable; update the browser extension.');

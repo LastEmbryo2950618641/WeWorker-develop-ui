@@ -1,9 +1,35 @@
 import { explorationError as fail } from './exploration-commands.js';
 import { normalizeReadTrigger, interceptValues } from './exploration-intercept.js';
 import { normalizePageSource } from './exploration-page.js';
-export { interceptValues as pageQueryValues };
+import { normalizePathParameters, resolvePathRequest } from './generation-harness/path-parameters.js';
+import { classifyApiCandidateRisk } from './generation-harness/source-evidence.js';
+export function pageQueryValues(source, input) {
+  if (source.mode !== 'navigate') return interceptValues(source, input);
+  const values = input || {}, names = source.pathParameters.map(binding => binding.name);
+  if (!values || typeof values !== 'object' || Array.isArray(values) || Object.keys(values).some(key => !names.includes(key))) throw fail('INVALID_PAGE_QUERY_ARGUMENT', 'Provide only the declared page path parameters.');
+  try {
+    const { url } = resolvePathRequest('https://example.com' + source.resultPathname, source.pathParameters, values);
+    if (classifyApiCandidateRisk({ url, method: 'GET' }).level !== 'read') throw new Error('Page navigation must target a read-only detail route.');
+  }
+  catch (error) { throw fail('INVALID_PAGE_QUERY_ARGUMENT', error.message); }
+  return { ...values };
+}
 export function normalizePageQuery(input) {
   const invalid = message => { throw fail('INVALID_PAGE_QUERY', message); };
+  if (input?.mode === 'navigate') {
+    if (Object.keys(input).some(key => !['mode', 'result', 'resultPathname', 'pathParameters', 'timeoutMs'].includes(key))) invalid('Navigation requires result, resultPathname and explicit pathParameters.');
+    let url;
+    try { url = new URL(input.resultPathname, 'https://example.com'); } catch {}
+    if (typeof input.resultPathname !== 'string' || !/^\/(?!\/)/.test(input.resultPathname) || !url || url.origin !== 'https://example.com' || url.pathname !== input.resultPathname || url.search || url.hash) invalid('Use an exact same-origin pathname with :id placeholders.');
+    let pathParameters;
+    try { pathParameters = normalizePathParameters({ url: url.href }, input.pathParameters); }
+    catch (error) { invalid(error.message); }
+    if (!pathParameters.length || pathParameters.some(binding => url.pathname.slice(1).split('/')[binding.segmentIndex] !== ':id')) invalid('Each page path parameter must replace a declared :id segment.');
+    if (classifyApiCandidateRisk({ url: url.href, method: 'GET' }).level !== 'read') invalid('Page navigation requires a read-only detail route.');
+    const timeoutMs = input.timeoutMs ?? 20000;
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 30000) invalid('timeoutMs must be 1000–30000.');
+    return { strategy: 'UI_SELECTOR', mode: 'navigate', result: normalizePageSource(input.result), resultPathname: input.resultPathname, pathParameters, timeoutMs };
+  }
   if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => !['trigger', 'result', 'resultPathname', 'matchQuery', 'timeoutMs'].includes(key))) invalid('Provide trigger, result, resultPathname and optional matchQuery/timeoutMs.');
   const trigger = normalizeReadTrigger(input.trigger), result = normalizePageSource(input.result);
   const pathname = input.resultPathname;

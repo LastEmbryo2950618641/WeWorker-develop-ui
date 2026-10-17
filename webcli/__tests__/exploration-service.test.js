@@ -54,6 +54,14 @@ it('returns only structural evidence and rejects mutation/cross-origin candidate
   expect(bad).toMatchObject({ ok: false, error: { code: 'INVALID_PLAN' } });
 });
 
+it('requires navigation capability before dispatching a parameterized page observation', async () => {
+  const f = setup({ capabilities: () => ({ connected: true, capabilities: ['passive_exploration_v1', 'page_sources_v1', 'page_query_v1'] }) });
+  const taskId = await start(f.service);
+  const result = await f.service.execute('query', { taskId, source: { mode: 'navigate' }, values: { itemId: '007' }, reason: 'Read public detail' });
+  expect(result.error.code).toBe('CAPABILITY_UNAVAILABLE');
+  expect(f.requestExtension.mock.calls.some(([message]) => message.type === 'exploration_page_query')).toBe(false);
+});
+
 it('deduplicates concurrent starts and persists identity across a new service process', async () => {
   const f = setup();
   const args = { tabId: '7', goal: 'Explore', requestId: 'same' };

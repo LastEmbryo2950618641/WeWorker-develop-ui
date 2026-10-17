@@ -1,8 +1,8 @@
 # API 自动探索 CLI 开发设计与首版实现
 
-更新：2026-10-17。已实现多浏览器 profile、独立 HTTP Runner、PUBLIC_API/COOKIE_API/AUTH_API 与只读局部修复；新增 mode=http 的无浏览器探索任务、显式 OpenAPI JSON 发现和宿主请求证据。具体版本契约、环境鉴权、临时 Cookie/CSRF 与限制见 [HTTP Runtime](http_adapter_runtime.md)。历史分支、同步步骤与验证结果见 [交接文档](api_exploration_cli_handoff.md)。
+更新：2026-10-18。已实现多浏览器 profile、独立 HTTP Runner、PUBLIC_API/COOKIE_API/AUTH_API、mode=http 的无浏览器 OpenAPI JSON 发现与宿主请求证据，以及只读局部修复；最新增加按路径参数导航到页面并读取的 UI_SELECTOR navigate 模式。具体 HTTP 契约见 [HTTP Runtime](http_adapter_runtime.md)，历史与验证结果见 [交接文档](api_exploration_cli_handoff.md)。
 
-最新回归：WebCLI 111 文件/1193 项、完整 Chromium 50 项通过；本轮源码与打包链路验证明细以交接文档末尾为准。HTTP version 2 已支持 Bearer/header/Basic/声明式 HMAC 和 Cookie store/分区。下文旧阶段的“PUBLIC_API/COOKIE_API 尚未实现”是历史边界，以本段与 HTTP 契约为准；任意站点签名/OAuth、多步 UI/写命令及完整对齐仍未完成。
+最新回归：WebCLI 111 文件/1197 项、扩展聚焦 40 项、完整 Chromium 52 项、打包 CLI 导航专项 4 项通过；本轮源码与打包链路验证明细以交接文档末尾为准。HTTP version 2 已支持 Bearer/header/Basic/声明式 HMAC 和 Cookie store/分区。下文旧阶段的“PUBLIC_API/COOKIE_API 尚未实现”是历史边界，以本段与 HTTP 契约为准；任意站点签名/OAuth、多步 UI/写命令及完整对齐仍未完成。
 
 ## HTTP 探索任务：已实现
 
@@ -11,6 +11,16 @@
 `discover` 从显式 URL 获取 OpenAPI 3.0/3.1 或 Swagger 2 JSON，保留有界声明结构与 warnings，不执行端点。`request` 发送明确的 GET/只读 JSON/form POST，逐跳检查 origin 和动作语义，以 host_http 来源保存实际 JSON 结构；未获取成功证据时禁止生成。每任务 100 次、单次 30 秒/4 MiB，取消/重启不重放，请求预算在派发前持久化。JSON 文档仅支持本地引用，不猜变量、不展开组合 schema、不自动爬取。
 
 生成必须显式选择 PUBLIC_API/AUTH_API 并绑定观察索引，每命令有作者断言；validate、review/install、知识及 scoped repair 复用现有流程，宿主任务禁止浏览器依赖的命令。HTTP 传输抽取为 http-client.js，由观察和 Worker Runner 共用，鉴权值只留宿主内存。浏览器模式的页面身份、锁、profile 和 Cookie 路径保持独立。
+
+## 参数化页面导航：已实现
+
+`exploration.query` 新增 source.mode=navigate，显式 resultPathname 的每个 :id 用 pathParameters（segmentIndex/name/description）绑定，values 仅供本次观察，不保存为默认值。目标固定同源主文档，result 可用 UI_SELECTOR 或 DOM_STATE。产物为 UI_SELECTOR pageWorkflow，`pageRoute.navigation` 声明目标模板/绑定并纳入安装权限；静态 observe 和原查询控件模式保留各自行为。
+
+扩展 page_navigation_v1 在背景中只派发一次 Page.navigate，保留初始 frame/loader 身份，等待新主文档、准确目标 URL 与 300ms 稳定结果，读取后再次核对。无响应、跨源或错误 ID 重定向、下载、超时、读取中文档改变均失败，不重放；同一 URL 也显式导航并读取新文档。值保留前导零与 Unicode，拒绝路径穿越、编码分隔符和明显写操作路径。实际业务读取语义仍由作者根据站点契约确认。
+
+普通调用从入口或目标模板匹配页中选择唯一页/唯一活动页，缺失/歧义不换页或新开。preview 与普通调用复用同一 manifest 路由检查和续接机制，结果映射只在续接后执行。旧插件缺能力时在派发前拒绝；每命令至少两组不同路径参数的作者 cases，保留失败不安装。知识保存来源；scoped repair 保留既有路由/绑定/权限并重新运行历史断言。
+
+限制：同源主文档单次导航读取；动态 query/hash 模板、跨源详情、任意路径正则、多步网站操作与写命令生成尚未覆盖。取消后丢弃迟到结果，已派发导航可能继续完成。验收覆盖实际公开占位详情、前导零/中文 ID、同 URL 重复调用、错误 ID 重定向和结构漂移修复；详见交接末尾。
 
 ## 多浏览器 profile：已实现
 

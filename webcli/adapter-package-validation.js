@@ -14,6 +14,7 @@
 import { existsSync, lstatSync, readdirSync, readFileSync } from "fs";
 import { basename, join, resolve, sep } from "path";
 import { validateHttpContract } from './http-contract.js';
+import { normalizePathParameters } from './generation-harness/path-parameters.js';
 
 
 const RUNTIMES = ["extension", "wewright", "http"];
@@ -169,7 +170,7 @@ export function validateV2Manifest(manifest, directoryName = "?") {
       let url;
       try { url = new URL(route?.origin + route?.pathname); } catch { /* Rejected below. */ }
       if (!route || typeof route !== 'object' || Array.isArray(route)
-        || Object.keys(route).some(key => !['origin', 'pathname', 'additionalPaths'].includes(key))
+        || Object.keys(route).some(key => !['origin', 'pathname', 'additionalPaths', 'navigation'].includes(key))
         || typeof route.pathname !== 'string' || !/^\/(?!\/)/.test(route.pathname)
         || command.runtime !== 'extension' || command.execution || command.safety === 'write'
         || !url || !['http:', 'https:'].includes(url.protocol) || url.username || url.password
@@ -179,6 +180,19 @@ export function validateV2Manifest(manifest, directoryName = "?") {
         fail(adapterName, `Command "${id}" pageRoute must be an exact declared HTTP(S) origin and pathname for a foreground read command.`);
       }
     }
+    if (command.pageRoute?.navigation !== undefined) {
+      const route = command.pageRoute, navigation = route.navigation;
+      let valid = command.pageWorkflow === true && navigation && typeof navigation === 'object' && !Array.isArray(navigation)
+        && Object.keys(navigation).every(key => ['pathname', 'pathParameters'].includes(key)) && typeof navigation.pathname === 'string' && /^\/(?!\/)/.test(navigation.pathname);
+      try {
+        const url = new URL(route.origin + navigation.pathname);
+        const bindings = normalizePathParameters({ url: url.href }, navigation.pathParameters);
+        valid &&= url.origin === route.origin && url.pathname === navigation.pathname && !url.search && !url.hash && bindings.length > 0
+          && bindings.every(binding => navigation.pathname.slice(1).split('/')[binding.segmentIndex] === ':id')
+          && (!route.pathname.includes(':id') || route.pathname === navigation.pathname);
+      } catch { valid = false; }
+      if (!valid) fail(adapterName, 'pageRoute.navigation requires a declared same-origin path template and complete path bindings.');
+    } else if (command.pageRoute?.pathname.includes(':id')) fail(adapterName, 'Dynamic pageRoute requires explicit navigation bindings.');
     if (command.pageRoute?.additionalPaths !== undefined) {
       const paths = command.pageRoute.additionalPaths;
       if (command.pageWorkflow !== true || !Array.isArray(paths) || paths.length > 4 || paths.some(value => {

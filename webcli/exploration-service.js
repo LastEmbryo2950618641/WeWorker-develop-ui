@@ -257,6 +257,7 @@ export class ExplorationService {
       if (!this.capabilities().capabilities.includes('page_sources_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension to observe page sources.');
       const intercept = command === 'intercept', query = command === 'query';
       if (query && !this.capabilities().capabilities.includes('page_query_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension to run navigation-aware page queries.');
+      if (query && args.source?.mode === 'navigate' && !this.capabilities().capabilities.includes('page_navigation_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension to navigate parameterized page routes.');
       if (intercept && !this.capabilities().capabilities.includes('intercept_read_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension to observe intercepted page queries.');
       const source = query ? normalizePageQuery(args.source) : intercept ? normalizeInterceptSource(args.source, run.candidates) : normalizePageSource(args.source), reason = textArg(args.reason, 'reason');
       const values = query ? pageQueryValues(source, args.values) : intercept ? interceptValues(source, args.values) : undefined;
@@ -270,7 +271,9 @@ export class ExplorationService {
         if (!result?.ok) throw fail(result?.error?.code || 'PAGE_SOURCE_MISSING', result?.error?.message || 'Unable to observe the page source.');
         const current = await this.checkTab(run);
         if (signal.aborted) return;
-        if (new URL(current.url).pathname !== (query ? source.resultPathname : page.pathname)) throw fail('TAB_CHANGED', 'Page route changed during observation.');
+        // The extension verifies the exact resolved route for navigation; tabs
+        // summaries normalize numeric IDs, so they cannot compare raw arguments.
+        if (source.mode !== 'navigate' && new URL(current.url).pathname !== (query ? source.resultPathname : page.pathname)) throw fail('TAB_CHANGED', 'Page route changed during observation.');
         const observed = pageObservation({ source, url: tab.url, shape: result.shape, reason });
         run.pageSources = [...new Map([...(run.pageSources || []), observed].map(item => [item.id, item])).values()].slice(-100);
         this.update(run, 'evidence_ready', 'Page source structure observed. Choose its ID and strategy in a plan.');
@@ -515,15 +518,17 @@ export class ExplorationService {
           throw fail('VERIFICATION_REQUIRED', 'Parameterized page queries require at least two authored cases with distinct trigger values.');
         }
       }
-      if (!tool.pathParameters?.length) continue;
+      const bindings = source?.mode === 'navigate' ? source.pathParameters : tool.pathParameters;
+      if (!bindings?.length) continue;
       const cases = run.verification?.[`${run.siteKey}.${tool.name.replace(/_/g, '-')}`] || [];
-      const pathValues = cases.map(item => tool.pathParameters.map(binding => item.args[binding.name]));
+      const pathValues = cases.map(item => bindings.map(binding => item.args[binding.name]));
       if (cases.length < 2 || pathValues.some(values => values.some(value => typeof value !== 'string' || !value.trim()))
         || new Set(pathValues.map(values => JSON.stringify(values))).size < 2) {
         throw fail('VERIFICATION_REQUIRED', 'Dynamic paths require at least two authored cases with distinct path argument combinations.');
       }
     }
-    if ((run.pageSources || []).some(item => item.source.mode === 'query') && !this.capabilities().capabilities.includes('page_query_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating navigation-aware page queries.');
+    if ((run.pageSources || []).some(item => ['query', 'navigate'].includes(item.source.mode)) && !this.capabilities().capabilities.includes('page_query_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating navigation-aware page queries.');
+    if ((run.pageSources || []).some(item => item.source.mode === 'navigate') && !this.capabilities().capabilities.includes('page_navigation_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating parameterized page routes.');
     const pageTools = (run.plan?.tools || []).filter(tool => tool.sourcePageId || isHttpStrategy(tool.strategy)).map(tool => `${run.siteKey}.${tool.name.replace(/_/g, '-')}`);
     for (const command of readPackageDirectory(run.draft.adapterDir).commands.filter(command => run.draft.toolNames.includes(command.name))) {
       const capability = httpCredentialsCapability(command.http);

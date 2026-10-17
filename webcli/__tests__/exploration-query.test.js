@@ -20,3 +20,22 @@ it('generates a two-phase handler with exact page routes and no query replay on 
   const result = { ok: true, data: { items: [{ title: 'Example' }] } };
   expect(await handler({ keyword: 'Example' }, { kind: 'page_query_result', result })).toBe(result);
 });
+
+it('binds page path identifiers without capturing values and validates them before navigation', async () => {
+  const source = normalizePageQuery({ mode: 'navigate', result: input.result, resultPathname: '/groups/:id/items/:id',
+    pathParameters: [{ segmentIndex: 1, name: 'groupId', description: 'Public group identifier' }, { segmentIndex: 3, name: 'itemId', description: 'Public item identifier' }] });
+  expect(pageQueryValues(source, { groupId: '007', itemId: '示例' })).toEqual({ groupId: '007', itemId: '示例' });
+  for (const itemId of [7, '..', 'a/b', '%2f', '', '\ud800']) expect(() => pageQueryValues(source, { groupId: '007', itemId })).toThrow();
+  expect(() => pageQueryValues(source, { groupId: '007', itemId: '008', extra: true })).toThrow();
+  const { strategy, ...navigationInput } = source;
+  for (const extra of [{ resultPathname: '/items/007' }, { pathParameters: [] }, { resultPathname: '//example.org/:id' }, { resultPathname: '/delete/:id/items/:id' }]) expect(() => normalizePageQuery({ ...navigationInput, ...extra })).toThrow();
+  const observation = pageObservation({ source, url: 'https://example.com/start', shape: { type: 'object' }, reason: 'Read a public detail page' });
+  const generated = buildPageTool('example.com', { name: 'detail' }, observation);
+  expect(generated.toolDefinition.pageRoute.navigation.pathname).toBe('/groups/:id/items/:id');
+  expect(generated.toolDefinition.parameters.required).toEqual(['groupId', 'itemId']);
+  let handler; vm.runInNewContext(generated.v2Content, { window: { __webcliRegisterCommand: (_id, fn) => handler = fn } });
+  expect((await handler({ groupId: '007', itemId: '008' })).__webcli_page_query.source.mode).toBe('navigate');
+  const result = { ok: true, data: { title: 'Example' } };
+  expect(await handler({ groupId: '007', itemId: '008' }, { kind: 'page_query_result', result })).toBe(result);
+  expect(pageObservation({ source, url: 'https://example.com/groups/:id/items/:id', shape: {}, reason: 'Read current detail' }).expectedPath).toBe('/groups/:id/items/:id');
+});

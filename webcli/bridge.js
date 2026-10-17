@@ -1667,6 +1667,7 @@ export class WebSocketBridge extends EventEmitter {
       throw new Error('Reload the browser extension before calling page-source Adapter commands.');
     }
     if (selected?.command.pageWorkflow && !this._extensionCapabilities?.includes('page_query_v1')) throw new Error('Reload the browser extension before calling navigation-aware page queries.');
+    if (selected?.command.pageRoute?.navigation && !this._extensionCapabilities?.includes('page_navigation_v1')) throw new Error('Reload the browser extension before calling parameterized page navigation.');
     if (selected?.command.pageStrategy === 'INTERCEPT' && !this._extensionCapabilities?.includes('intercept_read_v1')) throw new Error('Reload the browser extension before calling intercepted page queries.');
     const timeout = resolveToolCallTimeout(toolName);
     return this._request({ type: "call_tool", toolName, args, ...(selected ? { adapterSnapshot: selected.snapshot } : {}) }, timeout, traceID);

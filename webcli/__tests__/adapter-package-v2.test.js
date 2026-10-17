@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { adapterPermissions } from '../adapter-catalog.js';
 import {
   findV2Adapter,
   loadV2Adapters,
@@ -22,6 +23,20 @@ function makeAdapterDir(root, name, { manifest, files = {} } = {}) {
   }
   return adapterRoot;
 }
+
+it('requires complete manifest page navigation bindings and preserves read-only workflow scope', () => {
+  const manifest = v2Manifest(), command = manifest.commands[0];
+  Object.assign(command, { safety: 'read', pageStrategy: 'UI_SELECTOR', pageWorkflow: true, pageRoute: { origin: 'https://blog.example.com', pathname: '/start',
+    navigation: { pathname: '/items/:id', pathParameters: [{ segmentIndex: 1, name: 'itemId', description: 'Public item identifier' }] } } });
+  expect(() => validateV2Manifest(manifest)).not.toThrow();
+  expect(adapterPermissions(manifest)).toContain('page-navigation:' + JSON.stringify(command.pageRoute));
+  for (const pathname of ['//example.org/:id', '/items/:id?other=x', '/items/:id/extra/:id', '/items/007']) {
+    command.pageRoute.navigation.pathname = pathname; expect(() => validateV2Manifest(manifest)).toThrow(/navigation/);
+  }
+  command.pageRoute.navigation.pathname = '/items/:id'; command.pageRoute.pathname = '/items/:id';
+  expect(() => validateV2Manifest(manifest)).not.toThrow();
+  command.safety = 'write'; expect(() => validateV2Manifest(manifest)).toThrow(/pageRoute/);
+});
 
 it('validates requires_confirmation as a package boolean, without changing write classification', () => {
   const manifest = v2Manifest();

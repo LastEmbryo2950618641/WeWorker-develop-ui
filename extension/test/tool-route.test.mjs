@@ -333,6 +333,13 @@ test('page source commands select exact origin/path, reject ambiguity, and never
   tabs[2].url = 'https://example.com/results?q=example';
   assert.equal((await worker.callNativeTool('fixture.read-page')).result, 'fixture-result');
   assert.deepEqual(executed, [3, 4, 3]);
+  manifest.commands[0].pageRoute.navigation = { pathname: '/items/:id', pathParameters: [{ segmentIndex: 1, name: 'itemId', description: 'Public item ID' }] };
+  tabs[2].url = 'https://example.com/items/007';
+  assert.equal((await worker.callNativeTool('fixture.read-page')).result, 'fixture-result');
+  tabs[3].url = 'https://example.com/items/008'; tabs[3].active = false;
+  assert.equal((await worker.callNativeTool('fixture.read-page')).result.error.code, 'PAGE_SOURCE_AMBIGUOUS');
+  tabs[3].url = 'https://example.com/items/%2f';
+  assert.equal((await worker.callNativeTool('fixture.read-page')).result, 'fixture-result');
 });
 
 test("managed background calls select the offscreen runner without opening a site tab", async () => {

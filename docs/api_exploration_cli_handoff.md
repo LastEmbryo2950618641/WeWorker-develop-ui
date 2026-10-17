@@ -1,18 +1,18 @@
 # API 自动探索 CLI 改造跟进与交接
 
-> 更新日期：2026-10-17。最新阶段新增 mode=http 的无浏览器探索任务、OpenAPI JSON 发现、显式宿主请求证据，接通生成→作者验证→审阅安装→调用→知识/只读修复。WebCLI 1193 项、完整 Chromium 50 项、源码与打包 CLI/Bridge 各 8 项零浏览器验收、打包 CLI HTTP 36 项通过。多浏览器 profile、HTTP v2 环境鉴权与 Cookie 分区已在前序阶段完成。整体 OpenCLI 对齐仍未完成，Python 网站探索agent全程未动。
+> 更新日期：2026-10-18。最新阶段新增 UI_SELECTOR navigate 同源参数化详情页导航，接通观察→生成→两组作者验证→审阅安装→普通调用→知识/只读修复。WebCLI 1197 项、扩展聚焦 40 项、完整 Chromium 52 项、打包 CLI 导航专项 4 项通过。多浏览器 profile、HTTP v2 鉴权/Cookie 分区、无浏览器 OpenAPI JSON 探索已在前序阶段完成。整体 OpenCLI 对齐仍未完成，Python 网站探索agent全程未动。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
 
 ## 新会话从这里接手
 
 - 范围澄清：用户明确不需要 OpenCLI 桌面客户端。只对齐 CLI、浏览器扩展与相关工具能力；WeWorker API 探索 UI/内置聊天/profile 选择界面单列产品集成，不作为 CLI 对齐完成条件。多步 UI 指目标网站操作，CDP/Electron 指 CLI 控制外部目标，不是开发桌面客户端。
-- 继续当前分支 `codex/api-exploration-cli`，最新无浏览器阶段起点 `e5e6e44`；检查点 SHA 见 Git 最新提交。先核对工作区/日志，不重建分支或重复实现 profile/HTTP Runner/宿主探索。根 AGENTS.md、ROADMAP.md、本文末尾、[开发设计](api_exploration_cli_design.md)、[HTTP 契约](http_adapter_runtime.md) 和 [能力台账](opencli_parity.md) 为接手入口。
+- 继续当前分支 `codex/api-exploration-cli`，最新参数化页面导航阶段起点 `8c87339`；检查点 SHA 见 Git 最新提交。先核对工作区/日志，不重建分支或重复实现 profile/HTTP Runner/宿主探索/参数化详情导航。根 AGENTS.md、ROADMAP.md、本文末尾、[开发设计](api_exploration_cli_design.md)、[HTTP 契约](http_adapter_runtime.md) 和 [能力台账](opencli_parity.md) 为接手入口。
 - 已完成多浏览器 profile，使用 `webcli call profile.list` 和 `--profile=<contextId|alias>`；唯一在线可自动选择，显式/default 离线不回退。旧 browser/exploration 根通过 `--profile=legacy` 只读访问，新 profile 不继承旧 tabId。桌面尚无 profile 选择 UI，多连接时需 CLI 保存默认或由调用方显式传路由。
-- PUBLIC_API/COOKIE_API/AUTH_API runner、version 2 环境鉴权/分区，以及 mode=http 的 JSON OpenAPI 发现/显式请求已实现，保持 Extension/Toolkit Runner 边界。HTTP start 不发请求；http- taskId 自动路由宿主，task-free 命令需 mode=http，文档声明不能代替真实证据。下一步动态页面/多步 UI/写命令，再推进知识修订/共享修复、CDP/外部 CLI/插件生态与站点覆盖。YAML/任意 API 文档爬取、任意站点签名/OAuth 尚未覆盖；独立 Agent 对话及平台分发仍在台账，不能把本阶段当作完整对齐完成。
+- PUBLIC_API/COOKIE_API/AUTH_API runner、version 2 环境鉴权/分区，以及 mode=http 的 JSON OpenAPI 发现/显式请求已实现，保持 Extension/Toolkit Runner 边界。HTTP start 不发请求；http- taskId 自动路由宿主，task-free 命令需 mode=http，文档声明不能代替真实证据。参数化页面导航已支持固定同源主文档、明确路径绑定、一次派发和严格验证；多步网站流程尚未实现。下一步多步 UI/写命令及副作用验证，再推进知识修订/共享修复、CDP/外部 CLI/插件生态与站点覆盖。动态 query/hash/跨源页面路由、YAML/任意 API 文档爬取、任意站点签名/OAuth 尚未覆盖；独立 Agent 对话及平台分发仍在台账，不能把本阶段当作完整对齐完成。
 - WebCLI + 插件继续面向任意能执行 CLI 的 Agent，调用方处理自然语言，不依赖桌面或第二模型 Key。Python 网站探索agent源码、环境、测试、生命周期和数据全程不动。
 - 集成基线 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`；本轮没有 fetch/merge/push/PR。后续同步按第 4 节“上游 → 集成基线 → 功能分支”，这些 SHA 仅是已纳入快照。
 - 用户已安装工作区 extension-dist，无需重装。HTTP 与鉴权阶段仅重建资源，在隔离浏览器实测，没有重载日常 Chrome 或重启用户 Bridge；使用新 Cookie scope 能力前需核对 `http_credentials_v2` 并重载已安装扩展/本工作区 Bridge。AUTH 普通调用读 CLI 环境；预览/COOKIE/桌面调用读相应 HTTP 宿主环境，不自动转发 CLI 环境、不加载 .env。真实外部目标仍为 B 站 Excel 搜索页，重新 doctor/tabs/bind；不要照抄历史身份/PID。历史 source Bridge 快照 PID 47386、日志 `/tmp/weworker-profile-live-bridge.log`，本阶段未重新核实，重启前必须检查完整命令和归属。
-- 最新临时报告：完整 `webcli-browser-acceptance-pTMyvl/report.json`（50 项）；零浏览器源码 `webcli-http-discovery-HPGl9M/report.json`、打包 CLI/Bridge `webcli-http-discovery-whk1T0/report.json`（各 8 项）。位于系统临时根，可被清理；缺失时用已提交脚本复跑，不把旧报告当作最新测试。本阶段未重跑日常 Chrome/B 站。
+- 最新临时报告：完整 `webcli-browser-acceptance-amRAoV/report.json`（52 项）；打包 CLI 导航专项 `webcli-browser-acceptance-RFY6iV/report.json`（4 项，Bridge 为源码）。前序零浏览器源码 `webcli-http-discovery-HPGl9M/report.json`、打包 CLI/Bridge `webcli-http-discovery-whk1T0/report.json`（各 8 项）。位于系统临时根，可被清理；缺失时用已提交脚本复跑，不把旧报告当作最新测试。本阶段未重跑日常 Chrome/B 站。
 
 ## 最新状态
 
@@ -595,3 +595,15 @@ npm run test:exploration:browser --prefix webcli -- \
 - 首次验收脚本的临时路径替换损坏语法、误用业务 --format 参数、错误假定 profile.list 无 legacy 条目，均修正测试夹具后通过。源码复核补齐请求预算的重启持久化，新增 Swagger operation schemes/无效 server 与文档条数上限测试。未放宽生产断言或安装审阅。
 - CLI/Bridge 构建、公开配置、12 个 JS/MJS 语法、diff 格式和新增内容常见凭据/私网模式检查通过。npm pack dry-run **610 文件**含三个新模块及更新 Skill；无依赖/lockfile/CI/发布/schema/.env 变更。已有可选列映射资源构建警告保留，不代表完整安装包或所有输出映射已验收。
 - 下一步：动态页面路由、多步网站 UI、写命令生成/副作用验证；之后知识冲突与共享/写修复、复杂浏览器控件、CDP/外部 CLI/插件生态与站点覆盖、独立 Agent/跨平台/安装包。YAML/任意 API 文档爬取、任意站点签名/OAuth、完整 HTTP trace 仍未覆盖；整体 OpenCLI 对齐继续，不能标 complete。
+
+### 2026-10-18：同源参数化详情页导航
+
+- 阶段起点 `8c87339`，继续当前分支，无 fetch/merge/push/PR。新增 `extension/background/page-navigation.js`、聚焦单测及 `webcli/scripts/page-navigation-acceptance.mjs`。Python 网站探索agent源码、环境、测试、进程与数据未动；没有依赖/lockfile/CI/发布/schema/.env 变更。
+- `exploration.query` 新增 `source.mode=navigate`，每个 `:id` 用明确 `pathParameters` 绑定，values 保留字符串前导零与 Unicode。目标为固定同源主文档，无 query/hash 模板；非法路径、缺失绑定、明显写路径在派发前拒绝。沿用 `__webcli_page_query` version 1 续接，首次 handler 只派发一次导航，结果在重新注入后独立映射。`page_navigation_v1` 在观察、验证与普通调用前检查，不回退 profile。
+- 扩展等待新的 main loader、准确目标 URL 和 300ms 稳定结果；文档版本变化重置稳定计时，读取结束再次复核。`Page.navigate` 无响应也有计时器并清理监听器；跨 origin/错误 ID 重定向、下载、超时或文档变化明确失败，不重放。同 URL 重复调用仍需新文档。取消丢弃迟到结果，已派发导航可能继续完成。
+- manifest 的 `pageRoute.navigation` 包含模板与所有绑定，整体纳入 `page-navigation:` 权限。入口可为准确 path 或同一目标模板，支持从已脱敏的数字详情路径开始探索/修复。普通调用选入口或目标族的唯一页面/唯一活动页，缺失和歧义报错。每命令至少两组不同路径组合的作者 cases；preview 和普通调用共用 manifest 续接检查；scoped repair 保留既有路由/绑定/权限。
+- 验证：WebCLI **111 文件/1197 项**、扩展聚焦 **40 项**、完整真实 Chromium **52 项**、最终打包 CLI 导航专项 **4 项**通过。CLI/Bridge 构建、公开配置、**20 文件** JS/MJS 语法、diff 格式及新增内容常见凭据/私网模式检查通过；npm pack dry-run **611 文件**，包含新扩展 helper 与更新 Skill。打包导航专项运行打包 CLI + 源码 Bridge，不当作完整分发包实测。
+- 完整报告 `webcli-browser-acceptance-amRAoV/report.json`，最终打包专项 `webcli-browser-acceptance-RFY6iV/report.json`，均位于系统临时根。日志 `/tmp/weworker-navigation-full.log`、`/tmp/weworker-navigation-extension-final.log`、`/tmp/weworker-navigation-browser-full.log`、`/tmp/weworker-navigation-bundled.log`、`/tmp/weworker-navigation-build.log` 和 `/tmp/weworker-navigation-pack.json`。脚本关闭自己的隔离浏览器与服务；未重载日常 Chrome、重启日常 Bridge 或重跑 B 站。
+- 实机完成观察→生成→单组 case 被拒→两组精确断言→审阅安装→普通调用→知识，准确保留 `007` 与中文 ID；同 URL 两次各一次请求，非法路径零请求，错误 ID 重定向明确失败。实际改变标记后旧 cases 失败，局部改模块、重验证、安装和调用通过；从数字详情路径启动修复也通过。
+- 完整回归初次因新增知识页后旧计数仍为 8 失败，更新为 9 并断言存在 navigate 来源。另一次旧 INTERCEPT 用例把安装目录刷新后的延迟页面初始化 GET/POST 计为非法参数调用的请求；根据失败报告的导航事件和准确初始参数，验收改为仅允许该 fixture 的有效初始化 GET/POST，其他新增请求仍拒绝，记录 `invalid-intercept-query-background-requests.json`。该用例不宣称所有背景流量为零，生产刷新/参数验证逻辑未放宽。中文夹具补 UTF-8、失败调用期望值修正后通过。
+- 下一阶段：多步网站工作流与写命令生成/副作用验证；当前只实现单次同源详情导航，未开始多步工作流实现。后续仍含动态 query/hash/跨源页面、知识冲突与共享/写修复、自定义控件/目录上传/跨 frame 拖拽、CDP/外部 CLI/插件生态、独立 Agent 和跨平台/分发验收。保持完整目标进行中；OpenCLI 桌面客户端明确排除。

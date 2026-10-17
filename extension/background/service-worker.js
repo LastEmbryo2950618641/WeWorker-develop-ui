@@ -11,6 +11,7 @@ import { browserResponseEvidence } from './browser-network.js';
 import { executePageSource } from './page-source.js';
 import { executeInterceptRead } from './intercept-read.js';
 import { executePageQuery } from './page-query.js';
+import { matchesPagePath, assertPageQueryRoute } from './page-navigation.js';
 import { recordBrowserObservation, clearBrowserObservations } from './browser-observations.js';
 import { recordBrowserFrameEvent, clearBrowserFrames } from './browser-frames.js';
 import { recordBrowserDownload, clearBrowserDownloads } from './browser-downloads.js';
@@ -61,6 +62,7 @@ const EXTENSION_CAPABILITIES = [
   'page_sources_v1',
   'intercept_read_v1',
   'page_query_v1',
+  'page_navigation_v1',
 ];
 
 let currentBrowserContextId;
@@ -2728,7 +2730,9 @@ async function handleNativeMessage(msg) {
           const { origin, pathname } = selected.command.pageRoute;
           assertAdapterNavigationUrl(selected.manifest, origin + pathname);
           const matches = tabs.filter(entry => {
-            try { const url = new URL(entry.url); return url.origin === origin && [pathname, ...(selected.command.pageRoute.additionalPaths || [])].includes(url.pathname); }
+            try { const url = new URL(entry.url); return url.origin === origin && (matchesPagePath(url.pathname, pathname)
+              || (selected.command.pageRoute.navigation && matchesPagePath(url.pathname, selected.command.pageRoute.navigation.pathname))
+              || (selected.command.pageRoute.additionalPaths || []).includes(url.pathname)); }
             catch { return false; }
           });
           const activeMatches = matches.filter(entry => entry.active);
@@ -7102,9 +7106,7 @@ function getHostAdapterRuntime() {
     inject: injectV2AdapterWithCode,
     ready: (tabId, manifest, timeoutMs, traceID) => waitForManagedPageReady(tabId, manifest, true, timeoutMs, traceID),
     query: (tabId, payload, manifest, command) => {
-      if (payload.expectedOrigin !== command.pageRoute.origin || payload.expectedPath !== command.pageRoute.pathname
-        || ![command.pageRoute.pathname, ...(command.pageRoute.additionalPaths || [])].includes(payload.source?.resultPathname)) throw new Error('Page query route differs from the selected command.');
-      assertAdapterNavigationUrl(manifest, payload.expectedOrigin + payload.source.resultPathname);
+      assertAdapterNavigationUrl(manifest, assertPageQueryRoute(payload, command));
       return executePageQuery({ chrome, ensureCdpAttached, tabId, payload: { ...payload, metadataOnly: false } });
     },
     navigate: (tabId, url, manifest, resume, timeoutMs) => navigateAdapterTab(chrome, tabId, url, manifest, resume, timeoutMs),
@@ -7902,9 +7904,7 @@ async function validateGenerationPreviewOnTab({ previewAdapterId, previewBundle,
           if (output?.__webcli_page_query) {
             const command = manifest.commands?.find(entry => `${manifest.name}.${entry.id}` === toolName);
             const payload = output.__webcli_page_query;
-            if (command?.pageWorkflow !== true || command.safety !== 'read' || payload.version !== 1
-              || payload.expectedOrigin !== command.pageRoute?.origin || payload.expectedPath !== command.pageRoute?.pathname
-              || ![command.pageRoute.pathname, ...(command.pageRoute.additionalPaths || [])].includes(payload.source?.resultPathname)) throw new Error('Invalid preview page query continuation.');
+            assertAdapterNavigationUrl(manifest, assertPageQueryRoute(payload, command));
             const result = await executePageQuery({ chrome, ensureCdpAttached, tabId: targetTab.id, payload: { ...payload, metadataOnly: false } });
             if (!result.ok) output = result;
             else {

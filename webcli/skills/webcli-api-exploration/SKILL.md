@@ -89,7 +89,7 @@ replan 用于尚未安装的新工具草稿；已安装/取消任务不可重置
 
 生成 schema 要求路径参数为字符串，不转换数字，保留前导零；CLI 使用 `--itemId=000123`，JSON args 使用 `"itemId":"000123"`。值按单个路径段编码，不能带斜杠、百分号转义、控制字符或 `.`/`..`。路径参数名须与 query/body 字段不同；生成器会把已观察 query 参数放回 URL、其余参数留在请求体，绝不使用捕获值作为默认参数。同名 query/body 需要不同业务映射时，通过 draft-write 明确设计后验证。
 
-每个动态命令至少两组作者 cases，路径参数组合必须不同；选择公开且确实存在的测试 ID，并用返回 ID/字段的精确 equals 验证参数生效，不能只断言“有数据”。不要捏造 ID 去通过验证，也不要从登录凭据取参数。没有第二个授权测试对象时保留草稿并报告缺口。全部实际通过后 review/install，再做普通 call；pathParameters 随知识保存，repair 也使用相同计划绑定和验证要求。此功能针对 API URL，页面读取命令的 pageRoute 仍为固定路径。
+每个动态命令至少两组作者 cases，路径参数组合必须不同；选择公开且确实存在的测试 ID，并用返回 ID/字段的精确 equals 验证参数生效，不能只断言“有数据”。不要捏造 ID 去通过验证，也不要从登录凭据取参数。没有第二个授权测试对象时保留草稿并报告缺口。全部实际通过后 review/install，再做普通 call；pathParameters 随知识保存，repair 也使用相同计划绑定和验证要求。API URL 与下面的参数化页面导航分别声明来源，不自动混用。
 
 ### DOM 与页面状态策略
 
@@ -105,7 +105,7 @@ get 等待 evidence_ready 后，evidence.pageSources 返回结构、路由和稳
 
 - UI_SELECTOR 对每行读取唯一字段；不填字段 selector 时读取行本身。attribute 返回原始属性（href 可能是相对地址），未填时读取可见文本；optional=true 允许缺失字段返回 null。必需字段缺失、隐藏或歧义均报错。零行只有匹配可见 emptySelector 才视为空结果。返回 `data.items`、matchedCount、truncated，limit 为 1–1000；有限列表不等于站点完整结果。
 - DOM_STATE 仅读取公开自有数据属性，或唯一的 application/json、application/ld+json 脚本。路径为字符串数组，可含数字索引；不调用 getter，不读浏览器存储或凭据字段。返回 data 保留选中 JSON 结构；过大的子树报错，需缩小路径。
-- 初始命令无参数，读取当前页面。manifest.pageRoute 保存精确 origin/pathname；普通调用选择唯一匹配标签页，多个匹配页时选择唯一活动页，否则报错。查询串/hash 不作为绑定条件，也不会自动导航、搜索或翻页；Agent 必须明确说明当前页面语义。动态路径暂不支持。
+- 初始 observe 命令无参数，读取当前页面。manifest.pageRoute 保存精确 origin/pathname；普通调用选择唯一匹配标签页，多个匹配页时选择唯一活动页，否则报错。查询串/hash 不作为绑定条件，也不会自动导航、搜索或翻页；Agent 必须明确说明当前页面语义。需要按 ID 打开详情时使用下面的参数化页面导航。
 - 每个页面命令必须编写 verification cases，核对标题/链接/数量等业务含义，实际执行后再审阅安装。普通 call 后仍要与当前页面比对。页面观察同样可用于 repair，但修复仍不能修改既有路由和权限。
 - knowledge-save 保存选中页面来源、结构和作者 cases，按每条来源标记过期；不保存页面文本或状态原文。
 
@@ -137,6 +137,20 @@ webcli call exploration.query --args '{"taskId":"example-task","source":{"trigge
 - 生成命令分两阶段：首次返回声明式查询请求；后台查询后重新注入，以 handler 的第二个参数传回结果。Agent 如需修改字段映射，只在续接结果上转换，不重复触发控件，不把续接数据放进 CLI 业务参数。
 - manifest.pageWorkflow=true，pageRoute.additionalPaths 声明固定结果路径，因此安装后的普通 call 可从起始页或结果页重复查询。每次只触发一次；一个查询失败后，不把错误当成空列表。多步业务工作流仍未支持。
 
+### 参数化页面导航（UI_SELECTOR navigate）
+
+已知一个只读详情路由、希望按公开 ID 打开页面并读取 DOM/公开状态时，使用 query 的 `mode=navigate`。这是明确导航，会替换选定标签页；先确认目标页面和路径语义、处理未保存输入。插件需要 `page_navigation_v1`，旧插件拒绝执行。
+
+```bash
+webcli call exploration.query --args '{"taskId":"example-task","source":{"mode":"navigate","resultPathname":"/items/:id","pathParameters":[{"segmentIndex":1,"name":"itemId","description":"公开条目 ID"}],"result":{"strategy":"UI_SELECTOR","selector":"article.item","fields":{"title":{"selector":"h1"}}},"timeoutMs":20000},"values":{"itemId":"007"},"reason":"只读详情页，按公开条目标识导航后读取"}'
+```
+
+- result 使用 observe 的 UI_SELECTOR 或 DOM_STATE；生成计划仍为 strategy=UI_SELECTOR、sourcePageId。每个 :id 必须绑定唯一 segmentIndex/name/description；值为必填字符串，保留前导零和 Unicode，拒绝斜杠、百分号、点路径、控制字符和明显写操作路径，不把观察 ID 写成默认值。
+- 首次观察可从明确的同源入口页或同一详情路由开始；已有数值 ID 会归一化为 :id，必须使用匹配模板。manifest.pageRoute.navigation 固定目标模板及参数映射，进入安装权限审阅；普通调用只选入口或模板匹配页，多页选唯一活动页，否则歧义报错；没有匹配页不另开或导航其他页。
+- 每次只派发一次 Page.navigate。即使目标 URL 等于当前 URL，也等待新的主文档以及至少 300ms 稳定结果；读取后再核对 URL/文档。跨源、跳到其他 ID、下载、超时或导航中断失败，不重放。浏览器可能已经访问重定向目标，失败不回退到旧页或旧数据。
+- 观察只保存模板、字段结构和来源理由。生成后至少两组不同路径参数的 cases，精确核对返回 ID/标题等业务含义；每组都实际导航，不能用当前页的旧数据代替。通过后 review/install、普通 call、知识保存。后续 scoped repair 保留已安装路由/参数映射/权限，带入历史 cases 重新验证。
+- 当前限同源主文档的单次导航与读取，不支持动态 query/hash 模板、跨源详情、任意路径正则或多步骤业务流程。取消后丢弃迟到结果，已派发的浏览器导航可能继续完成。
+
 ### 输出断言示例
 
 路径从**命令最终 JSON 输出的根**开始，用点分隔、`*` 匹配数组每一行，不做响应包装层或相似字段回退：
@@ -165,7 +179,7 @@ webcli call exploration.repair --args '{"taskId":"example-task","site":"example.
 - Bridge 重启中的任务标记 interrupted，明确选择重新 collect（HTTP 模式 discover/request）或 validate；不自动重放探测或安装。
 - `cancel` 停止后续阶段并丢弃迟到结果；已派发浏览器请求可能完成。安装开始后不能取消。
 - start 可传 allowedOrigins 数组，显式授权额外 API origin，如 `https://api.example.com`；只允许精确 origin，无路径、凭据或通配符。流量不会自动扩大权限，安装 review 会列出新域名。
-- 默认 GET、Agent 计划下的只读 POST JSON/form/GraphQL query、API 动态路径、声明式 UI_SELECTOR/DOM_STATE、单步 INTERCEPT 与跨文档页面查询已支持。写命令、动态页面路由、自动多步 UI 工作流仍未支持；报告限制，不伪装成功。
+- 默认 GET、Agent 计划下的只读 POST JSON/form/GraphQL query、API 动态路径、声明式 UI_SELECTOR/DOM_STATE、单步 INTERCEPT、跨文档页面查询与参数化详情导航已支持。写命令、动态 query/hash 页面路由、自动多步 UI 工作流仍未支持；报告限制，不伪装成功。
 - 使用 webcli-browser Skill 的 browser.* 触发搜索、翻页或检查页面状态，再 collect。采集/验证进行中不要操作同一页；TAB_BUSY 时等待。
 - trace 输出结构诊断、事件、文件清单与计划，便于交接修复；不含捕获正文或代码。verification-read 与 knowledge-read 可恢复作者测试用例；安装后修复使用 repair-info/repair，再走相同的验证、审阅与安装流程。
 - 证据的 URL 参数值被省略；不要把 `<value>` 作为实际查询值。业务参数来自用户输入，登录信息由既有浏览器运行时取得。

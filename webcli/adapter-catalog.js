@@ -23,6 +23,7 @@ export function adapterPermissions(manifest) {
     ...(manifest.match || []).map((host) => 'host:' + String(host).toLowerCase().replace(/\.$/, '')),
     ...(manifest.runtime_allowed_hosts || []).map((host) => 'host:' + String(host).toLowerCase().replace(/\.$/, '')),
     ...manifest.commands.map((command) => 'runtime:' + command.runtime),
+    ...manifest.commands.flatMap(command => command.pageRoute?.navigation ? ['page-navigation:' + JSON.stringify(command.pageRoute)] : []),
     ...manifest.commands.flatMap(command => (command.http?.origins || []).map(origin => 'http-origin:' + origin)),
     ...manifest.commands.flatMap(command => command.http?.auth ? ['http-auth:' + JSON.stringify(command.http.auth)] : []),
     ...manifest.commands.flatMap(command => command.http?.cookies ? [

@@ -18,6 +18,7 @@ import { verifyBrowserCompounds } from './browser-compound-acceptance.mjs';
 import { verifyBrowserUploads } from './browser-upload-acceptance.mjs';
 import { verifyBrowserProfiles } from './browser-profile-acceptance.mjs';
 import { verifyHostHttp } from './http-acceptance.mjs';
+import { verifyPageNavigation } from './page-navigation-acceptance.mjs';
 
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'webcli-browser-acceptance-'));
@@ -54,8 +55,14 @@ try {
     await fs.writeFile(file, (await fs.readFile(file, 'utf8')).replaceAll('3711', String(bridgePort)));
   }
   // Daemon PID/log discovery must also stay away from the user's global service.
-  const cliEntry = path.join(copy, 'index.js');
+  let cliEntry = path.join(copy, 'index.js');
   await fs.writeFile(cliEntry, (await fs.readFile(cliEntry, 'utf8')).replaceAll('homedir()', JSON.stringify(path.join(root, 'cli-config-root'))));
+  if (process.argv.includes('--bundled-cli')) {
+    cliEntry = path.join(copy, 'webcli.cjs');
+    await fs.writeFile(cliEntry, (await fs.readFile(path.resolve(source, '../weworker/build/webcli-dist/webcli.cjs'), 'utf8'))
+      .replaceAll('3711', String(bridgePort))
+      .replace(/\(0, import_os\d+\.homedir\)\(\)|\bimport_(?:node_)?os\d*\.default\.homedir\(\)/g, JSON.stringify(path.join(root, 'cli-config-root'))));
+  }
   const env = { ...process.env, WEWORKER_USER_ADAPTERS_DIR: path.join(root, 'user'), WEBCLI_ADAPTERS_DIR: path.join(root, 'user'),
     WEWORKER_ADAPTER_DATA_DIR: path.join(root, 'data'), WEWORKER_BUILTIN_ADAPTERS_DIR: path.join(root, 'builtin'), WEWORKER_BUILD_PROFILE: 'public',
     EXAMPLE_HTTP_ACCEPTANCE_KEY: 'example-host-auth-placeholder' };
@@ -96,7 +103,7 @@ try {
   await startBridge();
   async function cli(command, args = {}, expectedOk = true) {
     let result;
-    try { result = await exec(process.execPath, [path.join(copy, 'index.js'), 'call', command, '--args', JSON.stringify(args), '--output-format=json'], { env, timeout: 95000, maxBuffer: 3_000_000 }); }
+    try { result = await exec(process.execPath, [cliEntry, 'call', command, '--args', JSON.stringify(args), '--output-format=json'], { env, timeout: 95000, maxBuffer: 3_000_000 }); }
     catch (error) { if (expectedOk) throw error; result = error; }
     const output = JSON.parse(result.stdout);
     if (command.startsWith('exploration.') || command.startsWith('browser.')) assert.equal(output.ok, expectedOk, JSON.stringify(output));
@@ -262,6 +269,7 @@ try {
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] }),
   });
   if (process.argv.includes('--http-only')) { await hostHttp(); return; }
+  if (process.argv.includes('--navigation-only')) { await verifyPageNavigation({ cli, record, passed }); return; }
 
   const tabs = (await cli('exploration.tabs')).data.tabs;
   const tabId = tabs.find(tab => tab.url === origin + '/').id;
@@ -838,7 +846,13 @@ try {
   }
   const beforeInvalidQuery = signedRequests.length;
   assert.equal((await cli(interceptDraft.toolNames[0], { keyword: '' }, false)).ok, false);
-  assert.equal(signedRequests.length, beforeInvalidQuery);
+  // Catalog refreshes can finish reloading this fixture after installation.
+  // Its two boot requests are not the rejected query; reject every other new request.
+  const duringInvalidQuery = signedRequests.slice(beforeInvalidQuery);
+  assert.ok(duringInvalidQuery.every(request => request.valid && (
+    (request.method === 'GET' && request.keyword === 'Example initial')
+    || (request.method === 'POST' && request.keyword === 'Example initial POST'))), JSON.stringify(duringInvalidQuery));
+  await record('invalid-intercept-query-background-requests', duringInvalidQuery);
   const interceptKnowledge = (await cli('exploration.knowledge-read', { site: interceptReview.name })).data;
   await cli('exploration.knowledge-save', { taskId: interceptTask, expectedHash: interceptKnowledge.hash });
   // Navigation invalidates a single-document query, even with unchanged pathname.
@@ -881,6 +895,7 @@ try {
   await cli('exploration.knowledge-save', { taskId: queryTask, expectedHash: queryKnowledge.hash });
   await record('page-query-validation', queryValidation);
   passed('full-document search survives navigation in observation, two strict preview cases, installation and repeated ordinary calls on the result route');
+  await verifyPageNavigation({ cli, record, passed });
 
   const fallbackTab = (await cli('browser.open', { session: 'fallback', url: origin + '/fallback-only' })).data.tabId;
   const fallbackTask = (await cli('exploration.start', { tabId: fallbackTab, goal: 'Read public items despite an unstable API', requestId: 'example-strategy-fallback' })).data.taskId;
@@ -940,7 +955,8 @@ try {
   const restoredKnowledge = (await cli('exploration.knowledge-read', { site: review.name })).data;
   assert.equal(restoredKnowledge.knowledge.commands[verificationTool].cases.length, 6);
   assert.equal(restoredKnowledge.stale, false);
-  assert.equal(restoredKnowledge.knowledge.pages.length, 8);
+  assert.equal(restoredKnowledge.knowledge.pages.length, 9);
+  assert.ok(restoredKnowledge.knowledge.pages.some(page => page.source.mode === 'navigate'));
   const restoredAttempt = (await cli('exploration.revision-read', { taskId: fallbackTask, revision: 1 })).data;
   assert.equal(restoredAttempt.runtimeValidation.passed, false);
   assert.equal((await cli('exploration.revision-read', { taskId: fallbackTask, revision: 1, file: 'manifest.json' })).data.content, oldManifest.content);

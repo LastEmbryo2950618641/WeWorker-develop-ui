@@ -1,5 +1,6 @@
 import { prepareInterceptAction } from './intercept-read.js';
 import { executePageSource } from './page-source.js';
+import { executePageNavigation } from './page-navigation.js';
 const busy = new Set();
 const fail = (code, message) => Object.assign(new Error(message), { code });
 
@@ -10,9 +11,10 @@ export async function executePageQuery({ chrome, ensureCdpAttached, tabId, paylo
   let listener;
   try {
     const { source, expectedOrigin, expectedPath, values = {}, metadataOnly = false } = payload;
-    if (source?.mode !== 'query' || source.strategy !== 'UI_SELECTOR' || !source.result) throw fail('INVALID_PAGE_QUERY', 'Expected a declared UI query source.');
+    if (!['query', 'navigate'].includes(source?.mode) || source.strategy !== 'UI_SELECTOR' || !source.result) throw fail('INVALID_PAGE_QUERY', 'Expected a declared UI query source.');
     const timeoutMs = source.timeoutMs;
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 30000) throw fail('INVALID_PAGE_QUERY', 'Invalid page query timeout.');
+    if (source.mode === 'navigate') return await executePageNavigation({ chrome, ensureCdpAttached, tabId, payload, now, sleep });
     const destination = new URL(expectedOrigin + source.resultPathname);
     if (destination.origin !== expectedOrigin || destination.pathname !== source.resultPathname || destination.search || destination.hash) throw fail('INVALID_PAGE_QUERY', 'Invalid result route.');
     const initial = await chrome.tabs.get(tabId), initialUrl = new URL(initial.url);

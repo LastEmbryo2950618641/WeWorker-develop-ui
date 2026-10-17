@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-18（参数化详情页导航）：exploration.query 新增 UI_SELECTOR navigate，同源主文档路径参数保留前导零/Unicode；一次导航等待准确目标、新文档与稳定结果，超时/重定向/文档改变不重放。生成、两组不同路径作者断言、安装权限、普通调用、知识及保留路由的局部修复已接通。WebCLI 111 文件/1197 项、扩展聚焦 40 项、完整 Chromium 52 项、打包 CLI 导航专项 4 项通过；CLI/Bridge 构建、公开配置、20 文件语法与 npm pack dry-run（611 文件）通过。动态 query/hash/跨源页面、多步网站流程和写命令生成仍未完成；OpenCLI 桌面客户端排除，WeWorker UI 单列，Python 网站探索agent全程未动。
+
 - 2026-10-17（无浏览器 HTTP 探索）：mode=http 任务支持明确 OpenAPI 3.0/3.1、Swagger 2 JSON 发现与真实只读宿主请求，生成/作者断言/审阅安装/普通调用/知识/局部修复无需浏览器；需要 Bridge。文档声明不构成执行证据，查询和响应标量省略，重定向逐跳校验，取消与运行中重启不重放且保留次数。WebCLI 111 文件/1193 项、完整 Chromium 50 项、源码与打包 CLI/Bridge 各 8 项零浏览器验收、打包 HTTP 36 项通过；CLI/Bridge 构建、公开配置与 npm pack dry-run（610 文件）通过。JSON 文档仅本地引用，不支持 YAML/自动爬取；完整对齐继续推进动态页面/多步 UI/写命令，OpenCLI 桌面客户端排除，WeWorker UI 单列。Python 网站探索agent未动。
 
 - 2026-10-17（OpenCLI 对齐范围澄清）：用户明确不需要 OpenCLI 桌面客户端，目标为 CLI、浏览器扩展与相关工具能力。此前“桌面 UI”指 WeWorker 自有 API 探索/聊天/profile 界面，单列产品集成，不作为 CLI 对齐完成条件；目标网站多步 UI 和 CDP/Electron 外部目标控制仍按 CLI 能力核对。本次仅同步范围文档，通过 diff 格式检查，未重跑功能测试；Python 网站探索agent未动。
