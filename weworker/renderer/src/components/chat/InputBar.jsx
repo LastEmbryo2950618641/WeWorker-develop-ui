@@ -20,6 +20,9 @@ import {
 import FileGlyph, { getFileTypeLabel, getFileTypeMeta } from '../files/FileTypeIcon.jsx'
 import { getTextareaCaretRect } from '../welcome/textarea-caret-rect.js'
 import ContextPanel from './ContextPanel.jsx'
+import ModelSelector from './ModelSelector.jsx'
+import { normalizeThinkingEffort, THINKING_EFFORT_STORAGE_KEY } from '../../utils/thinking-effort.js'
+import { shouldWarmupOnTextChange } from '../../utils/chat-warmup.js'
 
 const COLLAPSED_ATTACHMENT_COUNT = 10
 const ATTACHMENT_CHIP_HEIGHT = 62
@@ -30,16 +33,22 @@ const SLASH_MENU_GAP = 8
 const SLASH_MENU_INSET_X = 10
 const SLASH_MENU_SHELL_PADDING = 6
 
-// 命令路由友好别名（与后端 api-query-router/tool-overrides.ts 的 !my-todo 别名对齐）。
+// 命令路由友好别名。**生效口径以后端 `/router/aliases` 为准**（它读的是
+// `router-config/aliases.json` + 用户覆盖层，经 Adapter 作用域过滤）；随包的
+// `config/route-aliases.json` 只是后端暂不可用时的兜底，不再需要手工与后端对齐。
 // !<工具全名> 与 !<友好别名> 直接点名工具 → 发聊天走智能路由；其余 !xxx 仍是 shell 命令。
-const ROUTER_BANG_ALIASES = new Set(routeAliases)
+const BUNDLED_ROUTER_BANG_ALIASES = new Set(routeAliases)
 
 function isKnownRouterToolName(command) {
   const token = String(command || '').trim().split(/\s+/)[0]
   if (!token) return false
-  if (ROUTER_BANG_ALIASES.has(token)) return true
-  const sites = useSitesStore.getState().sites || []
-  for (const site of sites) {
+  const state = useSitesStore.getState()
+  const configuredAliases = Array.isArray(state.routerAliases) ? state.routerAliases : []
+  const aliasPool = configuredAliases.length > 0
+    ? new Set(configuredAliases)
+    : BUNDLED_ROUTER_BANG_ALIASES
+  if (aliasPool.has(token)) return true
+  for (const site of state.sites || []) {
     for (const tool of site?.tools || []) {
       if (tool?.name === token) return true
     }
@@ -73,6 +82,8 @@ export default function InputBar({
   embedded,
   attachmentTarget = 'welcome',
   contextSnapshot = null,
+  historyMessages = [],
+  onWarmup,
 }) {
   const textareaRef = useRef(null)
   const slashMenuRef = useRef(null)
@@ -88,13 +99,25 @@ export default function InputBar({
   const contextLimit = useSettingsStore((s) => s.contextLimit)
   const textAttachmentThreshold = Math.max(1, Number(pasteTextAttachmentThreshold) || DEFAULT_PASTE_TEXT_ATTACHMENT_THRESHOLD)
   const overAttachmentLimit = attachments.length > attachmentLimit
-  const inputDisabled = !!disabled || !!streaming
+  const [modelSelectionPending, setModelSelectionPending] = useState(false)
+  const [thinkingEffort, setThinkingEffort] = useState(() => {
+    try { return normalizeThinkingEffort(window.localStorage.getItem(THINKING_EFFORT_STORAGE_KEY)) } catch { return 'off' }
+  })
+  const handleThinkingEffortChange = useCallback((value) => {
+    const next = normalizeThinkingEffort(value)
+    setThinkingEffort(next)
+    try { window.localStorage.setItem(THINKING_EFFORT_STORAGE_KEY, next) } catch {}
+  }, [])
+  const inputDisabled = !!disabled || !!streaming || modelSelectionPending
   const isCommandMode = String(text || '').trimStart().startsWith('!')
   const [attachmentNotice, setAttachmentNotice] = useState('')
   const [slashMenuState, setSlashMenuState] = useState(null)
   const [slashMenuPlacement, setSlashMenuPlacement] = useState(null)
   const [slashActiveIndex, setSlashActiveIndex] = useState(0)
   const [bangCompletionSource, setBangCompletionSource] = useState(null)
+  const [historyIndex, setHistoryIndex] = useState(-1)
+  const historyDraftRef = useRef('')
+  const historyNavigationRef = useRef(false)
   const minLineHeight = 22
   const chatAttachmentSeq = useUserFilesStore((s) => s.chatAttachmentSeq)
   const pendingChatAttachmentTarget = useUserFilesStore((s) => s.pendingChatAttachmentTarget)
@@ -104,7 +127,9 @@ export default function InputBar({
   const userFiles = useUserFilesStore((s) => s.files)
   const loadUserFiles = useUserFilesStore((s) => s.load)
   const terminalSessions = useTerminalStore((s) => s.sessions)
+  const commandHistory = useTerminalStore((s) => s.commandHistory)
   const sites = useSitesStore((s) => Array.isArray(s.sites) ? s.sites : [])
+  const routerAliases = useSitesStore((s) => Array.isArray(s.routerAliases) ? s.routerAliases : [])
   const webcliSlashCommands = useMemo(() => buildWebcliSlashCommands(sites), [sites])
   const buildBangSlashItems = useCallback((query) => {
     const command = query || ''
@@ -121,7 +146,7 @@ export default function InputBar({
       source: bangCompletionSource || 'auto',
       includeEmpty: true,
     })
-    return candidates.map((candidate) => ({
+    const items = candidates.map((candidate) => ({
       id: `bang:${candidate.kind || 'file'}:${candidate.value || candidate.name}`,
       title: candidate.name || candidate.value || 'command',
       command: candidate.value || candidate.name || '',
@@ -130,12 +155,80 @@ export default function InputBar({
       isDirectory: candidate.isDirectory,
       candidate,
     }))
-  }, [bangCompletionSource, sites, terminalSessions, userFiles, userFilesRoot])
+    // 路由别名与站点工具同列展示：别名是配置里写的（`router-config/aliases.json`），
+    // 用户看不到就会以为 `!xxx` 只能走 shell。别名排在目录候选之后，不与文件/命令抢焦点。
+    const seen = new Set(items.map((item) => item.command.trim().replace(/\s+/g, '').toLowerCase()))
+    const queryKey = command.trim().replace(/\s+/g, '').toLowerCase()
+    for (const alias of routerAliases) {
+      const text = String(alias || '').replace(/^!/, '').trim()
+      if (!text || seen.has(text.toLowerCase())) continue
+      if (queryKey && !text.toLowerCase().startsWith(queryKey)) continue
+      seen.add(text.toLowerCase())
+      items.push({
+        id: `bang:alias:${text}`,
+        title: `!${text}`,
+        command: `${text} `,
+        description: '智能路由直达别名',
+        kind: 'alias',
+        isDirectory: false,
+        // 值为「去掉 `!` 的别名 + 空格」：applySlashItem 会补回 `!` 前缀。
+        candidate: { name: `!${text}`, value: `${text} `, kind: 'alias' },
+      })
+    }
+    return items
+  }, [bangCompletionSource, routerAliases, sites, terminalSessions, userFiles, userFilesRoot])
   const slashItems = useMemo(() => {
     if (!slashMenuState) return []
     if (slashMenuState.kind === 'bang') return buildBangSlashItems(slashMenuState.query)
     return filterChatSlashCommands(webcliSlashCommands, slashMenuState.query)
   }, [buildBangSlashItems, slashMenuState, webcliSlashCommands])
+
+  const inputHistory = useMemo(() => {
+    const entries = []
+    const seen = new Set()
+    const add = (value) => {
+      const textValue = String(value || '').trim()
+      if (!textValue || seen.has(textValue)) return
+      seen.add(textValue)
+      entries.push(textValue)
+    }
+
+    for (const message of historyMessages || []) {
+      if (message?.role !== 'user') continue
+      const value = (message.content || [])
+        .filter((block) => block?.type === 'text' && block.text)
+        .map((block) => block.text)
+        .join('')
+      add(value)
+    }
+    for (const session of [...(terminalSessions || [])].reverse()) {
+      const command = String(session?.command || '').trim()
+      if (command) add(command.startsWith('!') ? command : `!${command}`)
+    }
+    for (const command of [...(commandHistory || [])].reverse()) {
+      const value = String(command || '').trim()
+      if (value) add(value.startsWith('!') ? value : `!${value}`)
+    }
+    return entries
+  }, [commandHistory, historyMessages, terminalSessions])
+
+  const navigateHistory = (direction) => {
+    if (!inputHistory.length) return
+    if (historyIndex < 0) historyDraftRef.current = text || ''
+    const nextIndex = Math.max(-1, Math.min(inputHistory.length - 1, historyIndex + direction))
+    if (nextIndex === historyIndex) return
+    historyNavigationRef.current = true
+    setHistoryIndex(nextIndex)
+    onTextChange(nextIndex < 0 ? historyDraftRef.current : inputHistory[inputHistory.length - 1 - nextIndex])
+    setSlashMenuState(null)
+    setBangCompletionSource(null)
+    requestAnimationFrame(() => {
+      const textarea = textareaRef.current
+      if (!textarea) return
+      textarea.focus()
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length)
+    })
+  }
 
   const syncSlashMenuPlacement = useCallback(() => {
     const textarea = textareaRef.current
@@ -287,6 +380,13 @@ export default function InputBar({
 
   const handleTextChange = (event) => {
     const nextText = event.target.value
+    if (historyNavigationRef.current) {
+      historyNavigationRef.current = false
+    } else if (historyIndex >= 0) {
+      setHistoryIndex(-1)
+    }
+    // Starting to type a message: let the Backend start its model process now.
+    if (onWarmup && !inputDisabled && shouldWarmupOnTextChange(text, nextText)) onWarmup(thinkingEffort)
     onTextChange(nextText)
     syncSlashMenuFromText(nextText, event.target.selectionStart ?? nextText.length)
   }
@@ -434,6 +534,17 @@ export default function InputBar({
         return
       }
     }
+    if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.shiftKey && !e.altKey) {
+      const textarea = textareaRef.current
+      const isSingleLine = !String(text || '').includes('\n')
+      const atStart = textarea ? textarea.selectionStart === 0 && textarea.selectionEnd === 0 : true
+      const atEnd = textarea ? textarea.selectionStart === textarea.value.length && textarea.selectionEnd === textarea.value.length : true
+      if (isSingleLine && ((e.key === 'ArrowUp' && atStart) || (e.key === 'ArrowDown' && atEnd))) {
+        e.preventDefault()
+        navigateHistory(e.key === 'ArrowUp' ? 1 : -1)
+        return
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       if (composingRef.current) return
       e.preventDefault()
@@ -476,7 +587,7 @@ export default function InputBar({
         onTextChange('')
         onAttachmentsChange?.([])
         setAttachmentNotice('')
-        onSend(trimmed, attachments)
+        onSend(trimmed, attachments, thinkingEffort)
         textareaRef.current?.focus()
         return
       }
@@ -489,7 +600,7 @@ export default function InputBar({
       textareaRef.current?.focus()
       return
     }
-    onSend(trimmed, attachments)
+    onSend(trimmed, attachments, thinkingEffort)
     onTextChange('')
     onAttachmentsChange?.([])
     setAttachmentNotice('')
@@ -538,12 +649,13 @@ export default function InputBar({
           flexShrink: 0,
         }
       : {
-          padding: '12px 20px 16px',
+          padding: '12px 32px 16px',
           borderTop: 'none',
           background: 'transparent',
           maxWidth: 1184,
           width: '100%',
           margin: '0 auto',
+          boxSizing: 'border-box',
           pointerEvents: 'none',
         }
 
@@ -557,7 +669,7 @@ export default function InputBar({
     border: '1px solid color-mix(in srgb, var(--border) 68%, var(--text-muted))',
     borderRadius: 16,
     padding: 0,
-    boxShadow: '0 10px 28px rgba(0,0,0,0.07)',
+    boxShadow: 'none',
     pointerEvents: 'auto',
     overflow: 'hidden',
   }
@@ -690,7 +802,7 @@ export default function InputBar({
   )
 
   const toolbarEl = (
-    <div style={{
+    <div className="chat-input-toolbar" style={{
       display: 'flex',
       justifyContent: 'space-between',
       alignItems: 'center',
@@ -704,8 +816,14 @@ export default function InputBar({
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flexWrap: 'wrap' }}>
         {uploadBtn}
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+      <div className="chat-input-toolbar-actions">
         <ContextPanel snapshot={contextSnapshot} contextLimit={contextLimit} />
+        <ModelSelector
+          disabled={!!disabled || !!streaming}
+          onPendingChange={setModelSelectionPending}
+          thinkingEffort={thinkingEffort}
+          onThinkingEffortChange={handleThinkingEffortChange}
+        />
         {actionBtn}
       </div>
     </div>
@@ -723,7 +841,7 @@ export default function InputBar({
       zIndex: 4000,
       border: '1px solid color-mix(in srgb, var(--border) 75%, var(--text-muted))',
       borderRadius: 12,
-      boxShadow: '0 12px 32px rgba(0,0,0,0.14)',
+      boxShadow: 'none',
       padding: SLASH_MENU_SHELL_PADDING,
     }
 
@@ -745,7 +863,7 @@ export default function InputBar({
             role="listbox"
             aria-label="Shell 命令提示"
           >
-            <div className="skill-slash-menu-group-title">! Shell 提示 · Shift+Tab 切换命令/文件</div>
+            <div className="skill-slash-menu-group-title">! Shell 提示 · Shift+Tab 切换命令/文件 · Esc 关闭提示</div>
             <div className="chat-slash-menu-list">
               {slashItems.map((item, index) => {
                 const active = index === slashActiveIndex
@@ -829,7 +947,7 @@ export default function InputBar({
   }
 
   return (
-    <div style={outerStyle}>
+    <div className="chat-input-composer" style={outerStyle}>
       <div
         data-chat-input-surface
         data-chat-command-mode={isCommandMode ? 'true' : 'false'}
@@ -891,6 +1009,7 @@ function commandCompletionKindLabel(item) {
   if (item?.kind === 'option') return 'arg'
   if (item?.kind === 'tool') return 'tool'
   if (item?.kind === 'site') return 'site'
+  if (item?.kind === 'alias') return 'route'
   if (item?.isDirectory) return 'dir'
   return 'file'
 }

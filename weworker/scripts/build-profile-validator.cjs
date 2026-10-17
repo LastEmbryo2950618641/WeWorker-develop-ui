@@ -52,7 +52,8 @@ function validateBuildProfile(obj) {
       }
       if (!Array.isArray(p.models) || p.models.some((model) => typeof model !== 'string')) errors.push(`"providers[${i}].models" must be a string array`);
       if (typeof p.defaultModel !== 'string') errors.push(`"providers[${i}].defaultModel" must be a string`);
-      if (p.id !== 'custom' && Array.isArray(p.models) && !p.models.includes(p.defaultModel)) errors.push(`"providers[${i}].defaultModel" must exist in models`);
+      // defaultModel 允许留空：表示该供应商不在构建期内置模型，模型列表只来自模型列表接口或用户手填。
+      if (Array.isArray(p.models) && p.defaultModel && !p.models.includes(p.defaultModel)) errors.push(`"providers[${i}].defaultModel" must exist in models or be empty`);
       if (!p.weworker || p.weworker.protocol !== 'anthropic_messages' || typeof p.weworker.baseUrl !== 'string') errors.push(`"providers[${i}].weworker" must define anthropic_messages and baseUrl`);
       if (!p.webwright || !['anthropic_messages', 'openai_chat_completions'].includes(p.webwright.protocol) || typeof p.webwright.baseUrl !== 'string') errors.push(`"providers[${i}].webwright" must define a supported protocol and baseUrl`);
       if (p.webwright && !['anthropic', 'zhipu', 'openai_chat'].includes(p.webwright.modelClass)) errors.push(`"providers[${i}].webwright.modelClass" is invalid`);

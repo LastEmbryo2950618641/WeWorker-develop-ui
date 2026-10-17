@@ -416,7 +416,7 @@ const floatingMenuPanelStyle = {
   border: '1px solid var(--border)',
   borderRadius: 12,
   background: 'var(--bg-secondary)',
-  boxShadow: '0 14px 34px rgba(0, 0, 0, 0.14)',
+  boxShadow: 'none',
   padding: SLASH_MENU_SHELL_PADDING,
 }
 

@@ -48,7 +48,7 @@ export function takeRecentWithinTokenBudget<T>(
 
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const itemTokens = Math.max(0, Math.round(Number(estimateTokens(items[index])) || 0))
-    if (retained.length > 0 && retainedTokens + itemTokens > budget) break
+    if (retainedTokens + itemTokens > budget) break
     retained.unshift(items[index])
     retainedTokens += itemTokens
   }

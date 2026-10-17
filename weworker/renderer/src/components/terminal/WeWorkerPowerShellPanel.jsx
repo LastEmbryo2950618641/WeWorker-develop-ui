@@ -1,3 +1,4 @@
+import AppDropdownInput from '../common/AppDropdownInput.jsx'
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTerminalStore } from '../../store/terminal.js'
@@ -113,7 +114,6 @@ export default function WeWorkerPowerShellPanel({ width = 420 }) {
   const [activeCompletionIndex, setActiveCompletionIndex] = useState(0)
   const [completionPlacement, setCompletionPlacement] = useState('above')
   const [completionSourceOverride, setCompletionSourceOverride] = useState(null)
-  const [encodingMenuOpen, setEncodingMenuOpen] = useState(false)
   const [contextMenu, setContextMenu] = useState(null)
   const [historyIndex, setHistoryIndex] = useState(-1)
   const [historyDraft, setHistoryDraft] = useState('')
@@ -124,7 +124,6 @@ export default function WeWorkerPowerShellPanel({ width = 420 }) {
   const completionsListRef = useRef(null)
   const inputRef = useRef(null)
   const promptRef = useRef(null)
-  const encodingRef = useRef(null)
   const screenRef = useRef(null)
   const [promptWidth, setPromptWidth] = useState(0)
 
@@ -213,16 +212,6 @@ export default function WeWorkerPowerShellPanel({ width = 420 }) {
     observer.observe(prompt)
     return () => observer.disconnect()
   }, [currentPrompt, shell])
-
-  useEffect(() => {
-    if (!encodingMenuOpen) return undefined
-    const handlePointerDown = (event) => {
-      if (encodingRef.current?.contains(event.target)) return
-      setEncodingMenuOpen(false)
-    }
-    window.addEventListener('pointerdown', handlePointerDown)
-    return () => window.removeEventListener('pointerdown', handlePointerDown)
-  }, [encodingMenuOpen])
 
   useEffect(() => {
     if (!contextMenu) return undefined
@@ -657,55 +646,9 @@ export default function WeWorkerPowerShellPanel({ width = 420 }) {
           </span>
         </div>
         <div className="weworker-terminal-panel__actions">
-          <div ref={encodingRef} className="weworker-terminal-encoding">
+          <div className="weworker-terminal-encoding">
             <span>编码</span>
-            <div className="weworker-terminal-encoding__control">
-              <input
-                value={outputEncoding}
-                onFocus={() => setEncodingMenuOpen(true)}
-                onChange={(event) => setOutputEncoding(event.target.value)}
-                onBlur={(event) => setOutputEncoding(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Escape') {
-                    event.stopPropagation()
-                    setEncodingMenuOpen(false)
-                  }
-                }}
-                spellCheck={false}
-                autoComplete="off"
-                aria-label="Shell 输出编码"
-              />
-              <button
-                type="button"
-                className="weworker-terminal-encoding__toggle"
-                aria-label="选择输出编码"
-                aria-expanded={encodingMenuOpen}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => setEncodingMenuOpen((open) => !open)}
-              >
-                ▾
-              </button>
-            </div>
-            {encodingMenuOpen && (
-              <div className="weworker-terminal-encoding__menu" role="listbox" aria-label="输出编码候选">
-                {OUTPUT_ENCODING_OPTIONS.map((encoding) => (
-                  <button
-                    key={encoding}
-                    type="button"
-                    role="option"
-                    aria-selected={outputEncoding.toLowerCase() === encoding}
-                    className={outputEncoding.toLowerCase() === encoding ? 'is-active' : ''}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => {
-                      setOutputEncoding(encoding)
-                      setEncodingMenuOpen(false)
-                    }}
-                  >
-                    {encoding}
-                  </button>
-                ))}
-              </div>
-            )}
+            <AppDropdownInput ariaLabel="Shell 输出编码" value={outputEncoding} options={OUTPUT_ENCODING_OPTIONS.map(value => ({ value, label: value }))} onChange={event => setOutputEncoding(event.target.value)} onBlur={event => setOutputEncoding(event.target.value)} spellCheck={false} autoComplete="off" />
           </div>
           <div className="weworker-terminal-shell-switch" role="tablist" aria-label="Shell 类型">
             {supportsPowerShell ? (

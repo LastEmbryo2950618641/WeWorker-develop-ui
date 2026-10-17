@@ -220,7 +220,7 @@ const updateButtonStyle = {
   minWidth: 40,
   height: 24,
   padding: '0 8px',
-  boxShadow: '0 6px 16px rgba(51, 156, 255, 0.22)',
+  boxShadow: 'none',
   WebkitAppRegion: 'no-drag',
 }
 
@@ -241,7 +241,7 @@ const modalStyle = {
   background: 'var(--bg-primary, #fff)',
   border: '1px solid var(--border, #e8e8e8)',
   borderRadius: 14,
-  boxShadow: '0 20px 60px rgba(0, 0, 0, 0.18)',
+  boxShadow: 'none',
   padding: 18,
   color: 'var(--text-primary)',
 }

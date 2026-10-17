@@ -59,18 +59,6 @@ class NotFoundError(RuntimeError):
 
 ActiveKind = Literal["task", "replay", "debug", "development"]
 TASK_HARD_STEP_TIMEOUT_MS = 45_000
-# Failsafe for workers that hang before writing their first checkpoint (e.g.
-# stuck in interpreter startup): without this, a hung-at-birth worker would
-# never trip the checkpoint-based step deadline and the task stays "running".
-WORKER_STARTUP_TIMEOUT_S = 120
-# Grace period before a cooperative cancel escalates to termination. A worker
-# that reads control.json exits on its own; one that cannot (e.g. hung before
-# main() started) would otherwise keep the busy slot forever.
-CANCEL_ESCALATION_GRACE_S = 5
-# The developer model answers in one non-streaming request that must emit a
-# complete Tool implementation; the shared 120s default aborts it mid-generation
-# (seen as ReadTimeout at exactly 120s before any byte arrives).
-DEVELOPER_REQUEST_TIMEOUT_S = 600
 
 
 def _default_config_spec(
@@ -170,26 +158,26 @@ class ProcessManager:
                 ),
             )
             raise InvalidStateError("请先在 WeWorker 中配置可用于 Webwright 的模型。") from exc
-        endpoint = active.base_url.rstrip("/")
+        endpoint = active.request_endpoint
         if active.model_class == "anthropic":
             model_config_file = "model_claude.yaml"
             overrides.extend([
                 f"model.model_name={active.model}",
-                f"model.anthropic_endpoint={endpoint}/v1/messages",
+                f"model.anthropic_endpoint={endpoint}",
             ])
             env_extra = {"ANTHROPIC_API_KEY": active.api_key}
         elif active.model_class == "zhipu":
             model_config_file = "model_zhipu.yaml"
             overrides.extend([
                 f"model.model_name={active.model}",
-                f"model.zhipu_endpoint={endpoint}/chat/completions",
+                f"model.zhipu_endpoint={endpoint}",
             ])
             env_extra = {"ZHIPUAI_API_KEY": active.api_key}
         else:
             model_config_file = "model_openai_chat.yaml"
             overrides.extend([
                 f"model.model_name={active.model}",
-                f"model.openai_chat_endpoint={endpoint}/chat/completions",
+                f"model.openai_chat_endpoint={endpoint}",
             ])
             env_extra = {"OPENAI_CHAT_API_KEY": active.api_key}
         return model_config_file, overrides, env_extra
@@ -208,20 +196,19 @@ class ProcessManager:
                 ),
             )
             raise InvalidStateError("请先在 WeWorker 中配置可用于 Webwright 的模型。") from exc
-        endpoint = active.base_url.rstrip("/")
+        endpoint = active.request_endpoint
         if active.model_class == "anthropic":
-            model = {"model_class": "anthropic", "model_name": active.model, "anthropic_endpoint": f"{endpoint}/v1/messages", "request_timeout_seconds": DEVELOPER_REQUEST_TIMEOUT_S}
+            model = {"model_class": "anthropic", "model_name": active.model, "anthropic_endpoint": endpoint}
             env_extra = {"ANTHROPIC_API_KEY": active.api_key}
         elif active.model_class == "zhipu":
-            model = {"model_class": "zhipu", "model_name": active.model, "zhipu_endpoint": f"{endpoint}/chat/completions", "request_timeout_seconds": DEVELOPER_REQUEST_TIMEOUT_S}
+            model = {"model_class": "zhipu", "model_name": active.model, "zhipu_endpoint": endpoint}
             env_extra = {"ZHIPUAI_API_KEY": active.api_key}
         else:
             model = {
                 "model_class": "openai_chat",
                 "provider_id": active.provider_id,
                 "model_name": active.model,
-                "openai_chat_endpoint": f"{endpoint}/chat/completions",
-                "request_timeout_seconds": DEVELOPER_REQUEST_TIMEOUT_S,
+                "openai_chat_endpoint": endpoint,
             }
             env_extra = {"OPENAI_CHAT_API_KEY": active.api_key}
         return model, env_extra
@@ -269,13 +256,10 @@ class ProcessManager:
                 process_options["start_new_session"] = True
             process = subprocess.Popen(
                 command,
-                # Never let the worker inherit the parent's stdio. On Windows the
-                # server itself runs with a broken/absent stdin handle (spawned by
-                # Electron with piped stdio via `uv run`), and the uv trampoline
-                # then re-opens a console-input handle for the child. CPython's
-                # startup flushes/seeks stdin before any user code runs, which can
-                # hang forever on that handle. An explicit NUL stdin removes the
-                # whole class of failures.
+                # 不继承父进程 stdin：服务器自身的 stdin 是启动方（Electron/node）给的管道，
+                # 该句柄在子解释器启动引导阶段被 stat 时会挂在内核态（受控实验：同一条命令行、
+                # 同一个父进程，只把 stdin 换成 DEVNULL 即 6/6 健康，原样 6/6 冻结）。
+                # worker 全都不读自己的 stdin，故安全。
                 stdin=subprocess.DEVNULL,
                 stdout=log_handle,
                 stderr=subprocess.STDOUT,
@@ -976,53 +960,13 @@ class ProcessManager:
                 "created_at": now_iso(),
             }
             atomic_write_json(self.store.control_path(task_id), payload)
-            task = self.store.update_task(
+            return self.store.update_task(
                 task_id,
                 status=TaskStatus.CANCEL_REQUESTED.value,
                 error="",
                 error_code="",
                 error_stage="",
             )
-            self._schedule_cancel_escalation(task_id, process)
-            return task
-
-    def _schedule_cancel_escalation(self, task_id: str, process: subprocess.Popen) -> None:
-        """Escalate a cooperative cancel to termination after a grace period.
-
-        A healthy worker notices control.json and exits on its own. One that
-        cannot (hung in interpreter startup, stuck in a blocking call) would
-        otherwise stay in cancel_requested forever, so after the grace period we
-        terminate it; the regular watcher then finishes the task as cancelled.
-        """
-
-        def _escalate() -> None:
-            try:
-                process.wait(timeout=CANCEL_ESCALATION_GRACE_S)
-                return
-            except subprocess.TimeoutExpired:
-                pass
-            if process.poll() is not None or self.active_process is not process:
-                return
-            append_process_log(
-                self.store.process_log_path(task_id),
-                source="lifecycle",
-                event="cancel_escalated",
-            )
-            self._terminate_process_tree(process)
-            try:
-                process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self._terminate_process_tree(process, force=True)
-                try:
-                    process.wait()
-                except subprocess.TimeoutExpired:
-                    pass
-
-        threading.Thread(
-            target=_escalate,
-            name=f"cancel-escalation-{task_id}",
-            daemon=True,
-        ).start()
 
     def start_replay(
         self,
@@ -1239,29 +1183,21 @@ class ProcessManager:
                 self._clear_active_locked(process=process)
 
     def _wait_for_task_process(self, task_id: str, process: subprocess.Popen) -> int:
-        started_at = time.monotonic()
         while True:
             try:
                 return process.wait(timeout=0.25)
             except subprocess.TimeoutExpired:
                 checkpoint = try_read_json(self.store.checkpoint_path(task_id), attempts=1)
-                current_checkpoint = (
-                    isinstance(checkpoint, dict)
-                    and str(checkpoint.get("run_id") or "") == str(self.active_run_id or "")
-                )
-                if current_checkpoint:
-                    try:
-                        deadline_at_ms = int(checkpoint.get("deadline_at_ms") or 0)
-                    except (TypeError, ValueError):
-                        deadline_at_ms = 0
-                    if deadline_at_ms <= 0 or int(time.time() * 1000) < deadline_at_ms:
-                        continue
-                elif time.monotonic() - started_at <= WORKER_STARTUP_TIMEOUT_S:
-                    # Current run has not written its first checkpoint yet; still
-                    # within the startup grace window.
+                if not isinstance(checkpoint, dict):
                     continue
-                else:
-                    checkpoint = {}
+                if str(checkpoint.get("run_id") or "") != str(self.active_run_id or ""):
+                    continue
+                try:
+                    deadline_at_ms = int(checkpoint.get("deadline_at_ms") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if deadline_at_ms <= 0 or int(time.time() * 1000) < deadline_at_ms:
+                    continue
                 with self.lock:
                     task = self.store.read_task(task_id)
                     if str(task.get("status") or "") in {
@@ -1269,31 +1205,13 @@ class ProcessManager:
                         TaskStatus.CANCELLED.value,
                     }:
                         continue
-                    if current_checkpoint:
-                        self._mark_task_step_timeout(task_id, checkpoint)
-                    else:
-                        self._mark_worker_startup_timeout(task_id)
+                    self._mark_task_step_timeout(task_id, checkpoint)
                     self._terminate_process_tree(process)
                 try:
                     return process.wait(timeout=2)
                 except subprocess.TimeoutExpired:
                     self._terminate_process_tree(process, force=True)
                     return process.wait()
-
-    def _mark_worker_startup_timeout(self, task_id: str) -> None:
-        error = "工作进程启动超时（长时间无响应），本次任务已终止。"
-        self.store.update_task(
-            task_id,
-            status=TaskStatus.FAILED.value,
-            error=error,
-            error_code="worker_init_timeout",
-            error_stage="worker_startup",
-        )
-        append_process_log(
-            self.store.process_log_path(task_id),
-            source="lifecycle",
-            event="worker_startup_timeout",
-        )
 
     def _mark_task_step_timeout(self, task_id: str, checkpoint: dict[str, Any]) -> None:
         step = int(checkpoint.get("step") or 0)

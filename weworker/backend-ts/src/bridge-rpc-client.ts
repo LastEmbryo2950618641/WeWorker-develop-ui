@@ -34,6 +34,7 @@ export interface GenerationModelConfig {
   protocol: 'anthropic' | 'openai'
   api_key: string
   base_url: string
+  base_url_is_full?: boolean
   model: string
   max_output_tokens?: number
   model_max_output_tokens?: number

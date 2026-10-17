@@ -31,8 +31,9 @@ const BUBBLE_ASSISTANT = {
   boxShadow: 'none',
 }
 
-export default function MessageItem({ message, streaming, isLast, selectMode, isSelected, onToggleSelect, onEnterSelectMode, onDelete, onChoice, onShellCommand, plan, planSnapshot, planSentinelRef, hideEmbeddedPlan, hideLivePlan = false, planExpanded, onPlanExpandedChange, planStepDetails, onPlanStepDetailsChange, suppressPlanTools, compactAssistant = false }) {
+export default function MessageItem({ message, streaming, compacting = false, isLast, selectMode, isSelected, onToggleSelect, onEnterSelectMode, onDelete, onChoice, onShellCommand, plan, planSnapshot, planSentinelRef, hideEmbeddedPlan, hideLivePlan = false, planExpanded, onPlanExpandedChange, planStepDetails, onPlanStepDetailsChange, suppressPlanTools, compactAssistant = false }) {
   const isUser = message.role === 'user'
+  const showStreaming = streaming && !compacting
   const isEmpty = !message.content?.length
   const hasVisibleUserContent = isUser && !isEmpty
   const hasVisibleAssistantContent = !isUser && (
@@ -47,8 +48,8 @@ export default function MessageItem({ message, streaming, isLast, selectMode, is
     })
   )
   const showBubble = isUser
-    ? (hasVisibleUserContent || (isEmpty && streaming && isLast))
-    : (hasVisibleAssistantContent || (isEmpty && streaming && isLast))
+    ? (hasVisibleUserContent || (isEmpty && showStreaming && isLast))
+    : (hasVisibleAssistantContent || (isEmpty && showStreaming && isLast))
 
   const [showMenu, setShowMenu] = useState(false)
   const [menuPos, setMenuPos] = useState({ x: 0, y: 0 })
@@ -188,7 +189,7 @@ export default function MessageItem({ message, streaming, isLast, selectMode, is
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: isUser ? 'flex-end' : 'flex-start', gap: 4, minWidth: 0 }}>
         {showBubble && (
           <div style={isUser ? BUBBLE_USER : BUBBLE_ASSISTANT}>
-            {isEmpty && streaming && isLast ? (
+            {isEmpty && showStreaming && isLast ? (
               <span style={{ color: 'var(--text-muted)' }}><StreamingCursor /></span>
             ) : (
               renderMessageContent(message.content ?? [], {
@@ -198,7 +199,7 @@ export default function MessageItem({ message, streaming, isLast, selectMode, is
                 livePlan: !isUser && plan ? plan : null,
                 planSnapshot: !isUser ? planSnapshot : null,
                 hideLivePlan: !isUser && hideLivePlan,
-                streaming: !isUser && streaming && isLast,
+                streaming: !isUser && showStreaming && isLast,
                 suppressPlanTools: !isUser && suppressPlanTools,
                 planSentinelRef: !isUser ? planSentinelRef : null,
                 hideEmbeddedPlan: !isUser && hideEmbeddedPlan,
@@ -208,7 +209,7 @@ export default function MessageItem({ message, streaming, isLast, selectMode, is
                 onPlanStepDetailsChange: !isUser ? onPlanStepDetailsChange : undefined,
               })
             )}
-            {!isEmpty && streaming && isLast && !isUser && <StreamingCursor />}
+            {!isEmpty && showStreaming && isLast && !isUser && <StreamingCursor />}
           </div>
         )}
       </div>
@@ -221,7 +222,7 @@ export default function MessageItem({ message, streaming, isLast, selectMode, is
           style={{
           position: 'fixed', left: menuPos.x, top: menuPos.y, zIndex: 1000,
           background: 'var(--bg-secondary)', border: '1px solid var(--border)',
-          borderRadius: 8, padding: 4, boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+          borderRadius: 8, padding: 4, boxShadow: 'none',
           minWidth: 120, userSelect: 'none', WebkitUserSelect: 'none',
         }}>
           <MenuItem label="复制" onClick={handleCopy} />
@@ -632,7 +633,7 @@ function ZoomableImage({ src }) {
 function TurnTimingFooter({ block }) {
   const segs = [
     `⏱ 本轮 ${formatDuration(block.totalMs)}`,
-    `思考 ${formatDuration(block.llmMs)}`,
+    `模型 ${formatDuration(block.llmMs)}`,
     `执行 ${formatDuration(block.execMs)}`,
     `${block.steps ?? 0} 步`,
   ]

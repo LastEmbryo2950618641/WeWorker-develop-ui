@@ -288,7 +288,7 @@ const detailHeroStyle = {
   borderRadius: 18,
   border: '1px solid color-mix(in srgb, var(--accent) 20%, var(--border))',
   background: 'linear-gradient(135deg, color-mix(in srgb, var(--accent) 18%, var(--bg-secondary)), color-mix(in srgb, #c7b8ff 28%, var(--bg-secondary)))',
-  boxShadow: '0 18px 46px rgba(0,0,0,0.12)',
+  boxShadow: 'none',
   overflow: 'hidden',
   padding: '36px 54px',
   boxSizing: 'border-box',
@@ -314,7 +314,7 @@ const detailHeroUserBubbleStyle = {
   borderRadius: '14px 14px 4px 14px',
   border: '1px solid var(--border)',
   background: 'color-mix(in srgb, var(--bg-secondary) 94%, transparent)',
-  boxShadow: '0 12px 28px rgba(0,0,0,0.10)',
+  boxShadow: 'none',
   fontSize: 14,
   lineHeight: 1.55,
   boxSizing: 'border-box',
@@ -330,7 +330,7 @@ const detailHeroAssistantBubbleStyle = {
   borderRadius: '14px 14px 14px 4px',
   border: '1px solid color-mix(in srgb, var(--accent) 26%, var(--border))',
   background: 'color-mix(in srgb, var(--bg-secondary) 88%, var(--accent) 8%)',
-  boxShadow: '0 12px 28px rgba(0,0,0,0.10)',
+  boxShadow: 'none',
   fontSize: 14,
   lineHeight: 1.62,
   whiteSpace: 'pre-wrap',
@@ -375,7 +375,7 @@ const detailScenarioCardStyle = {
   fontFamily: 'inherit',
   display: 'grid',
   gap: 7,
-  boxShadow: '0 8px 20px rgba(0,0,0,0.06)',
+  boxShadow: 'none',
 }
 
 const detailScenarioTitleStyle = {

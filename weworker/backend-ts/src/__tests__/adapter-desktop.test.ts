@@ -8,6 +8,7 @@ import { resolveToolsForAdapter } from '../adapter-tool-list.js'
 import { getSiteEnabled } from '../config.js'
 import { buildLoadedSkillContext } from '../skill-context.js'
 import { buildEnabledSkillIndex } from '../context/runtime-context.js'
+import { getDesktopAdapterCatalog, refreshDesktopAdapterSkillsIfStale } from '../adapter-catalog-cache.js'
 import { describeDesktopAdapters, toggleDesktopAdapter, refreshDesktopAdapterSkills } from '../../../../webcli/adapter-desktop.js'
 // @ts-expect-error Shared JavaScript installation implementation, exercised directly with temporary fixtures.
 import { installAdapter, selectAdapter, removeInstalledAdapter } from '../../../../webcli/adapter-install-store.js'
@@ -143,5 +144,54 @@ describe('desktop Adapter catalog and Skill continuity', () => {
     parseAllAdapters(); install()
     fs.writeFileSync(path.join(root, 'data/adapter-state/public/registry.json'), '{invalid')
     expect(() => parseAllAdapters()).toThrow(/inspection/)
+  })
+
+  it('shares one catalog snapshot until registry state or package files change', () => {
+    const first = install()
+    const snapshot = getDesktopAdapterCatalog()
+    expect(getDesktopAdapterCatalog()).toBe(snapshot)
+    expect(snapshot.effective.map(entry => entry.digest)).toEqual([first.digest])
+    // An in-place edit of an installed snapshot is still reported without a registry change.
+    parseAllAdapters()
+    fs.writeFileSync(path.join(first.executionRoot, 'extension/commands/list.js'), 'changed content')
+    expect(getDesktopAdapterCatalog()).not.toBe(snapshot)
+    expect(parseAllAdapters().get('demo')?.managed?.diagnostics).toContain('ADAPTER_CONTENT_CHANGED')
+    const second = install('1.1.0', 'updated')
+    expect(getDesktopAdapterCatalog().effective.map(entry => entry.digest)).toEqual([second.digest])
+    const current = getDesktopAdapterCatalog()
+    clearAdapterCache()
+    expect(getDesktopAdapterCatalog()).not.toBe(current)
+  })
+
+  it('does not rewrite unchanged managed Skill files', () => {
+    install()
+    const target = path.join(root, 'skills')
+    const file = path.join(target, 'webcli-demo', 'SKILL.md')
+    refreshDesktopAdapterSkills(target)
+    const past = new Date(Date.now() - 60_000)
+    fs.utimesSync(file, past, past)
+    const before = fs.statSync(file).mtimeMs
+    expect(refreshDesktopAdapterSkills(target, { catalog: getDesktopAdapterCatalog() }).installed).toBe(1)
+    expect(fs.statSync(file).mtimeMs).toBe(before)
+    install('1.1.0', 'updated')
+    refreshDesktopAdapterSkills(target, { catalog: getDesktopAdapterCatalog() })
+    expect(fs.statSync(file).mtimeMs).not.toBe(before)
+    expect(fs.readFileSync(file, 'utf8')).toContain('demo.updated')
+  })
+
+  it('skips the per-turn Skill refresh until the catalog or managed folders change', () => {
+    install()
+    const target = path.join(root, 'skills')
+    const directory = path.join(target, 'webcli-demo')
+    expect(refreshDesktopAdapterSkillsIfStale(target).skipped).toBe(false)
+    expect(refreshDesktopAdapterSkillsIfStale(target).skipped).toBe(true)
+    // A removed managed Skill is restored on the next turn.
+    fs.rmSync(directory, { recursive: true, force: true })
+    expect(refreshDesktopAdapterSkillsIfStale(target).skipped).toBe(false)
+    expect(fs.existsSync(path.join(directory, 'SKILL.md'))).toBe(true)
+    install('1.1.0', 'updated')
+    expect(refreshDesktopAdapterSkillsIfStale(target).skipped).toBe(false)
+    expect(fs.readFileSync(path.join(directory, 'SKILL.md'), 'utf8')).toContain('demo.updated')
+    expect(refreshDesktopAdapterSkillsIfStale(target).skipped).toBe(true)
   })
 })

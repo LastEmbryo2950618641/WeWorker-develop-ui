@@ -486,6 +486,13 @@ export class WebSocketBridge extends EventEmitter {
     this._pendingRequests = new Map();
     this._requestCounter = 0;
 
+    /**
+     * 调用分段观测：traceID -> { receivedAt, dispatchedAt, clientStartedAt, toolName }。
+     * 只用于日志（① CLI 启动→收单 ② 收单→派发 ③ 派发→扩展返回），调用结束即删除。
+     * @type {Map<string, { receivedAt: number, dispatchedAt: number | null, clientStartedAt: number | null, toolName: string }>}
+     */
+    this._callTimings = new Map();
+
     /** @type {Set<import('ws').WebSocket>} 所有连接的客户端 */
     this._clients = new Set();
 
@@ -799,12 +806,53 @@ export class WebSocketBridge extends EventEmitter {
 
   // ─── 处理来自CLI客户端的请求 ─────────────────────────────────────────────────
 
+  /**
+   * 记录一次 call_tool 的分段观测起点（仅日志用途；按 traceID 关联，缺 traceID 时不做）。
+   * `clientStartedAt` 由 CLI 在进程启动时带上，用于区分「CLI 启动慢」和「bridge/扩展慢」。
+   */
+  _beginCallTiming(msg, traceID, id, toolName) {
+    const key = traceID || null;
+    if (!key) return null;
+    const clientStartedAt = Number(msg && msg.clientStartedAt);
+    const entry = {
+      receivedAt: Date.now(),
+      dispatchedAt: null,
+      clientStartedAt: Number.isFinite(clientStartedAt) && clientStartedAt > 0 ? clientStartedAt : null,
+      toolName: String(toolName || ''),
+    };
+    this._callTimings.set(key, entry);
+    if (this._callTimings.size > 32) {
+      const oldest = this._callTimings.keys().next().value;
+      if (oldest !== key) this._callTimings.delete(oldest);
+    }
+    return { key, entry, id };
+  }
+
+  /** 调用结束：打一行分段日志（收单/派发/返回），扩展内部耗时由扩展侧 trace 提供。 */
+  _finishCallTiming(callTiming, tracePrefix, toolName) {
+    if (!callTiming) return;
+    const { key, entry } = callTiming;
+    this._callTimings.delete(key);
+    const repliedAt = Date.now();
+    const parts = [];
+    if (entry.clientStartedAt !== null) parts.push(`cli启动→收单=${Math.max(0, entry.receivedAt - entry.clientStartedAt)}ms`);
+    if (entry.dispatchedAt !== null) {
+      parts.push(`收单→派发=${Math.max(0, entry.dispatchedAt - entry.receivedAt)}ms`);
+      parts.push(`派发→扩展返回=${Math.max(0, repliedAt - entry.dispatchedAt)}ms`);
+    } else {
+      parts.push('收单→派发=未派发');
+    }
+    parts.push(`bridge总计=${repliedAt - entry.receivedAt}ms`);
+    process.stderr.write(`[${ts()}] ${tracePrefix}[Bridge] 调用分段: ${toolName} — ${parts.join(' ')}\n`);
+  }
+
   async _handleClientRequest(msg) {
     const traceID = msg.traceID || null;
     const tracePrefix = traceID ? `[${traceID}] ` : '';
 
     if (msg.type === 'call_tool') {
       const { toolName, args, id } = msg;
+      const callTiming = this._beginCallTiming(msg, traceID, id, toolName);
       process.stderr.write(`[${ts()}] ${tracePrefix}[Bridge] 收到调用: ${toolName}\n`);
 
       try {
@@ -814,6 +862,8 @@ export class WebSocketBridge extends EventEmitter {
       } catch (err) {
         process.stderr.write(`[${ts()}] ${tracePrefix}[Bridge] 调用失败: ${toolName} — ${err.message}\n`);
         this._broadcast({ type: 'call_tool_error', id, error: err.message, traceID });
+      } finally {
+        this._finishCallTiming(callTiming, tracePrefix, toolName);
       }
     } else if (msg.type === 'client_action_capture_start' || msg.type === 'client_action_capture_analyze' || msg.type === 'exploration_action_capture_start') {
       const { modelConfig, analysisContextId: ignoredContextId, ...captureRequest } = msg;
@@ -1365,6 +1415,11 @@ export class WebSocketBridge extends EventEmitter {
       return false;
     }
     this._extensionWs.send(JSON.stringify(msg));
+    // ② 收单→派发：call_tool 真正写进扩展连接的时刻（失败时不算派发完成）。
+    if (msg && msg.type === 'call_tool' && msg.traceID) {
+      const timing = this._callTimings.get(msg.traceID);
+      if (timing) timing.dispatchedAt = Date.now();
+    }
     process.stderr.write(`[${ts()}] [Bridge] -> extension: ${JSON.stringify(msg).substring(0, 200)}\n`);
     return true;
   }

@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net'
 import { describe, expect, it, vi } from 'vitest'
 import type { Settings } from '../config.js'
 import { getProvider } from '../provider-registry.js'
-import { probeMainConnection } from '../provider-model-services.js'
+import { listProviderModels, probeMainConnection } from '../provider-model-services.js'
 import { createExplorationModelService, explorationSettingsPatch, registerExplorationModelRoutes } from '../exploration-model-settings.js'
 
 const settings = (patch: Partial<Settings> = {}) => ({
@@ -17,8 +17,32 @@ const chatResponse = () => Response.json({ choices: [{ message: { content: '{"ok
 const toolResponse = () => Response.json({ content: [{ type: 'tool_use', name: 'connection_check', input: { ok: true } }] })
 const anthropicTextResponse = () => Response.json({ content: [{ type: 'text', text: '{"ok":true}' }] })
 const mainInput = () => ({ provider: getProvider('custom')!, apiKey: 'fixture-main-key', model: 'fixture-model', anthropicBaseUrl: 'https://example.com/proxy', autoAuth: true })
+const configuredSettings = (id: string, baseUrl: string) => settings({
+  active_model_configuration: id,
+  model_configurations: {
+    [id]: { provider_id: 'custom', api_key: 'fixture-main-key', model: 'fixture-model',
+      base_url: baseUrl, openai_base_url: '', context_limit: 1000000, auth_type: 'api_key' },
+  },
+})
 
 describe('main model onboarding', () => {
+  it('preserves a complete endpoint through protocol verification and automatic authentication retry', async () => {
+    const endpoint = 'https://example.com/custom/inference/?version=1&route=a%2Fb'
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response('invalid key', { status: 401 })).mockResolvedValueOnce(toolResponse())
+    expect(await probeMainConnection({ ...mainInput(), anthropicBaseUrl: endpoint, anthropicFullUrl: true }, fetchMock))
+      .toMatchObject({ ok: true, auth_type: 'api_key' })
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([endpoint, endpoint])
+    expect(fetchMock.mock.calls.every(([, options]) => options?.redirect === 'error')).toBe(true)
+  })
+
+  it('lists models only through an explicitly configured base URL when the other protocol uses a complete URL', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json({ data: [{ id: 'fixture-model' }] }))
+    const input = { ...mainInput(), anthropicBaseUrl: 'https://example.com/inference/?version=1', anthropicFullUrl: true,
+      openaiBaseUrl: 'https://example.org/v1', openaiFullUrl: false }
+    expect(await listProviderModels(input, fetchMock)).toEqual({ models: ['fixture-model'], source: 'remote' })
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(['https://example.org/v1/models'])
+  })
+
   it('verifies a tool call using only the Claude Code address', async () => {
     const fetchMock = vi.fn(async () => toolResponse())
     expect(await probeMainConnection(mainInput(), fetchMock)).toMatchObject({ ok: true, auth_type: 'auth_token' })
@@ -27,6 +51,20 @@ describe('main model onboarding', () => {
     expect(url).toBe('https://example.com/proxy/v1/messages')
     expect(JSON.parse(options.body as string).tool_choice).toEqual({ type: 'tool', name: 'connection_check' })
     expect(options.redirect).toBe('error')
+  })
+
+  it('retries without tools when a thinking model rejects tool_choice', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response('tool_choice is not supported in thinking mode', { status: 400 }))
+      .mockResolvedValueOnce(Response.json({ content: [{ type: 'text', text: '{"ok":true}' }] }))
+
+    expect(await probeMainConnection(mainInput(), fetchMock)).toMatchObject({ ok: true, auth_type: 'auth_token' })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const firstBody = JSON.parse(fetchMock.mock.calls[0][1]?.body as string)
+    const retryBody = JSON.parse(fetchMock.mock.calls[1][1]?.body as string)
+    expect(firstBody.tool_choice).toEqual({ type: 'tool', name: 'connection_check' })
+    expect(retryBody).not.toHaveProperty('tools')
+    expect(retryBody).not.toHaveProperty('tool_choice')
   })
 
   it('retries the other auth header only after an authentication failure', async () => {
@@ -105,6 +143,42 @@ describe('main model onboarding', () => {
 })
 
 describe('exploration connection preparation', () => {
+  it('passes through a complete OpenAI endpoint and rechecks after changing its URL mode', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () => chatResponse())
+    const service = createExplorationModelService(fetchMock)
+    const full = settings({ openai_base_url_custom: 'https://example.com/inference', openai_base_url_is_full_custom: true })
+    await service.check(full)
+    expect(service.status(full)).toMatchObject({ status: 'connected', candidate_url_is_full: true })
+    const base = { ...full, openai_base_url_is_full_custom: false }
+    expect(service.status(base).status).toBe('pending')
+    await service.check(base)
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'https://example.com/inference', 'https://example.com/inference/chat/completions',
+    ])
+  })
+
+  it.each(['switch', 'edit'])('invalidates a verified address after a configuration %s with the same model and key', async change => {
+    const fetchMock = vi.fn<typeof fetch>(async () => chatResponse())
+    const service = createExplorationModelService(fetchMock)
+    const first = configuredSettings('model-fixture-a', 'https://example.com/first')
+    const second = configuredSettings(change === 'switch' ? 'model-fixture-b' : 'model-fixture-a', 'https://example.org/second')
+    await service.check(first)
+    expect(service.status(first).status).toBe('connected')
+    expect(service.status(second).status).toBe('pending')
+    await service.check(second)
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'https://example.com/first/chat/completions', 'https://example.org/second/chat/completions',
+    ])
+    expect(service.status(second).status).toBe('connected')
+  })
+
+  it('keeps status readable when the active configuration cannot be resolved', async () => {
+    const service = createExplorationModelService(vi.fn(async () => chatResponse()))
+    await service.check(settings())
+    expect(service.status(configuredSettings('model-fixture-a', 'file:///tmp/fixture')).status).toBe('pending')
+    expect(service.status(settings({ api_key: '' })).status).toBe('pending')
+  })
+
   it('reuses the exact address, deduplicates checks and invalidates success after model or key changes', async () => {
     const fetchMock = vi.fn(async () => chatResponse())
     const service = createExplorationModelService(fetchMock)
@@ -158,6 +232,39 @@ async function withRoutes(upstream: typeof fetch, run: (url: string, get: () => 
 const post = (url: string, body: unknown) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 
 describe('exploration settings API', () => {
+  it('verifies, persists and returns an independent complete endpoint without altering its path or query', async () => {
+    const endpoint = 'https://example.org/custom/inference/?version=1&route=a%2Fb'
+    const upstream = vi.fn<typeof fetch>(async () => chatResponse())
+    await withRoutes(upstream, async (url, get) => {
+      const response = await post(url, { base_url: endpoint, base_url_is_full: true, use_main_key: true, model: '' })
+      expect(await response.json()).toMatchObject({ ok: true, status: 'independent',
+        base_url: endpoint, base_url_is_full: true, candidate_url: endpoint, candidate_url_is_full: true })
+      expect(upstream.mock.calls.map(([address]) => address)).toEqual([endpoint])
+      expect(get()).toMatchObject({ exploration_base_url: endpoint, exploration_base_url_is_full: true })
+      expect((await post(url, { base_url: endpoint, base_url_is_full: 'true', use_main_key: true, model: '' })).status).toBe(400)
+    })
+  })
+
+  it.each([
+    ['check', 'switch'], ['check', 'edit'], ['save', 'switch'], ['save', 'edit'],
+  ])('rejects an in-flight %s after a configuration address %s', async (action, change) => {
+    let release!: (value: Response) => void
+    let started!: () => void
+    const start = new Promise<void>(resolve => { started = resolve })
+    const upstream = vi.fn(() => { started(); return new Promise<Response>(resolve => { release = resolve }) })
+    await withRoutes(upstream, async (url, get, set) => {
+      set(configuredSettings('model-fixture-a', 'https://example.com/first'))
+      const response = action === 'check' ? post(`${url}/check`, {})
+        : post(url, { base_url: 'https://example.com/exploration', use_main_key: true, model: '' })
+      await start
+      set(configuredSettings(change === 'switch' ? 'model-fixture-b' : 'model-fixture-a', 'https://example.org/second'))
+      release(chatResponse())
+      expect((await response).status).toBe(409)
+      expect(get().exploration_base_url).toBe('')
+      expect(await (await fetch(url)).json()).toMatchObject({ status: 'pending' })
+    })
+  })
+
   it('returns an editable suggestion without persisting it or requiring main credentials', async () => {
     const upstream = vi.fn(async () => chatResponse())
     await withRoutes(upstream, async (url, get, set) => {

@@ -14,7 +14,7 @@ import {
   type GenerationModelConfig,
   type GenerationRunSnapshot,
 } from './bridge-rpc-client.js'
-import { assertAllowedLlmBaseUrl } from './llm-egress.js'
+import { assertAllowedLlmBaseUrl, normalizeLlmUrlInput } from './llm-egress.js'
 import { buildRuntimeAllowedLlmBaseUrls, getProvider } from './provider-registry.js'
 import { getSiteMemory, saveSiteMemoryFromActionCapture, saveSiteMemoryFromWorkflow, type SiteMemoryRecord } from './site-memory.js'
 import {
@@ -555,10 +555,10 @@ export function resolveClientGenerationModelConfig(settings: Settings): Generati
   const provider = getProvider(settings.active_provider)
   if (!provider || !settings.api_key || !settings.model) throw new Error('当前模型配置不完整')
   const protocol = provider.weworker.protocol === 'anthropic_messages' ? 'anthropic' : 'openai'
-  const baseUrl = assertAllowedLlmBaseUrl(
-    settings.base_url,
-    buildRuntimeAllowedLlmBaseUrls(settings.base_url),
-  )
+  const fullUrl = settings.active_provider === 'custom' && settings.base_url_is_full === true
+  const baseUrl = fullUrl
+    ? normalizeLlmUrlInput(settings.base_url, true)
+    : assertAllowedLlmBaseUrl(settings.base_url, buildRuntimeAllowedLlmBaseUrls(settings.base_url))
   return {
     // ai-analyzer has no separate GLM preset; the explicit protocol/base URL
     // below preserve the client's provider route without falling back to disk.
@@ -566,6 +566,7 @@ export function resolveClientGenerationModelConfig(settings: Settings): Generati
     protocol,
     api_key: settings.api_key,
     base_url: baseUrl,
+    ...(fullUrl ? { base_url_is_full: true } : {}),
     model: settings.model,
   }
 }

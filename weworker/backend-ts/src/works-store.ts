@@ -4,6 +4,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { randomUUID } from 'node:crypto'
 import type { LoadedSkillContext } from './skill-context.js'
+import { ensureUserDirectory } from './config.js'
 
 const DB_DIR = path.join(os.homedir(), '.weworker')
 const DB_FILE = path.join(DB_DIR, 'works.db')
@@ -14,11 +15,22 @@ export interface Work {
   id: string
   title: string
   label: LabelColor
+  project_id: string | null
+  /** 该任务使用的风格 id（列名沿用历史命名，改列名需要数据迁移）。 */
   zcf_role: string | null
-  zcf_mode: string | null
   created_at: string
   updated_at: string
 }
+
+export interface Project {
+  id: string
+  name: string
+  folder_path: string
+  created_at: string
+  updated_at: string
+}
+
+export type ProjectSummary = Omit<Project, 'folder_path'>
 
 export interface Message {
   id: string
@@ -77,6 +89,15 @@ function db(): DatabaseSync {
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL DEFAULT '',
       label TEXT DEFAULT NULL,
+      project_id TEXT DEFAULT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
+    );
+    CREATE TABLE IF NOT EXISTS projects (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      folder_path TEXT NOT NULL UNIQUE,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -133,45 +154,154 @@ function db(): DatabaseSync {
   } catch {
     // Column already exists — ignore
   }
+  // 历史列 `zcf_mode`（已移除的工作流模式）保留在 schema 里：删除列属于数据库
+  // schema 变更，本次不迁移、不删用户数据；读写侧已不再使用该列。
   try {
     _db.exec('ALTER TABLE works ADD COLUMN zcf_mode TEXT DEFAULT NULL')
+  } catch {
+    // Column already exists — ignore
+  }
+  try {
+    _db.exec('ALTER TABLE works ADD COLUMN project_id TEXT DEFAULT NULL REFERENCES projects(id) ON DELETE SET NULL')
   } catch {
     // Column already exists — ignore
   }
   return _db
 }
 
-export function createWork(title = ''): Work {
-  const now = new Date().toISOString()
-  const id = randomUUID()
-  db().prepare('INSERT INTO works (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)').run(id, title, now, now)
-  return { id, title, label: null, zcf_role: null, zcf_mode: null, created_at: now, updated_at: now }
+function toProjectSummary(project: Project): ProjectSummary {
+  const { folder_path: _folderPath, ...summary } = project
+  return summary
 }
 
-export function updateWorkZcfPrefs(
+function normalizeProjectName(value: string): string {
+  const name = String(value || '')
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/g, '')
+  if (!name || name === '.' || name === '..') throw new Error('project name is required')
+  return name.slice(0, 120)
+}
+
+function projectFolderPath(name: string): string {
+  return path.join(ensureUserDirectory(), name)
+}
+
+function assertProjectFolderInsideUserDirectory(folderPath: string): void {
+  const root = path.resolve(ensureUserDirectory())
+  const target = path.resolve(folderPath)
+  if (target === root || !target.startsWith(`${root}${path.sep}`)) {
+    throw new Error('project folder must be inside the user directory')
+  }
+}
+
+export function listProjects(): ProjectSummary[] {
+  const projects = db().prepare('SELECT id, name, folder_path, created_at, updated_at FROM projects ORDER BY updated_at DESC').all() as unknown as Project[]
+  return projects.map(toProjectSummary)
+}
+
+export function getProject(id: string): Project | null {
+  return (db().prepare('SELECT id, name, folder_path, created_at, updated_at FROM projects WHERE id = ?').get(id) as unknown as Project) ?? null
+}
+
+export function createProject(rawName: string): ProjectSummary {
+  const name = normalizeProjectName(rawName)
+  const folderPath = projectFolderPath(name)
+  assertProjectFolderInsideUserDirectory(folderPath)
+  if (fs.existsSync(folderPath)) throw new Error('project folder already exists')
+  const now = new Date().toISOString()
+  const project: Project = { id: randomUUID(), name, folder_path: folderPath, created_at: now, updated_at: now }
+  fs.mkdirSync(folderPath)
+  try {
+    db().prepare('INSERT INTO projects (id, name, folder_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').run(
+      project.id, project.name, project.folder_path, project.created_at, project.updated_at,
+    )
+  } catch (error) {
+    fs.rmdirSync(folderPath)
+    throw error
+  }
+  return toProjectSummary(project)
+}
+
+export function renameProject(id: string, rawName: string): ProjectSummary | null {
+  const project = getProject(id)
+  if (!project) return null
+  const name = normalizeProjectName(rawName)
+  if (name === project.name) return toProjectSummary(project)
+  const nextFolderPath = projectFolderPath(name)
+  assertProjectFolderInsideUserDirectory(nextFolderPath)
+  if (fs.existsSync(nextFolderPath)) throw new Error('project folder already exists')
+  fs.renameSync(project.folder_path, nextFolderPath)
+  const updatedAt = new Date().toISOString()
+  try {
+    db().prepare('UPDATE projects SET name = ?, folder_path = ?, updated_at = ? WHERE id = ?').run(name, nextFolderPath, updatedAt, id)
+  } catch (error) {
+    try { fs.renameSync(nextFolderPath, project.folder_path) } catch { /* preserve original error */ }
+    throw error
+  }
+  return { id: project.id, name, created_at: project.created_at, updated_at: updatedAt }
+}
+
+export function deleteProject(id: string): void {
+  const project = getProject(id)
+  if (!project) throw new Error('project not found')
+  const workCount = (db().prepare('SELECT COUNT(*) AS count FROM works WHERE project_id = ?').get(id) as { count: number }).count
+  if (workCount > 0) throw new Error('project must be empty before deletion')
+  assertProjectFolderInsideUserDirectory(project.folder_path)
+  if (fs.existsSync(project.folder_path)) {
+    const entries = fs.readdirSync(project.folder_path)
+    if (entries.length > 0) throw new Error('project folder must be empty before deletion')
+    fs.rmdirSync(project.folder_path)
+  }
+  db().prepare('DELETE FROM projects WHERE id = ?').run(id)
+}
+
+export function createWork(title = '', projectId: string | null = null): Work {
+  if (projectId && !getProject(projectId)) throw new Error('project not found')
+  const now = new Date().toISOString()
+  const id = randomUUID()
+  db().prepare('INSERT INTO works (id, title, project_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').run(id, title, projectId, now, now)
+  return { id, title, label: null, project_id: projectId, zcf_role: null, created_at: now, updated_at: now }
+}
+
+export function updateWorkStyle(
   id: string,
-  prefs: { zcf_role?: string | null; zcf_mode?: string | null },
+  prefs: { zcf_role?: string | null },
 ): Work | null {
   const work = getWork(id)
   if (!work) return null
   const zcf_role = prefs.zcf_role !== undefined ? prefs.zcf_role : work.zcf_role
-  const zcf_mode = prefs.zcf_mode !== undefined ? prefs.zcf_mode : work.zcf_mode
   const now = new Date().toISOString()
-  db().prepare('UPDATE works SET zcf_role = ?, zcf_mode = ?, updated_at = ? WHERE id = ?').run(
+  db().prepare('UPDATE works SET zcf_role = ?, updated_at = ? WHERE id = ?').run(
     zcf_role,
-    zcf_mode,
     now,
     id,
   )
-  return { ...work, zcf_role, zcf_mode, updated_at: now }
+  return { ...work, zcf_role, updated_at: now }
+}
+
+/** 显式投影：`SELECT *` 会带回已废弃的历史列（如 zcf_mode），API 响应不再透出它们。 */
+function toWork(row: Record<string, unknown>): Work {
+  return {
+    id: row.id as string,
+    title: (row.title as string) ?? '',
+    label: (row.label as LabelColor) ?? null,
+    project_id: (row.project_id as string | null) ?? null,
+    zcf_role: (row.zcf_role as string | null) ?? null,
+    created_at: row.created_at as string,
+    updated_at: row.updated_at as string,
+  }
 }
 
 export function listWorks(): Work[] {
-  return db().prepare('SELECT * FROM works ORDER BY updated_at DESC').all() as unknown as Work[]
+  const rows = db().prepare('SELECT * FROM works ORDER BY updated_at DESC').all() as unknown as Array<Record<string, unknown>>
+  return rows.map(toWork)
 }
 
 export function getWork(id: string): Work | null {
-  return (db().prepare('SELECT * FROM works WHERE id = ?').get(id) as unknown as Work) ?? null
+  const row = db().prepare('SELECT * FROM works WHERE id = ?').get(id) as unknown as Record<string, unknown> | undefined
+  return row ? toWork(row) : null
 }
 
 export function getWorkWithMessages(id: string): WorkWithMessages | null {
@@ -227,7 +357,8 @@ export function deleteMessages(messageIds: string[]): void {
 export function getOrCreateChannelWork(
   channelType: string,
   externalUserId: string,
-  displayName: string
+  displayName: string,
+  projectId: string | null = null,
 ): { work: Work; created: boolean } {
   const row = db().prepare('SELECT work_id FROM channel_sessions WHERE channel_type = ? AND external_user_id = ?').get(
     channelType, externalUserId
@@ -238,17 +369,27 @@ export function getOrCreateChannelWork(
     if (work) return { work, created: false }
   }
 
-  const work = createWork(displayName)
+  const work = createWork(displayName, projectId)
   db().prepare('INSERT OR REPLACE INTO channel_sessions (channel_type, external_user_id, work_id) VALUES (?, ?, ?)').run(
     channelType, externalUserId, work.id
   )
   return { work, created: true }
 }
 
-export function resetChannelWork(channelType: string, externalUserId: string, displayName = ''): Work {
+export function resetChannelWork(channelType: string, externalUserId: string, displayName = '', projectId: string | null = null): Work {
   db().prepare('DELETE FROM channel_sessions WHERE channel_type = ? AND external_user_id = ?').run(channelType, externalUserId)
-  const work = createWork(displayName)
+  const work = createWork(displayName, projectId)
   db().prepare('INSERT INTO channel_sessions (channel_type, external_user_id, work_id) VALUES (?, ?, ?)').run(
+    channelType, externalUserId, work.id
+  )
+  return work
+}
+
+/** Bind an external channel user to an existing desktop-visible work. */
+export function bindChannelWork(channelType: string, externalUserId: string, workId: string): Work | null {
+  const work = getWork(workId)
+  if (!work) return null
+  db().prepare('INSERT OR REPLACE INTO channel_sessions (channel_type, external_user_id, work_id) VALUES (?, ?, ?)').run(
     channelType, externalUserId, work.id
   )
   return work
@@ -518,6 +659,15 @@ export function _initTestDb(): void {
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL DEFAULT '',
       label TEXT DEFAULT NULL,
+      project_id TEXT DEFAULT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
+    );
+    CREATE TABLE IF NOT EXISTS projects (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      folder_path TEXT NOT NULL UNIQUE,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );

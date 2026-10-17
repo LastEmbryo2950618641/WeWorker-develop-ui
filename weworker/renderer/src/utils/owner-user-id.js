@@ -4,6 +4,7 @@ const CHANNEL_LABELS = {
   qq: 'QQ',
   weixin: '微信',
   wecom: '企业微信',
+  feishu: '飞书',
 }
 
 const OWNER_USER_ID_MIN_LENGTH = 6
@@ -12,6 +13,16 @@ const OWNER_USER_ID_PATTERN = /^[A-Za-z0-9_-]+$/
 
 export function normalizeOwnerUserId(value) {
   return String(value ?? '').trim()
+}
+
+export function getOwnerPermissionSelection(ownerId, permission) {
+  if (!normalizeOwnerUserId(ownerId)) return 'qa_only'
+  return ['qa_only', 'no_bash', 'full'].includes(permission) ? permission : 'qa_only'
+}
+
+export function hasUnsavedOwnerPermission(ownerId, permission, saved = {}) {
+  return normalizeOwnerUserId(ownerId) !== normalizeOwnerUserId(saved.owner_user_id)
+    || getOwnerPermissionSelection(ownerId, permission) !== getOwnerPermissionSelection(saved.owner_user_id, saved.owner_permission_level)
 }
 
 export function validateOwnerUserId(channel, value) {

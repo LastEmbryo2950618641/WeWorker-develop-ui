@@ -20,10 +20,17 @@ const MAX_MSG_LEN = 1900
 const QQ_GATEWAY = 'wss://api.sgroup.qq.com/websocket'
 
 // Intents bitmask
-const INTENT_GUILD_MESSAGES = 1 << 9       // guild @ messages
+const INTENT_GUILD_MESSAGES = 1 << 9       // private guild bots only
+const INTENT_PUBLIC_GUILD_MESSAGES = 1 << 30
 const INTENT_DIRECT_MESSAGE = 1 << 12      // guild DMs
-const INTENT_GROUP_AT_MESSAGE = 1 << 25    // group @ messages
-const INTENT_C2C_MESSAGE = 1 << 26         // C2C messages
+const INTENT_GROUP_AND_C2C = 1 << 25       // group @ messages and C2C messages
+// Public guild bots, legacy private guild bots, then QR-created group/C2C bots.
+// QQ rejects the entire Identify packet if any requested event is unauthorized.
+const INTENT_PROFILES = [
+  INTENT_PUBLIC_GUILD_MESSAGES | INTENT_DIRECT_MESSAGE | INTENT_GROUP_AND_C2C,
+  INTENT_GUILD_MESSAGES | INTENT_DIRECT_MESSAGE | INTENT_GROUP_AND_C2C,
+  INTENT_GROUP_AND_C2C,
+]
 
 function splitMessage(text: string): string[] {
   if (text.length <= MAX_MSG_LEN) return [text]
@@ -50,6 +57,9 @@ export class QQChannel implements Channel {
   private _status: ChannelStatus = { status: 'starting' }
   private _running = false
   private _heartbeatTimer: ReturnType<typeof setInterval> | null = null
+  private _reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private _readyTimer: ReturnType<typeof setTimeout> | null = null
+  private _intentIndex = 0
   private _sessionId = ''
   private _seq: number | null = null
   private _token = ''
@@ -88,6 +98,10 @@ export class QQChannel implements Channel {
 
   async stop(): Promise<void> {
     this._running = false
+    if (this._reconnectTimer) clearTimeout(this._reconnectTimer)
+    if (this._readyTimer) clearTimeout(this._readyTimer)
+    this._reconnectTimer = null
+    this._readyTimer = null
     if (this._heartbeatTimer) {
       clearInterval(this._heartbeatTimer)
       this._heartbeatTimer = null
@@ -135,51 +149,89 @@ export class QQChannel implements Channel {
         appId: this._config.app_id,
         clientSecret: this._config.app_secret,
       }),
+      signal: AbortSignal.timeout(10_000),
     })
     if (!res.ok) throw new Error(`QQ token fetch failed: ${res.status}`)
     const data = await res.json() as { access_token: string; expires_in: number }
+    if (!data.access_token) throw new Error('QQ 鉴权失败，请重新扫码或检查 App ID 和 App Secret')
     this._token = `QQBot ${data.access_token}`
     this._tokenExpiry = Date.now() + (data.expires_in - 60) * 1000
     return this._token
   }
 
   private async _connect(): Promise<void> {
+    if (!this._running) return
+    this._status = { status: 'starting' }
     const token = await this._getToken()
-    const ws = new WebSocket(QQ_GATEWAY)
+    if (!this._running) return
+    const ws = new WebSocket(QQ_GATEWAY, { handshakeTimeout: 10_000 })
     this._ws = ws
+    const isCurrent = () => this._running && this._ws === ws
+    let identified = false
+    this._readyTimer = setTimeout(() => {
+      if (!isCurrent()) return
+      this._status = { status: 'error', error: 'QQ 上线确认超时，正在重连' }
+      ws.terminate()
+    }, 15_000)
 
+    // Attach before open: Hello can arrive in the same network read as the upgrade.
+    ws.on('message', (data) => {
+      if (!isCurrent()) return
+      try {
+        const frame = JSON.parse(data.toString())
+        this._handleFrame(frame)
+        if (frame.op === 10 && !identified) {
+          identified = true
+          ws.send(JSON.stringify({
+            op: 2,
+            d: { token, intents: INTENT_PROFILES[this._intentIndex], shard: [0, 1],
+              properties: { os: process.platform, browser: 'weworker', device: 'weworker' } },
+          }))
+        }
+      } catch { /* Ignore malformed gateway frames. */ }
+    })
+    ws.on('error', () => {
+      if (isCurrent()) this._status = { status: 'error', error: 'QQ 网关连接失败，请检查网络' }
+    })
+    ws.on('close', (code) => {
+      if (this._ws !== ws) return
+      this._ws = null
+      if (this._heartbeatTimer) clearInterval(this._heartbeatTimer)
+      if (this._readyTimer) clearTimeout(this._readyTimer)
+      this._heartbeatTimer = null
+      this._readyTimer = null
+      if (!this._running) return
+      let delay = 5000
+      if (code === 4014) {
+        if (this._intentIndex + 1 >= INTENT_PROFILES.length) {
+          this._status = { status: 'error', error: 'QQ 事件订阅权限不足，请检查机器人群聊和私聊权限后重新连接' }
+          this._running = false
+          log.error('QQ event subscription rejected (4014)')
+          return
+        }
+        this._intentIndex++
+        this._status = { status: 'starting' }
+        delay = 250
+        log.info('QQ rejected optional events; retrying a compatible subscription')
+      } else if (code === 4004) {
+        this._status = { status: 'error', error: 'QQ 鉴权失败，请重新扫码或检查 App ID 和 App Secret' }
+        this._running = false
+        return
+      } else {
+        this._status = { status: 'error', error: 'QQ 连接已断开，正在重连（' + code + '）' }
+      }
+      this._reconnectTimer = setTimeout(() => {
+        this._reconnectTimer = null
+        void this._connect().catch(() => {
+          if (this._running) this._status = { status: 'error', error: 'QQ 重新连接失败，请检查网络后重试' }
+        })
+      }, delay)
+    })
     await new Promise<void>((resolve, reject) => {
       ws.once('error', reject)
       ws.once('open', resolve)
+      ws.once('close', () => reject(new Error('QQ 网关在建立连接前关闭')))
     })
-
-    ws.on('message', (data) => {
-      try {
-        this._handleFrame(JSON.parse(data.toString()))
-      } catch {}
-    })
-
-    ws.on('close', () => {
-      if (this._heartbeatTimer) clearInterval(this._heartbeatTimer)
-      if (this._running) {
-        // Reconnect after 5s
-        setTimeout(() => this._connect().catch(() => {
-          this._status = { status: 'error', error: 'Reconnect failed' }
-        }), 5000)
-      }
-    })
-
-    // Identify
-    const intents = INTENT_GUILD_MESSAGES | INTENT_DIRECT_MESSAGE | INTENT_GROUP_AT_MESSAGE | INTENT_C2C_MESSAGE
-    ws.send(JSON.stringify({
-      op: 2,
-      d: {
-        token,
-        intents,
-        shard: [0, 1],
-        properties: { os: 'linux', browser: 'weworker', device: 'weworker' },
-      },
-    }))
   }
 
   private _handleFrame(frame: { op: number; d?: unknown; t?: string; s?: number }): void {
@@ -188,6 +240,8 @@ export class QQChannel implements Channel {
     switch (frame.op) {
       case 10: { // Hello — start heartbeat
         const interval = (frame.d as { heartbeat_interval: number }).heartbeat_interval
+        if (!Number.isFinite(interval) || interval <= 0) break
+        if (this._heartbeatTimer) clearInterval(this._heartbeatTimer)
         this._heartbeatTimer = setInterval(() => {
           this._ws?.send(JSON.stringify({ op: 1, d: this._seq }))
         }, interval)
@@ -208,9 +262,11 @@ export class QQChannel implements Channel {
     const d = data as Record<string, unknown>
     switch (type) {
       case 'READY':
+        if (this._readyTimer) clearTimeout(this._readyTimer)
+        this._readyTimer = null
         this._sessionId = (d.session_id as string) ?? ''
         this._status = { status: 'connected' }
-        log.info(`bot connected: ${(d.user as Record<string, unknown>)?.username ?? ''}`)
+        log.info('bot connected')
         break
       case 'GROUP_AT_MESSAGE_CREATE':
         this._onGroupMessage(d).catch(e => log.error('group msg error:', e))

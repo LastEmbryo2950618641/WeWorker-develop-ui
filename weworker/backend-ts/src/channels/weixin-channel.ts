@@ -14,6 +14,8 @@ import { generateTitle, generateTitleWithLLM } from '../title-utils.js'
 import * as store from '../works-store.js'
 import { runChannelChat } from './channel-manager.js'
 import { CHANNEL_MYID_HINT, CHANNEL_EMPTY_REPLY_FALLBACK, getChannelPermissionMode } from './channel-permissions.js'
+import type { ChannelPermissionMode } from './channel-permissions.js'
+import { parseChannelCommand, type ChannelProfile } from './channel-profile.js'
 import { createLogger } from '../logger.js'
 
 const log = createLogger('weixin')
@@ -26,6 +28,14 @@ const API_TIMEOUT_MS = 15_000
 const MAX_CONSECUTIVE_FAILURES = 3
 const BACKOFF_DELAY_MS = 30_000
 const RETRY_DELAY_MS = 2_000
+// iLink only accepts bot messages for ~1.5–2 minutes after the user's message
+// (the context_token goes stale and sendmessage returns ret=-2). Progress
+// notices are therefore sparse, and one warns before the window closes.
+const PROGRESS_NOTICE_MS = 15_000
+const LONG_TASK_NOTICE_MS = 75_000
+const MAX_PENDING_RESULT_CHUNKS = 20
+const RESULT_QUERY = /^(结果|看结果|查看结果|发结果|\/result|result|\?|？)$/i
+const LONG_TASK_NOTICE = '这个任务需要的时间比较长，还在处理中。受微信限制，超过约 2 分钟后我可能没法主动把结果发给你：完成后给我发任意一句话（例如「结果」），我会把结果补发给你。'
 
 // ── API helpers ───────────────────────────────────────────
 
@@ -85,12 +95,12 @@ interface GetUpdatesResp {
   longpolling_timeout_ms?: number
 }
 
-interface QRCodeResp {
+export interface QRCodeResp {
   qrcode: string
   qrcode_img_content: string
 }
 
-interface QRStatusResp {
+export interface QRStatusResp {
   status: 'wait' | 'scaned' | 'confirmed' | 'expired'
   bot_token?: string
   ilink_bot_id?: string
@@ -114,9 +124,23 @@ async function getUpdates(baseUrl: string, token: string | undefined, buf: strin
   }
 }
 
+/** iLink answers HTTP 200 with a non-zero ret when it drops a message (e.g. ret=-2 for a stale context_token). */
+export class WeixinSendError extends Error {
+  constructor(readonly ret: number | undefined, readonly errcode: number | undefined, errmsg?: string) {
+    super(`sendmessage rejected: ret=${ret ?? ''} errcode=${errcode ?? ''}${errmsg ? ` ${errmsg}` : ''}`)
+    this.name = 'WeixinSendError'
+  }
+}
+
+function assertSendAccepted(resp: unknown): void {
+  const body = (resp && typeof resp === 'object' ? resp : {}) as { ret?: number; errcode?: number; errmsg?: string }
+  const failed = (body.ret !== undefined && body.ret !== 0) || (body.errcode !== undefined && body.errcode !== 0)
+  if (failed) throw new WeixinSendError(body.ret, body.errcode, body.errmsg)
+}
+
 async function sendMessage(baseUrl: string, token: string | undefined, to: string, text: string, contextToken?: string): Promise<void> {
   const clientId = `weworker-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-  await apiFetch(baseUrl, 'ilink/bot/sendmessage', {
+  const resp = await apiFetch(baseUrl, 'ilink/bot/sendmessage', {
     msg: {
       from_user_id: '',
       to_user_id: to,
@@ -128,6 +152,7 @@ async function sendMessage(baseUrl: string, token: string | undefined, to: strin
     },
     base_info: {},
   }, token)
+  assertSendAccepted(resp)
 }
 
 export async function fetchQRCode(baseUrl: string): Promise<QRCodeResp> {
@@ -258,7 +283,7 @@ async function sendImageMessage(
   // Send each item as a separate message (matching OpenClaw behavior)
   for (const item of items) {
     const clientId = `weworker-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    await apiFetch(baseUrl, 'ilink/bot/sendmessage', {
+    const resp = await apiFetch(baseUrl, 'ilink/bot/sendmessage', {
       msg: {
         from_user_id: '',
         to_user_id: to,
@@ -270,6 +295,7 @@ async function sendImageMessage(
       },
       base_info: {},
     }, token)
+    assertSendAccepted(resp)
   }
 }
 
@@ -382,8 +408,23 @@ export interface WeixinChannelConfig {
   base_url?: string
 }
 
+export type WeixinChannelProfile = ChannelProfile
+
+/** Original single-bot behavior of the main WeChat channel. */
+export function createDefaultWeixinProfile(): WeixinChannelProfile {
+  return {
+    channelKey: 'weixin',
+    titleLabel: () => '微信',
+    welcomeText: () => '',
+    authorize: (userId) => ({ kind: 'allow', mode: getChannelPermissionMode('weixin', userId) }),
+    memoryScope: (userId) => ({ user: `weixin:${userId}` }),
+    chatOptions: () => ({}),
+  }
+}
+
 export class WeixinChannel implements Channel {
   private _config: WeixinChannelConfig
+  private _profile: WeixinChannelProfile
 
   private _status: ChannelStatus = { status: 'starting' }
   private _running = false
@@ -396,10 +437,14 @@ export class WeixinChannel implements Channel {
   private _typingCache: TypingTicketCache | null = null
   // Pending ask_user resolvers: userId → resolve function
   private _pendingChoiceResolvers = new Map<string, (answer: string) => void>()
+  // In-flight agent turns per user, so /new and /stop can interrupt them
+  private _activeTurns = new Map<string, AbortController>()
+  // Finished answers WeChat refused to deliver (stale context_token); sent with the user's next message.
+  private _pendingResults = new Map<string, string[]>()
 
-  constructor(config: WeixinChannelConfig) {
+  constructor(config: WeixinChannelConfig, profile: WeixinChannelProfile = createDefaultWeixinProfile()) {
     this._config = config
-
+    this._profile = profile
   }
 
   getStatus(): ChannelStatus {
@@ -413,7 +458,7 @@ export class WeixinChannel implements Channel {
     this._typingCache = new TypingTicketCache(this._baseUrl, this._config.token)
 
     // Restore persisted notify target (context_token) from DB
-    const saved = store.getLatestChannelNotifyTarget('weixin')
+    const saved = store.getLatestChannelNotifyTarget(this._profile.channelKey)
     if (saved?.extra?.context_token && saved.extra.user_id) {
       this._contextTokens.set(saved.extra.user_id, saved.extra.context_token)
       log.info(`restored notify target: ${saved.extra.user_id}`)
@@ -429,6 +474,9 @@ export class WeixinChannel implements Channel {
     this._running = false
     this._abortController?.abort()
     this._abortController = null
+    for (const turn of this._activeTurns.values()) turn.abort()
+    this._activeTurns.clear()
+    this._pendingChoiceResolvers.clear()
   }
 
   /**
@@ -451,7 +499,8 @@ export class WeixinChannel implements Channel {
 
     // 把通知内容记录到该用户对应的 work 中，桌面端可查看
     try {
-      const { work } = store.getOrCreateChannelWork('weixin', userId, '')
+      const { work, created } = store.getOrCreateChannelWork(this._profile.channelKey, userId, '', this._profile.projectId?.() ?? null)
+      if (created) this._profile.onWorkCreated?.(work.id)
       store.appendMessage(work.id, 'assistant', [{ type: 'text', text }])
       store.markExternalWrite()
     } catch (e) {
@@ -470,7 +519,7 @@ export class WeixinChannel implements Channel {
 
     // First successful poll marks us as connected
     this._status = { status: 'connected' }
-    log.info('channel connected, starting long-poll loop')
+    log.info(`[${this._profile.channelKey}] channel connected, starting long-poll loop`)
 
     while (this._running && !signal?.aborted) {
       try {
@@ -484,12 +533,12 @@ export class WeixinChannel implements Channel {
         const isError = (resp.ret !== undefined && resp.ret !== 0) || (resp.errcode !== undefined && resp.errcode !== 0)
         if (isError) {
           consecutiveFailures++
-          log.error(`getUpdates error: ret=${resp.ret} errcode=${resp.errcode} errmsg=${resp.errmsg} (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES})`)
+          log.error(`[${this._profile.channelKey}] getUpdates error: ret=${resp.ret} errcode=${resp.errcode} errmsg=${resp.errmsg} (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES})`)
 
           if (resp.errcode === -14 || resp.ret === -14) {
             // Session expired
             this._status = { status: 'error', error: '会话已过期，请重新扫码登录' }
-            log.error('session expired, stopping')
+            log.error(`[${this._profile.channelKey}] session expired, stopping`)
             return
           }
 
@@ -515,7 +564,7 @@ export class WeixinChannel implements Channel {
       } catch (e) {
         if (signal?.aborted) return
         consecutiveFailures++
-        log.error(`poll error (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}):`, e)
+        log.error(`[${this._profile.channelKey}] poll error (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}):`, e)
         if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
           consecutiveFailures = 0
           this._status = { status: 'error', error: e instanceof Error ? e.message : String(e) }
@@ -527,6 +576,56 @@ export class WeixinChannel implements Channel {
     }
   }
 
+  /** Send one text message with the user's latest context_token. Returns whether WeChat accepted it. */
+  private async _reply(userId: string, content: string): Promise<boolean> {
+    const ct = this._contextTokens.get(userId)
+    if (!ct) {
+      log.error(`[${this._profile.channelKey}] no context_token for ${userId.slice(0, 4)}…, cannot reply`)
+      return false
+    }
+    try {
+      await sendMessage(this._baseUrl, this._config.token, userId, content, ct)
+      return true
+    } catch (e) {
+      log.error(`[${this._profile.channelKey}] reply to ${userId.slice(0, 4)}… failed:`, e instanceof Error ? e.message : String(e))
+      return false
+    }
+  }
+
+  /** Send chunks in order; anything WeChat refuses is kept for the user's next message. */
+  private async _deliver(userId: string, chunks: string[]): Promise<boolean> {
+    for (let index = 0; index < chunks.length; index++) {
+      if (!await this._reply(userId, chunks[index])) {
+        const queued = [...(this._pendingResults.get(userId) ?? []), ...chunks.slice(index)]
+        this._pendingResults.set(userId, queued.slice(-MAX_PENDING_RESULT_CHUNKS))
+        log.warn(`[${this._profile.channelKey}] result for ${userId.slice(0, 4)}… kept until the next message (${chunks.length - index} chunk(s))`)
+        return false
+      }
+    }
+    return true
+  }
+
+  /** Deliver answers that could not be sent earlier. Returns true when something was pending. */
+  private async _flushPendingResults(userId: string): Promise<boolean> {
+    const pending = this._pendingResults.get(userId)
+    if (!pending?.length) return false
+    this._pendingResults.delete(userId)
+    const prefix = '（补发上一个任务的结果）\n'
+    const [first, ...rest] = pending
+    await this._deliver(userId, [first.startsWith(prefix) ? first : `${prefix}${first}`, ...rest])
+    return true
+  }
+
+  /** Abort the user's running turn and drop a pending ask_user question. */
+  private _interruptUser(userId: string): boolean {
+    this._pendingChoiceResolvers.delete(userId)
+    const active = this._activeTurns.get(userId)
+    if (!active) return false
+    this._activeTurns.delete(userId)
+    active.abort()
+    return true
+  }
+
   private async _handleInbound(msg: WeixinMessage): Promise<void> {
     const fromUserId = msg.from_user_id ?? ''
     if (!fromUserId) return
@@ -534,72 +633,113 @@ export class WeixinChannel implements Channel {
     const text = extractTextBody(msg)
     if (!text.trim()) return
 
-    // Cache context_token
+    // Replies need the latest context_token, including access-denied replies.
+    if (msg.context_token) this._contextTokens.set(fromUserId, msg.context_token)
+
+    const channelKey = this._profile.channelKey
+    const access = this._profile.authorize(fromUserId, text)
+    if (access.kind === 'reply') {
+      await this._reply(fromUserId, access.text)
+      return
+    }
+
+    // Persist to DB so notifications survive restarts
     if (msg.context_token) {
-      this._contextTokens.set(fromUserId, msg.context_token)
-      // Persist to DB so it survives restarts
-      store.saveChannelNotifyTarget('weixin', fromUserId, {
+      store.saveChannelNotifyTarget(channelKey, fromUserId, {
         user_id: fromUserId,
         context_token: msg.context_token,
       })
     }
 
-    log.info(`inbound from=${fromUserId} text="${text.slice(0, 50)}"`)
+    // This message carries a fresh context_token: deliver answers that missed the reply window.
+    const hadPending = await this._flushPendingResults(fromUserId)
+    if (hadPending && RESULT_QUERY.test(text.trim())) return
 
-    const replyFn = async (content: string) => {
-      const ct = this._contextTokens.get(fromUserId)
-      if (!ct) {
-        log.error(`no context_token for ${fromUserId}, cannot reply`)
+    // Commands take priority over a pending ask_user question, so /new always works.
+    const command = parseChannelCommand(text)
+    log.info(`[${channelKey}] inbound from ${fromUserId.slice(0, 4)}…${command ? ` command=${command}` : ''}`)
+
+    if (command === '/help' && this._profile.helpText) {
+      await this._reply(fromUserId, this._profile.helpText())
+      return
+    }
+
+    if (command === '/new' || command === '/stop') {
+      const interrupted = this._interruptUser(fromUserId)
+      if (command === '/stop') {
+        await this._reply(fromUserId, interrupted ? '已停止当前任务。' : '当前没有正在执行的任务。')
         return
       }
-      await sendMessage(this._baseUrl, this._config.token, fromUserId, content, ct)
+      const fresh = store.resetChannelWork(channelKey, fromUserId, '', this._profile.projectId?.() ?? null)
+      this._profile.onWorkCreated?.(fresh.id)
+      store.markExternalWrite()
+      await this._reply(fromUserId, interrupted ? '已停止上一个任务，并开启新对话 ✓' : '已开启新对话 ✓')
+      return
     }
 
     // Check if there's a pending ask_user choice for this user
     const pendingResolver = this._pendingChoiceResolvers.get(fromUserId)
-    if (pendingResolver) {
+    if (pendingResolver && !command) {
       this._pendingChoiceResolvers.delete(fromUserId)
       pendingResolver(text.trim())
       return
     }
 
-    // /new command — create work with empty title, will be set on first message
-    if (text.trim() === '/new') {
-      store.resetChannelWork('weixin', fromUserId, '')
-      await replyFn('已开启新对话 ✓')
-      return
-    }
-
     // /id command — reply with current work short ID
-    if (text.trim() === '/id') {
-      const existing = store.getOrCreateChannelWork('weixin', fromUserId, '')
-      const shortId = existing.work.id.slice(0, 8)
-      await replyFn(`当前对话 ID: ${shortId}`)
+    if (command === '/id') {
+      const existing = store.getOrCreateChannelWork(channelKey, fromUserId, '', this._profile.projectId?.() ?? null)
+      if (existing.created) this._profile.onWorkCreated?.(existing.work.id)
+      await this._reply(fromUserId, `当前对话 ID: ${existing.work.id.slice(0, 8)}`)
       return
     }
 
-    if (text.trim() === '/myid') {
-      await replyFn(`你的用户 ID：${fromUserId}\n${CHANNEL_MYID_HINT}`)
+    if (command === '/myid') {
+      await this._reply(fromUserId, `你的用户 ID：${fromUserId}\n${CHANNEL_MYID_HINT}`)
       return
     }
 
     const settings = getSettings()
     if (!settings.api_key) {
-      await replyFn('WeWorker 尚未配置 API Key，请在设置中配置后重试。')
+      await this._reply(fromUserId, 'WeWorker 尚未配置 API Key，请在设置中配置后重试。')
       return
     }
 
-    const { work } = store.getOrCreateChannelWork('weixin', fromUserId, '')
+    if (this._profile.serializeTurns && this._activeTurns.has(fromUserId)) {
+      await this._reply(fromUserId, '⏳ 上一个请求还在处理中。发送 /stop 可停止它，发送 /new 可停止并开启新对话。')
+      return
+    }
+    const abortController = new AbortController()
+    this._activeTurns.set(fromUserId, abortController)
+    try {
+      await this._runTurn({ fromUserId, text, settings, mode: access.mode, abortController })
+    } finally {
+      if (this._activeTurns.get(fromUserId) === abortController) this._activeTurns.delete(fromUserId)
+    }
+  }
+
+  private async _runTurn(turn: {
+    fromUserId: string
+    text: string
+    settings: ReturnType<typeof getSettings>
+    mode: ChannelPermissionMode
+    abortController: AbortController
+  }): Promise<void> {
+    const { fromUserId, text, settings, abortController } = turn
+    const channelKey = this._profile.channelKey
+    const replyFn = (content: string) => this._reply(fromUserId, content)
+
+    const { work, created } = store.getOrCreateChannelWork(channelKey, fromUserId, '', this._profile.projectId?.() ?? null)
+    if (created) this._profile.onWorkCreated?.(work.id)
     store.appendMessage(work.id, 'user', [{ type: 'text', text }])
     store.markExternalWrite()
 
     // Auto-title: immediate fallback from text, then async LLM refinement
-    const isFirstMessage = !work.title
-    if (isFirstMessage) {
-      store.updateTitle(work.id, `（微信）${generateTitle(text)}`)
+    const sourceLabel = this._profile.titleLabel('single')
+    if (!work.title) {
+      store.updateTitle(work.id, `（${sourceLabel}）${generateTitle(text)}`)
       generateTitleWithLLM(text, settings).then(llmTitle => {
         if (llmTitle) {
-          store.updateTitle(work.id, `（微信）${llmTitle}`)
+          store.updateTitle(work.id, `（${sourceLabel}）${llmTitle}`)
           store.markExternalWrite()
         }
       })
@@ -617,29 +757,31 @@ export class WeixinChannel implements Channel {
       }
     }
 
-    // Typing keepalive every 5s + "正在处理..." ping every 10s
+    // Typing keepalive every 5s. Progress text is sent at most twice: repeated
+    // "正在处理..." messages only flood the chat and the final answer may arrive
+    // after WeChat's reply window has closed.
     let typingKeepaliveTimer: ReturnType<typeof setInterval> | null = null
-    let pingTimer: ReturnType<typeof setInterval> | null = null
-
     if (typingTicket) {
       typingKeepaliveTimer = setInterval(() => {
         sendTyping(this._baseUrl, this._config.token, fromUserId, typingTicket, 1).catch(() => {})
       }, 5000)
     }
-    pingTimer = setInterval(() => {
-      replyFn('正在处理...').catch(() => {})
-    }, 10000)
+    const progressTimers = [
+      setTimeout(() => { if (!abortController.signal.aborted) void replyFn('正在处理，请稍候…') }, PROGRESS_NOTICE_MS),
+      setTimeout(() => { if (!abortController.signal.aborted) void replyFn(LONG_TASK_NOTICE) }, LONG_TASK_NOTICE_MS),
+    ]
 
-    const channelPermissionMode = getChannelPermissionMode('weixin', fromUserId)
-
-    let fullText: string
-    let images: string[]
-    let toolCalls: store.ContentBlock[]
-    let timing: store.ContentBlock | null
+    let fullText = ''
+    let images: string[] = []
+    let toolCalls: store.ContentBlock[] = []
+    let timing: store.ContentBlock | null = null
+    let failure: unknown = null
     try {
       ;({ text: fullText, images, toolCalls, timing } = await runChannelChat(wm.messages, settings, {
-        channelPermissionMode,
-        memoryScope: { user: `weixin:${fromUserId}` },
+        channelPermissionMode: turn.mode,
+        memoryScope: this._profile.memoryScope(fromUserId),
+        abortController,
+        profileOptions: this._profile.chatOptions(fromUserId),
         askUserHandler: async (question, options) => {
           const lines = [`${question}`]
           options.forEach((opt, i) => {
@@ -667,16 +809,20 @@ export class WeixinChannel implements Channel {
         },
       }))
     } catch (e) {
-      log.error('chat error:', e)
-      await replyFn(`处理失败：${e instanceof Error ? e.message : String(e)}`)
-      return
+      if (!abortController.signal.aborted) failure = e
     } finally {
-      // Stop typing indicator and ping timer
+      // Stop typing indicator and progress notices
       if (typingKeepaliveTimer) clearInterval(typingKeepaliveTimer)
-      if (pingTimer) clearInterval(pingTimer)
+      for (const timer of progressTimers) clearTimeout(timer)
       if (typingTicket) {
         await sendTyping(this._baseUrl, this._config.token, fromUserId, typingTicket, 2)
       }
+    }
+
+    if (failure) {
+      log.error('chat error:', failure)
+      await this._deliver(fromUserId, [`处理失败：${failure instanceof Error ? failure.message : String(failure)}`])
+      return
     }
 
     // Persist assistant response (including tool call records for desktop debugging)
@@ -689,35 +835,42 @@ export class WeixinChannel implements Channel {
         assistantContent.push({ type: 'tool_use', id: `img-${Date.now()}`, name: 'capture_screenshot', args: {}, image: img, status: 'done' })
       }
     }
+
+    // /stop or /new already answered the user: keep what was done, send nothing more.
+    if (abortController.signal.aborted) {
+      if (assistantContent.length > 0) {
+        assistantContent.push({ type: 'text', text: '（已停止）' })
+        store.appendMessage(work.id, 'assistant', assistantContent)
+        store.markExternalWrite()
+      }
+      return
+    }
+
     if (assistantContent.length > 0) {
       if (timing) assistantContent.push(timing)
       store.appendMessage(work.id, 'assistant', assistantContent)
       store.markExternalWrite()
     }
 
-    // Send reply
-    if (fullText) {
-      for (const chunk of splitMessage(fullText)) {
-        await replyFn(chunk)
-      }
-    }
+    // Send reply. If WeChat refuses it (reply window closed), it is kept and
+    // delivered with the user's next message; images are not retried then.
+    const textChunks = fullText
+      ? splitMessage(fullText)
+      : images.length === 0 ? [CHANNEL_EMPTY_REPLY_FALLBACK] : []
+    if (!await this._deliver(fromUserId, textChunks)) return
 
     // Send images via CDN upload
     for (const imgBase64 of images) {
       try {
-        const ct = this._contextTokens.get(fromUserId)
-        if (!ct) { log.error('no context_token, skipping image'); continue }
+        const contextToken = this._contextTokens.get(fromUserId)
+        if (!contextToken) { log.error('no context_token, skipping image'); continue }
         const imgBuf = Buffer.from(imgBase64, 'base64')
         const uploaded = await uploadImageToCdn(imgBuf, fromUserId, this._baseUrl, this._config.token)
-        await sendImageMessage(this._baseUrl, this._config.token, fromUserId, uploaded, ct)
+        await sendImageMessage(this._baseUrl, this._config.token, fromUserId, uploaded, contextToken)
         log.info(`image sent to ${fromUserId} (${imgBuf.length} bytes)`)
       } catch (e) {
         log.error('image send error:', e)
       }
-    }
-
-    if (!fullText && images.length === 0) {
-      await replyFn(CHANNEL_EMPTY_REPLY_FALLBACK)
     }
   }
 }

@@ -1,6 +1,15 @@
 # API 自动探索 CLI 改造跟进与交接
 
-> 更新日期：2026-10-17。当前阶段：规划与基线核对；尚未建集成分支，尚未开始 CLI 开发。
+> 更新日期：2026-10-17。当前阶段：已建立集成基线并解决冲突，开发设计待审阅；尚未实现新 CLI。
+> 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
+
+## 最新状态
+
+- #106、#91 已合入 develop，merge SHA 分别为 `14846149bfcb94829af767743fedcf577e595322`、`4c3d5bd784c3a4f178c45b027bc37bf672d75aca`，无需再单独合入。
+- `codex/api-exploration-base` 从 develop `4c3d5bd` 建立；初始文档已保存为 `2d177bc`，本轮整合 dev-1.1.0 `dae8932`。
+- 本次使用原工作目录，无新 worktree。切换时 ROADMAP.md 阻止 checkout，具名 stash 保存两份文档后切换并 apply，保留双方路线图。stash 仍保留作备份。
+- 功能分支在集成提交后创建为 `codex/api-exploration-cli`，最终操作结果见文末。未推送或创建 PR，最终发布目标仍待明确。
+- [开发设计](api_exploration_cli_design.md) 为本次审阅入口。
 > 后续每次建分支、同步上游、解决冲突、实现功能或验证后，都应更新本文和 ROADMAP.md。未验证事项不得标为完成。
 
 ## 1. 目标与范围
@@ -121,8 +130,8 @@ git diff --name-only LAST_DEV_SHA origin/dev-1.1.0
 
 - [x] 核对当前远端分支及开放 PR。
 - [x] 建立跟进文档与路线图入口。
-- [ ] 明确 #91 是否属于集成范围，以及最终发布目标。
-- [ ] 建集成基线，迁入跟进文档，整合依赖并记录冲突。
+- [x] #91 已随 develop 纳入；最终发布目标仍待明确。
+- [x] 建集成基线，迁入跟进文档，整合依赖并记录冲突。
 - [ ] 完成基线测试，区分既有失败与新引入失败。
 - [ ] 建功能分支，梳理现有界面探索调用链与服务边界。
 - [ ] 确定命令契约、任务状态、结构化输出、错误与取消/恢复语义。
@@ -140,7 +149,7 @@ git diff --name-only LAST_DEV_SHA origin/dev-1.1.0
 | 2026-10-17 | fetch，读取规范/路线图，核对分支历史和开放 PR | 已确认第 2 节快照；未合并、未跑代码测试 | 明确集成范围 |
 | 2026-10-17 | 创建本文并更新路线图 | 仅文档变更；分支仍为 fix/webcli-ci-debts，文档尚未提交 | 建基线时迁入文档，避免提交到 #106 |
 
-最后成功验证的集成基线：**无**。最后成功纳入的 dev-1.1.0 SHA：**无**。功能分支/PR：**尚未创建**。
+以上为初始记录。最新整合来源为 dev-1.1.0 `dae8932`；聚焦验证通过，完整基线仍有下列缺口，不能标记全量验证成功。
 
 后续每次操作追加以下字段，不覆盖旧日志：
 
@@ -158,3 +167,16 @@ git diff --name-only LAST_DEV_SHA origin/dev-1.1.0
 ```
 
 新会话或其他 agent 接手时，先读本文、AGENTS.md 和 ROADMAP.md，再核对实际 git status、worktree、远端分支与 PR。日志中的“计划”不能作为执行证据；如实际状态与日志不符，先补齐事实，再继续开发。
+
+### 2026-10-17：建立分支与设计
+
+- 7 文件冲突：CHANGELOG.md/ROADMAP.md 保留双方记录；Python 进程管理最初手工整合，用户随后明确排除该模块；最终该冲突文件保留 dev-1.1.0 原文件，不保留本次手工修改；官网 lockfile 的名称/版本对齐 package.json；WebCLI 保留独立 1.0.4；探索页保留 auto 入口，去除依赖已不存在 agentMode 状态的旧开关；状态栏保留告警浮层和专属 Agent 汇总，去除旧入口的失效变量。
+- 自动合并保留 dev 聊天、记忆、模型、专属 Agent 能力及 develop 的 #91/#106。未另行修改 workflow、发布脚本或 schema。
+- renderer/backend 按 lockfile 执行 npm ci --ignore-scripts，未新增依赖、未改变 lockfile。
+- 通过：公开配置检查；Renderer 探索/告警 11 项、专属 Agent 9 项；Extension 路由 23 项、导航守卫 17 项；Electron 生命周期/关闭守卫 11 项；Backend 探索/聊天 23 项，共 94 项。Renderer 构建通过，有 chunk/动态导入提示；Bridge/扩展 JS 与 Python AST 语法通过。
+- 未通过：Backend typecheck 缺 yauzl 声明及相关隐式 any；相关源码、package.json/lockfile 与 dev 无差异，未顺手修改他人模块。Python 测试因缺 uv 未运行。未跑全量、真实浏览器/模型或安装包。合并差异检查有 dev 原有 settings-theme.css 末尾空行提示。
+- 首轮 Renderer 缺 vite、Backend 依赖不齐，安装后重跑；初次 Backend 测试命令重复 --run，修正后 23 项通过。
+- OpenCLI 参考为本机 1.8.6 help 与本地 usage/adapter-author 技能；未操作真实浏览器或执行站点命令，不表示核实远端最新源码。
+- 下一步：审阅设计，明确类型检查缺口的处理归属。Python 模块由其他负责人维护，本任务不改造、不补测；该模块整合验收交由负责人。
+
+- 用户追加边界：Python 网站探索agent全程不属于本任务。仅保留来源分支内容，禁止为 CLI 工作调整其模型、生命周期、存储、HTTP 接口或测试。进程管理冲突选择 dev 原文件，因此不宣称保留 develop 在该文件的超时改动；后续由对应负责人判断。

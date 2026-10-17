@@ -1,0 +1,21 @@
+.skill-tags { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 10px 0; font-size: 11px; }
+.skill-tag { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px; border: 1px solid var(--border); border-radius: 5px; color: var(--text-secondary); background: var(--bg-primary); }
+.skill-tag button, .skill-tag-add { border: 0; background: transparent; color: var(--text-muted); cursor: pointer; display: inline-flex; align-items: center; gap: 4px; padding: 2px; font-size: 11px; }
+.skill-tag button:hover, .skill-tag-add:hover { color: var(--accent); }
+.skill-tags input { width: 110px; max-width: 100%; border: 1px solid var(--accent); border-radius: 5px; padding: 4px 6px; font: inherit; color: var(--text-primary); background: var(--bg-primary); }
+.skill-catalog-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.skill-catalog-toolbar input { min-width: 0; flex: 1; width: 0; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-primary); color: var(--text-primary); padding: 8px 9px; font-size: 12px; }
+.skill-catalog-toolbar button { width: 32px; height: 32px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-primary); color: var(--text-secondary); cursor: pointer; }
+.skill-catalog-toolbar button:hover { background: var(--dropdown-hover); }
+.skill-add-icon { position: relative; display: inline-flex; width: 17px; height: 17px; font-size: 17px; }
+.skill-add-icon-badge { position: absolute; right: -3px; bottom: -2px; display: inline-flex; align-items: center; justify-content: center; width: 10px; height: 10px; box-sizing: border-box; border: 1px solid var(--bg-primary); border-radius: 2px; background: var(--bg-primary); font-size: 8px; }
+.skill-catalog-toolbar button:hover .skill-add-icon-badge { background: var(--dropdown-hover); border-color: var(--dropdown-hover); }
+.skill-catalog-list-tags { display: flex; flex-wrap: nowrap; min-width: 0; overflow: hidden; gap: 4px; color: var(--text-muted); font-size: 10px; line-height: 14px; }
+.skill-catalog-list-tags > span { flex-shrink: 0; max-width: 100%; box-sizing: border-box; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border: 1px solid var(--border-inner); border-radius: 4px; padding: 1px 4px; }
+
+.tool-package-list-item.skill-catalog-item { position: relative; height: auto; max-height: none; grid-template-rows: max-content max-content max-content; }
+.skill-card-view { position: absolute; right: 10px; top: 50%; display: inline-flex; align-items: center; gap: 4px; padding: 5px 7px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg-primary); color: var(--text-secondary); font: inherit; font-size: 10px; line-height: 14px; opacity: 0; transform: translateY(-50%) translateX(4px); transition: opacity 140ms ease, transform 140ms ease; cursor: pointer; }
+.skill-card-view svg { font-size: 12px; }
+.tool-package-list-item.skill-catalog-item:hover .skill-card-view, .tool-package-list-item.skill-catalog-item:focus-within .skill-card-view { opacity: 1; transform: translateY(-50%) translateX(0); }
+.skill-catalog-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); align-content: start; }
+.tool-package-list-item.skill-catalog-item:hover > span:first-child, .tool-package-list-item.skill-catalog-item:focus-within > span:first-child { padding-right: 48px; }

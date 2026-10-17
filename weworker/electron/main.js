@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, nativeImage, protocol } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, protocol, Tray } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
@@ -13,6 +13,15 @@ import {
 } from './managers.js'
 import { registerIpcHandlers } from './ipc-handlers.js'
 import { UpdateManager } from './update-manager.js'
+import {
+  createBackgroundController,
+  createPreferenceStore,
+  fetchAgentSummary,
+  isHiddenLaunch,
+  isLaunchAtLoginSupported,
+  syncLaunchAtLogin,
+} from './background-mode.js'
+import { createTrayManager } from './tray-manager.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDev = !app.isPackaged
@@ -146,7 +155,8 @@ if (!hasSingleInstanceLock) {
   app.quit()
 } else {
   app.on('second-instance', () => {
-    if (!mainWindow) return
+    // Also brings the window back from the tray / background.
+    if (!mainWindow || mainWindow.isDestroyed()) return
     if (mainWindow.isMinimized()) mainWindow.restore()
     mainWindow.show()
     mainWindow.focus()
@@ -175,11 +185,92 @@ const updateManager = new UpdateManager({
   getWindow: () => mainWindow,
   beforeInstall: async () => {
     isInstallingUpdate = true
+    background.allowQuitWithoutPrompt('update install')
     await Promise.allSettled([webwrightManager.stop(), pythonManager.stop(), bridgeManager.stop()])
   },
 })
 
-async function createWindow() {
+// ── Background mode: keep dedicated agents online after the window closes ──
+const preferences = createPreferenceStore(path.join(app.getPath('userData'), 'app-settings.json'), { log })
+let launchAtLoginState = { supported: isLaunchAtLoginSupported({ isPackaged: app.isPackaged, platform: process.platform }), enabled: false }
+const getAgentSummary = () => fetchAgentSummary({ token: httpAuthToken })
+const background = createBackgroundController({
+  platform: process.platform,
+  preferences,
+  getWindow: () => mainWindow,
+  getAgentSummary,
+  showQuitDialog: async (options) => {
+    const parent = mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() ? mainWindow : undefined
+    const result = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options)
+    return result.response
+  },
+  quitApp: () => app.quit(),
+  onHidden: () => {
+    if (process.platform !== 'win32' || preferences.get().backgroundHintShown) return
+    preferences.update({ backgroundHintShown: true })
+    trayManager.notify('WeWorker 仍在后台运行', '专属 Agent 会继续工作。点击托盘图标打开，右键可退出。')
+  },
+  log,
+})
+
+function applyLaunchAtLogin() {
+  launchAtLoginState = syncLaunchAtLogin({
+    app,
+    preferences,
+    isPackaged: app.isPackaged,
+    platform: process.platform,
+    execPath: process.execPath,
+    log,
+  })
+  return launchAtLoginState
+}
+
+function showDedicatedAgentsFromTray() {
+  if (!background.showWindow()) return
+  mainWindow.webContents.send('app:open-dedicated-agents')
+}
+
+const trayManager = createTrayManager({
+  Tray,
+  Menu,
+  nativeImage,
+  getAgentSummary,
+  getLaunchAtLogin: () => launchAtLoginState,
+  handlers: {
+    onOpen: () => { background.showWindow() },
+    onOpenAgents: showDedicatedAgentsFromTray,
+    onToggleLaunchAtLogin: (enabled) => {
+      preferences.update({ launchAtLogin: enabled })
+      applyLaunchAtLogin()
+      trayManager.render()
+    },
+    onQuit: () => { void background.requestQuit() },
+  },
+  log,
+})
+
+function getAppSettings() {
+  return {
+    platform: process.platform,
+    closeToTray: preferences.get().closeToTray,
+    closeToTraySupported: process.platform === 'win32',
+    launchAtLogin: launchAtLoginState.enabled,
+    launchAtLoginSupported: launchAtLoginState.supported,
+  }
+}
+
+ipcMain.handle('app-settings:get', () => getAppSettings())
+ipcMain.handle('app-settings:set', (_event, patch = {}) => {
+  const next = {}
+  if (typeof patch.closeToTray === 'boolean') next.closeToTray = patch.closeToTray
+  if (typeof patch.launchAtLogin === 'boolean') next.launchAtLogin = patch.launchAtLogin
+  preferences.update(next)
+  if ('launchAtLogin' in next) applyLaunchAtLogin()
+  trayManager.render()
+  return getAppSettings()
+})
+
+async function createWindow({ show = true } = {}) {
   // Hide the default menu bar on Windows/Linux (macOS uses system menu bar)
   if (process.platform !== 'darwin') {
     Menu.setApplicationMenu(null)
@@ -187,14 +278,16 @@ async function createWindow() {
 
   const iconPath = path.join(__dirname, '../asset/logo.png')
   mainWindow = new BrowserWindow({
+    show,
     width: 1280,
     height: 800,
     minWidth: 480,
     minHeight: 400,
     title: isDev ? 'WeWorker (开发版)' : 'WeWorker',
     icon: fs.existsSync(iconPath) ? iconPath : undefined,
-    titleBarStyle: 'hiddenInset',
-    ...(process.platform !== 'darwin' ? { titleBarOverlay: { color: '#00000000', symbolColor: '#666666', height: 38 } } : {}),
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset' }
+      : { frame: false }),
     backgroundColor: '#f5f5f7',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -202,6 +295,21 @@ async function createWindow() {
       nodeIntegration: false,
     },
   })
+
+  if (process.platform !== 'darwin') {
+    const syncMaximizedState = () => mainWindow?.webContents.send('window:maximized-state', mainWindow.isMaximized())
+    mainWindow.on('maximize', syncMaximizedState)
+    mainWindow.on('unmaximize', syncMaximizedState)
+  }
+
+  // Closing the window keeps WeWorker running in the background (see background-mode.js).
+  mainWindow.on('close', (event) => {
+    if (isInstallingUpdate) return
+    background.handleWindowClose(event)
+  })
+  // Windows shutdown / logoff must not be blocked by the quit confirmation.
+  mainWindow.on('query-session-end', () => background.allowQuitWithoutPrompt('session end'))
+  mainWindow.on('session-end', () => background.allowQuitWithoutPrompt('session end'))
 
   if (isDev) {
     mainWindow.loadURL(devRendererUrl)
@@ -237,10 +345,24 @@ if (hasSingleInstanceLock) app.whenReady().then(async () => {
   // Start bridge and backend in parallel.
   await Promise.allSettled([bridgeManager.start(), pythonManager.start()])
 
-  await createWindow()
+  // Launched by the OS at login: stay in the tray / background.
+  const startHidden = isHiddenLaunch({
+    argv: process.argv,
+    platform: process.platform,
+    loginItemSettings: app.getLoginItemSettings?.(),
+  })
+  applyLaunchAtLogin()
+  await createWindow({ show: !startHidden })
+  if (startHidden) log('[main] started hidden (launched at login)')
+  trayManager.create()
   updateManager.start()
 
+  // macOS/Linux shutdown or logout must not wait for the quit confirmation.
+  powerMonitor.on('shutdown', () => background.allowQuitWithoutPrompt('system shutdown'))
+
   app.on('activate', () => {
+    // Dock click: bring back the hidden window, or re-create it if it was destroyed.
+    if (background.showWindow()) return
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
@@ -257,6 +379,8 @@ app.on('window-all-closed', () => {
 let isCleaningUp = false
 app.on('before-quit', async (event) => {
   if (isInstallingUpdate) return
+  // A real quit (tray, Cmd+Q, Dock) first warns when dedicated agents are bound.
+  if (background.handleBeforeQuit(event) !== 'proceed') return
   if (isCleaningUp) return
   isCleaningUp = true
   event.preventDefault()
@@ -266,6 +390,7 @@ app.on('before-quit', async (event) => {
   } catch (err) {
     log(`[main] cleanup error: ${err?.message || err}`)
   }
+  trayManager.destroy()
   log('[main] cleanup done — exiting')
   app.exit(0)
 })

@@ -101,7 +101,9 @@ describe('context providers', () => {
 
     expect(events.map((event) => event.type)).toEqual(['context_snapshot', 'done'])
     expect(events[0].context?.phase).toBe('turn_end')
-    expect(events[0].context?.actual_input_tokens).toBe(256)
+    // A normal query result usage is cumulative across the SDK's internal
+    // model/tool loop and must not be treated as this turn's context size.
+    expect(events[0].context?.actual_input_tokens).toBeUndefined()
     expect(events[0].context?.estimated_total_tokens).toBeGreaterThan(start.estimated_total_tokens)
   })
 

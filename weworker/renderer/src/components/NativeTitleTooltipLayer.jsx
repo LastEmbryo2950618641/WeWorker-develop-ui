@@ -123,7 +123,7 @@ export default function NativeTitleTooltipLayer() {
         color: 'var(--text-primary)',
         border: '1px solid var(--border)',
         borderRadius: 8,
-        boxShadow: '0 8px 18px rgba(0, 0, 0, 0.12)',
+        boxShadow: 'none',
         padding: '6px 9px',
         fontSize: 12,
         fontWeight: 560,

@@ -84,7 +84,7 @@ function parseCandidate(value: unknown): MemoryUpdateCandidate {
     throw new Error('memory decision must be a JSON object')
   }
   const parsed = value as Record<string, unknown>
-  const types = new Set(['user_usage', 'task_execution'])
+  const types = new Set(['user_usage', 'task_execution', 'other'])
   if (typeof parsed.memory_type !== 'string' || !parsed.memory_type.trim()) {
     throw new Error('memory decision must include memory type')
   }
@@ -185,6 +185,6 @@ export function buildMemoryOutputProtocolPrompt(input: MemoryOutputProtocolInput
   return renderPrompt('memory-output', {
     memory_block_open: MEMORY_BLOCK_OPEN,
     memory_block_close: MEMORY_BLOCK_CLOSE,
-    expected_memory_type: input.expectedMemoryType ?? 'user_usage 或 task_execution，由内容和真实执行结果决定',
+    expected_memory_type: input.expectedMemoryType ?? 'user_usage、task_execution 或 other，由内容和真实执行结果决定',
   }).trimEnd()
 }

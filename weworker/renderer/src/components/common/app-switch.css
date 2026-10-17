@@ -1,0 +1,51 @@
+.app-switch {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 18px;
+  vertical-align: middle;
+}
+
+.app-switch > .app-switch__input {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.app-switch__track {
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  background: #e7e7e9;
+  transition: background-color 160ms ease;
+  pointer-events: none;
+}
+
+.app-switch__track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 160ms ease;
+}
+
+.app-switch__input:checked + .app-switch__track { background: var(--accent, #339cff); }
+.app-switch__input:checked + .app-switch__track::after { transform: translateX(12px); }
+.app-switch__input:focus-visible + .app-switch__track { outline: 2px solid var(--accent, #339cff); outline-offset: 3px; }
+.app-switch__input:disabled { cursor: not-allowed; }
+.app-switch__input:disabled + .app-switch__track { opacity: 0.45; }
+
+@media (prefers-reduced-motion: reduce) {
+  .app-switch__track, .app-switch__track::after { transition: none; }
+}

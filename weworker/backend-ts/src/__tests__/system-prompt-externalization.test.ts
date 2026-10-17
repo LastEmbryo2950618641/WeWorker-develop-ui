@@ -31,6 +31,7 @@ function makeAdapter(overrides: Partial<ParsedAdapter> = {}): ParsedAdapter {
     name: '示例邮箱',
     description: '示例邮箱：收发邮件',
     match: ['mail.example.com'],
+    gateAliases: [],
     homepageUrl: 'https://mail.example.com/',
     tools: [],
     testPrompts: [],
@@ -81,19 +82,18 @@ describe('System Prompt - complete output contract before externalization', () =
     vi.restoreAllMocks()
   })
 
-  it('locks the complete full prompt including Windows, blacklist, adapters, memory and ZCF order', async () => {
+  it('locks the complete full prompt including Windows, blacklist, adapters, memory and style order', async () => {
     const { buildSystemPrompt } = await import('../agent.js')
 
     const prompt = buildSystemPrompt({
       channelPermissionMode: 'full',
       platform: 'win32',
       memoryProtocol: '[[MEMORY_PROTOCOL_FULL]]',
-      zcfRole: 'custom-reviewer',
-      zcfMode: 'direct',
-      zcfCustomRoles: [{
+      styleId: 'custom-reviewer',
+      customStyles: [{
         id: 'custom-reviewer',
         label: '测试评审风格',
-        prompt: '[[ZCF_CUSTOM_RULE_FULL]]',
+        prompt: '[[CUSTOM_STYLE_RULE_FULL]]',
       }],
     })
 
@@ -106,7 +106,7 @@ describe('System Prompt - complete output contract before externalization', () =
       不要说明自己在切换风格；直接按该风格自然回复。
       禁止使用 emoji、表情符号、颜文字或装饰性 Unicode 字符。
 
-      [[ZCF_CUSTOM_RULE_FULL]]
+      [[CUSTOM_STYLE_RULE_FULL]]
 
       ---
 
@@ -226,15 +226,6 @@ describe('System Prompt - complete output contract before externalization', () =
       调用 \`ask_user\` 时，尽量从前一步工具返回的真实数据中提取选项。
       当任何工具返回结果中包含 \`requires_user_choice: true\` 字段时，你必须立即调用 \`ask_user\` 工具，并将返回结果中的 \`question\` 和 \`options\` 原样传入。
 
-      ## 当前状态回复规则
-
-      你的每一条 assistant 回复末尾都必须包含一行当前状态，格式固定为：\`当前状态：<简短状态>\`。
-      要求：
-      - 每次回复都要写，不能省略。
-      - 状态必须反映此时真实进展，例如：正在执行第 2 步、等待用户选择、已完成当前任务。
-      - 即使前面已经写了步骤说明、Todo 列表或工具执行结果总结，最后也要补上这一行。
-      - 如果你正在等待用户行动，也必须明确写出等待中的状态。
-
       ## Todo List 更新规则
 
       当当前任务需要计划、分步执行、继续未完成计划，或当前对话已存在未完成 Todo List 时，你必须使用内置 \`TodoWrite\` 工具维护进度。
@@ -255,6 +246,7 @@ describe('System Prompt - complete output contract before externalization', () =
 
       当某个工具调用返回错误时，最多重试 2 次（即总共调用不超过 3 次）。
       如果同一个工具连续失败且错误信息相同或相似，立即停止重试，向用户说明情况，并调用 \`TodoWrite\` 更新当前计划：可将当前 todo 保持为 \`in_progress\` 并写入 \`blocked_reason\` 或 \`failure_reason\`，也可调整/删除未完成计划。
+      以下错误不会因等待或重试而恢复，第一次出现就停止，不要用 \`Start-Sleep\` 等待后重试：未登录或被重定向到登录页、扩展需要重载或未连接、没有匹配的页面或标签页——直接告诉用户需要完成的操作。命令、参数或引号格式被拒绝时，先修正输入再调用，不要原样重试。
 
       ## 登录检测规则
 
@@ -400,15 +392,6 @@ describe('System Prompt - complete output contract before externalization', () =
       调用 \`ask_user\` 时，尽量从前一步工具返回的真实数据中提取选项。
       当任何工具返回结果中包含 \`requires_user_choice: true\` 字段时，你必须立即调用 \`ask_user\` 工具，并将返回结果中的 \`question\` 和 \`options\` 原样传入。
 
-      ## 当前状态回复规则
-
-      你的每一条 assistant 回复末尾都必须包含一行当前状态，格式固定为：\`当前状态：<简短状态>\`。
-      要求：
-      - 每次回复都要写，不能省略。
-      - 状态必须反映此时真实进展，例如：正在执行第 2 步、等待用户选择、已完成当前任务。
-      - 即使前面已经写了步骤说明、Todo 列表或工具执行结果总结，最后也要补上这一行。
-      - 如果你正在等待用户行动，也必须明确写出等待中的状态。
-
       ## Todo List 更新规则
 
       当当前任务需要计划、分步执行、继续未完成计划，或当前对话已存在未完成 Todo List 时，你必须使用内置 \`TodoWrite\` 工具维护进度。
@@ -429,25 +412,25 @@ describe('System Prompt - complete output contract before externalization', () =
 
       当某个工具调用返回错误时，最多重试 2 次（即总共调用不超过 3 次）。
       如果同一个工具连续失败且错误信息相同或相似，立即停止重试，向用户说明情况，并调用 \`TodoWrite\` 更新当前计划：可将当前 todo 保持为 \`in_progress\` 并写入 \`blocked_reason\` 或 \`failure_reason\`，也可调整/删除未完成计划。
+      以下错误不会因等待或重试而恢复，第一次出现就停止，不要用 \`Start-Sleep\` 等待后重试：未登录或被重定向到登录页、扩展需要重载或未连接、没有匹配的页面或标签页——直接告诉用户需要完成的操作。命令、参数或引号格式被拒绝时，先修正输入再调用，不要原样重试。
 
 
       [[MEMORY_PROTOCOL_NO_BASH]]"
     `)
   })
 
-  it('locks the complete qa_only prompt with memory and ZCF composition', async () => {
+  it('locks the complete qa_only prompt with memory and style composition', async () => {
     const { buildSystemPrompt } = await import('../agent.js')
 
     const prompt = buildSystemPrompt({
       channelPermissionMode: 'qa_only',
       platform: 'linux',
       memoryProtocol: '[[MEMORY_PROTOCOL_QA_ONLY]]',
-      zcfRole: 'custom-reviewer',
-      zcfMode: 'direct',
-      zcfCustomRoles: [{
+      styleId: 'custom-reviewer',
+      customStyles: [{
         id: 'custom-reviewer',
         label: '测试评审风格',
-        prompt: '[[ZCF_CUSTOM_RULE_QA_ONLY]]',
+        prompt: '[[CUSTOM_STYLE_RULE_QA_ONLY]]',
       }],
     })
 
@@ -460,7 +443,7 @@ describe('System Prompt - complete output contract before externalization', () =
       不要说明自己在切换风格；直接按该风格自然回复。
       禁止使用 emoji、表情符号、颜文字或装饰性 Unicode 字符。
 
-      [[ZCF_CUSTOM_RULE_QA_ONLY]]
+      [[CUSTOM_STYLE_RULE_QA_ONLY]]
 
       ---
 

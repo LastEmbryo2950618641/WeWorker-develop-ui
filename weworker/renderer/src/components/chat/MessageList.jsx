@@ -1,10 +1,13 @@
 import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import MessageItem from './MessageItem.jsx'
 import SaveCodewordModal from './SaveCodewordModal.jsx'
 import ComplexTaskPlanPanel from './ComplexTaskPlanPanel.jsx'
 import { useWorksStore } from '../../store/works.js'
 import { applyPausedTodoState, applyStreamingTodoProgress, buildDisplayTodoSnapshots, buildTodoWriteState } from '../../utils/todowrite-state.js'
 import { backendFetch } from '../../api/http.js'
+import { showConfirm } from '../../store/dialog.js'
+import { findClosestHistoryMessageIndex, getHistoryMessagePreview } from '../../utils/message-history-navigation.js'
 
 const API = 'http://127.0.0.1:8765'
 const TIME_GAP_MS = 5 * 60 * 1000 // 5 minutes
@@ -28,9 +31,83 @@ function shouldShowTime(prevMsg, currMsg) {
   return new Date(currMsg.created_at) - new Date(prevMsg.created_at) > TIME_GAP_MS
 }
 
-export default function MessageList({ messages, streaming, workId, onChoice, onSelectModeChange, onShellCommand }) {
+function MessageHistoryNavigator({ entries, activeIndex, onJump }) {
+  const markersRef = useRef(null)
+  const markerRefs = useRef([])
+  const [previewIndex, setPreviewIndex] = useState(null)
+  const [previewPosition, setPreviewPosition] = useState(null)
+
+  useEffect(() => {
+    const list = markersRef.current
+    const activeMarkerIndex = entries.findIndex(entry => entry.index === activeIndex)
+    const marker = markerRefs.current[activeMarkerIndex]
+    if (!list || !marker) return
+    const markerTop = marker.parentElement?.offsetTop ?? marker.offsetTop
+    const markerBottom = markerTop + (marker.parentElement?.offsetHeight ?? marker.offsetHeight)
+    if (markerTop < list.scrollTop) list.scrollTop = markerTop
+    else if (markerBottom > list.scrollTop + list.clientHeight) {
+      list.scrollTop = markerBottom - list.clientHeight
+    }
+  }, [activeIndex, entries])
+
+  const showPreview = (index, target) => {
+    const rect = target.getBoundingClientRect()
+    setPreviewIndex(index)
+    setPreviewPosition({
+      top: Math.max(12, Math.min(window.innerHeight - 82, rect.top + rect.height / 2 - 32)),
+      left: Math.min(window.innerWidth - 236, rect.right + 10),
+    })
+  }
+
+  const hidePreview = () => {
+    setPreviewIndex(null)
+    setPreviewPosition(null)
+  }
+
+  if (!entries.length) return null
+
+  return (
+    <nav className="message-history-navigator" aria-label="历史消息导航">
+      <div className="message-history-navigator__track" aria-hidden="true" />
+      <div ref={markersRef} className="message-history-navigator__markers">
+        {entries.map(({ message, index: messageIndex }, index) => (
+          <div
+            className="message-history-marker-wrap"
+            key={message.id ?? messageIndex}
+            onMouseEnter={event => showPreview(index, event.currentTarget.querySelector('button'))}
+            onMouseLeave={hidePreview}
+          >
+            <button
+              ref={node => { markerRefs.current[index] = node }}
+              type="button"
+              className={`message-history-marker${activeIndex === messageIndex ? ' is-active' : ''}`}
+              aria-label={`跳转到第 ${index + 1} 条用户消息`}
+              aria-current={activeIndex === messageIndex ? 'true' : undefined}
+              onClick={() => onJump(messageIndex)}
+              onFocus={event => showPreview(index, event.currentTarget)}
+              onBlur={hidePreview}
+            >
+              <span aria-hidden="true" />
+            </button>
+            {previewIndex === index && previewPosition && typeof document !== 'undefined' && createPortal(
+              <div className="message-history-preview" role="tooltip" style={previewPosition}>
+                <span className="message-history-preview__role">用户提问</span>
+                <span className="message-history-preview__text">{getHistoryMessagePreview(message)}</span>
+              </div>,
+              document.body,
+            )}
+          </div>
+        ))}
+      </div>
+    </nav>
+  )
+}
+
+export default function MessageList({ messages, streaming, compactionStatus, workId, onChoice, onSelectModeChange, onShellCommand }) {
   const bottomRef = useRef(null)
   const containerRef = useRef(null)
+  const messageRefs = useRef([])
+  const [activeHistoryIndex, setActiveHistoryIndex] = useState(0)
   const [selectMode, setSelectMode] = useState(false)
   const [selected, setSelected] = useState(new Set())
   const [selectionToolbarRect, setSelectionToolbarRect] = useState(null)
@@ -41,6 +118,12 @@ export default function MessageList({ messages, streaming, workId, onChoice, onS
   const [planPinned, setPlanPinned] = useState(false)
   const [planExpanded, setPlanExpanded] = useState(false)
   const [planStepDetails, setPlanStepDetails] = useState({})
+  const historyEntries = useMemo(
+    () => messages
+      .map((message, index) => ({ message, index }))
+      .filter(({ message }) => message.role === 'user'),
+    [messages],
+  )
 
   // Reset scroll state when switching conversations
   const prevWorkIdRef = useRef(workId)
@@ -54,9 +137,11 @@ export default function MessageList({ messages, streaming, workId, onChoice, onS
       setPlanPinned(false)
       setSelectMode(false)
       setSelected(new Set())
+      setActiveHistoryIndex(0)
       // Scroll to bottom on conversation switch
       requestAnimationFrame(() => {
         bottomRef.current?.scrollIntoView()
+        requestAnimationFrame(() => updateActiveHistoryIndex())
       })
     }
   }, [workId])
@@ -91,26 +176,26 @@ export default function MessageList({ messages, streaming, workId, onChoice, onS
   const handleDeleteSelected = async () => {
     if (selected.size === 0) return
     const ids = [...selected].sort((a, b) => a - b).map(i => messages[i]?.id).filter(Boolean)
-    if (!ids.length || !window.confirm(`确定删除 ${ids.length} 条消息？`)) return
+    if (!ids.length || !await showConfirm(`确定删除 ${ids.length} 条消息？`, '删除消息')) return
     exitSelectMode()
     try {
       await backendFetch(`${API}/works/${workId}/messages/delete`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messageIds: ids }),
       })
-      useWorksStore.getState().selectWork(workId)
+      useWorksStore.getState().refreshWorkMessages(workId)
     } catch (e) { console.error('Delete failed:', e) }
   }
 
   const handleDeleteSingle = async (i) => {
     const msg = messages[i]
-    if (!msg?.id || !window.confirm('确定删除这条消息？')) return
+    if (!msg?.id || !await showConfirm('确定删除这条消息？', '删除消息')) return
     try {
       await backendFetch(`${API}/works/${workId}/messages/delete`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messageIds: [msg.id] }),
       })
-      useWorksStore.getState().selectWork(workId)
+      useWorksStore.getState().refreshWorkMessages(workId)
     } catch (e) { console.error('Delete failed:', e) }
   }
 
@@ -169,6 +254,27 @@ export default function MessageList({ messages, streaming, workId, onChoice, onS
     setPlanPinned(sentinelRect.bottom <= rootRect.top + 4)
   }, [displayPlan])
 
+  const updateActiveHistoryIndex = useCallback(() => {
+    const root = containerRef.current
+    if (!root || !messages.length) return
+    const rootRect = root.getBoundingClientRect()
+    const targetY = rootRect.top + Math.min(rootRect.height * 0.3, 180)
+    const nearestHistoryIndex = findClosestHistoryMessageIndex(
+      historyEntries.length,
+      historyIndex => messageRefs.current[historyEntries[historyIndex].index]?.getBoundingClientRect().top ?? Infinity,
+      targetY,
+    )
+    const nearestIndex = historyEntries[nearestHistoryIndex]?.index ?? 0
+    setActiveHistoryIndex(previous => previous === nearestIndex ? previous : nearestIndex)
+  }, [historyEntries])
+
+  const jumpToHistoryMessage = useCallback((index) => {
+    const target = messageRefs.current[index]
+    if (!target) return
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    setActiveHistoryIndex(index)
+  }, [])
+
   const handleScroll = () => {
     const el = containerRef.current
     if (!el) return
@@ -176,7 +282,13 @@ export default function MessageList({ messages, streaming, workId, onChoice, onS
     isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < threshold
     if (isNearBottomRef.current) setShowNewMsg(false)
     updatePlanPinned()
+    updateActiveHistoryIndex()
   }
+
+  useEffect(() => {
+    messageRefs.current = messageRefs.current.slice(0, messages.length)
+    requestAnimationFrame(updateActiveHistoryIndex)
+  }, [messages.length, historyEntries.length, updateActiveHistoryIndex])
 
   useEffect(() => {
     if (!displayPlan) {
@@ -208,8 +320,11 @@ export default function MessageList({ messages, streaming, workId, onChoice, onS
     } else {
       setShowNewMsg(true)
     }
-    requestAnimationFrame(updatePlanPinned)
-  }, [messages, updatePlanPinned])
+    requestAnimationFrame(() => {
+      updatePlanPinned()
+      updateActiveHistoryIndex()
+    })
+  }, [messages, compactionStatus, updatePlanPinned, updateActiveHistoryIndex])
 
   useEffect(() => {
     if (!selectMode) {
@@ -239,12 +354,21 @@ export default function MessageList({ messages, streaming, workId, onChoice, onS
 
   return (
     <div className="message-list-shell">
+      <MessageHistoryNavigator
+        entries={historyEntries}
+        activeIndex={activeHistoryIndex}
+        onJump={jumpToHistoryMessage}
+      />
       <div ref={containerRef} onScroll={handleScroll} className="message-list-scroll">
       <div className="message-list-scroll__inner">
       {messages.map((msg, i) => {
         const showTime = i === 0 || shouldShowTime(messages[i - 1], msg)
         return (
-          <React.Fragment key={msg.id ?? i}>
+          <div
+            key={msg.id ?? i}
+            ref={node => { messageRefs.current[i] = node }}
+            data-message-index={i}
+          >
             {showTime && msg.created_at && (
               <div style={{ textAlign: 'center', padding: '8px 0 4px', fontSize: 11, color: 'var(--text-muted)' }}>
                 {formatTimeSeparator(msg.created_at)}
@@ -254,6 +378,7 @@ export default function MessageList({ messages, streaming, workId, onChoice, onS
               message={msg}
               isLast={i === messages.length - 1}
               streaming={streaming && i === messages.length - 1}
+              compacting={compactionStatus === 'compacting'}
               compactAssistant={msg.role === 'assistant' && messages[i - 1]?.role === 'assistant'}
               plan={planAnchor?.messageIndex === i ? displayPlan : null}
               planSnapshot={effectivePlanSnapshots[i] ?? null}
@@ -273,9 +398,26 @@ export default function MessageList({ messages, streaming, workId, onChoice, onS
               onChoice={onChoice}
               onShellCommand={onShellCommand}
             />
-          </React.Fragment>
+          </div>
         )
       })}
+      {compactionStatus && (
+        <div
+          role="status"
+          aria-live="polite"
+          data-conversation-compaction-status={compactionStatus}
+          style={{
+            padding: '12px 20px',
+            fontSize: 14,
+            color: compactionStatus === 'failed' ? 'var(--error)' : compactionStatus === 'compacting' ? 'var(--accent)' : 'var(--text-secondary)',
+          }}
+        >
+          {compactionStatus === 'compacting' && '压缩中……'}
+          {compactionStatus === 'completed' && '对话上下文压缩完成'}
+          {compactionStatus === 'skipped' && '当前没有足够的历史对话可压缩'}
+          {compactionStatus === 'failed' && '对话上下文压缩失败'}
+        </div>
+      )}
       <div ref={bottomRef} />
       </div>
 
@@ -297,7 +439,7 @@ export default function MessageList({ messages, streaming, workId, onChoice, onS
               fontSize: 12,
               fontFamily: 'inherit',
               cursor: 'pointer',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+              boxShadow: 'none',
               display: 'flex',
               alignItems: 'center',
               gap: 4,
@@ -323,7 +465,7 @@ export default function MessageList({ messages, streaming, workId, onChoice, onS
           background: 'var(--bg-secondary)',
           border: '1px solid var(--border)',
           borderRadius: 12,
-          boxShadow: '0 10px 28px rgba(0, 0, 0, 0.10)',
+          boxShadow: 'none',
           padding: '8px 10px 8px 12px',
           display: 'flex',
           alignItems: 'center',
@@ -355,7 +497,7 @@ export default function MessageList({ messages, streaming, workId, onChoice, onS
           background: 'var(--bg-secondary)',
           border: '1px solid var(--border)',
           borderRadius: 12,
-          boxShadow: '0 10px 28px rgba(0, 0, 0, 0.10)',
+          boxShadow: 'none',
           padding: '8px 10px 8px 12px',
           display: 'flex',
           alignItems: 'center',

@@ -1,5 +1,7 @@
+import AppSwitch from '../common/AppSwitch.jsx'
 import { useState, useEffect } from 'react'
 import { backendFetch } from '../../api/http.js'
+import { showConfirm } from '../../store/dialog.js'
 const BUILTIN = 'personal-codewords'
 
 // Count ### headings in examples section = number of codewords
@@ -98,7 +100,7 @@ export default function SkillsTab() {
   }
 
   const deleteSkill = async (name) => {
-    if (!confirm(`删除技能 "${name}"？`)) return
+    if (!await showConfirm(`删除技能 "${name}"？`, '删除技能')) return
     try {
       await backendFetch(`/skills/${encodeURIComponent(name)}`, { method: 'DELETE' })
       await load()
@@ -179,21 +181,7 @@ export default function SkillsTab() {
               </div>
             </div>
             <button onClick={openBuiltin} style={iconBtnStyle} title="编辑暗号">✎</button>
-            <button
-              onClick={toggleBuiltin}
-              title={builtinSkill?.enabled ? '关闭' : '启用'}
-              style={{
-                ...toggleStyle,
-                background: builtinSkill?.enabled ? 'var(--accent)' : 'var(--bg-primary)',
-                borderColor: builtinSkill?.enabled ? 'var(--accent)' : 'var(--border)',
-              }}
-            >
-              <span style={{
-                display: 'block', width: 12, height: 12, borderRadius: '50%', background: '#fff',
-                transform: builtinSkill?.enabled ? 'translateX(14px)' : 'translateX(2px)',
-                transition: 'transform 0.15s',
-              }} />
-            </button>
+            <AppSwitch checked={!!builtinSkill?.enabled} onChange={toggleBuiltin} aria-label="启用个人暗号" />
           </div>
         )}
       </div>
@@ -298,11 +286,6 @@ const iconBtnStyle = {
   background: 'none', border: 'none', cursor: 'pointer',
   color: 'var(--text-muted)', fontSize: 14, padding: '2px 6px',
   borderRadius: 4, flexShrink: 0,
-}
-const toggleStyle = {
-  width: 30, height: 16, borderRadius: 8, border: '1px solid',
-  cursor: 'pointer', padding: 0, flexShrink: 0, position: 'relative',
-  transition: 'background 0.15s, border-color 0.15s',
 }
 const cardStyle = {
   background: 'var(--bg-tertiary)',

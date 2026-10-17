@@ -73,6 +73,7 @@ export function normalizeAiConfig(config = {}) {
     protocol: String(config.protocol || preset.protocol || "openai").trim() || "openai",
     api_key: String(config.api_key || "").trim(),
     base_url: baseUrl || preset.base_url || "",
+    base_url_is_full: config.base_url_is_full === true,
     model: model || preset.model || "",
     ...normalizeOutputConfig(config),
   };
@@ -735,12 +736,12 @@ function normalizeScaffoldUiHint(raw = {}) {
   };
 }
 
-function buildOpenAiChatEndpoint(baseUrl) {
+function buildOpenAiChatEndpoint(baseUrl, fullUrl = false) {
   const trimmed = String(baseUrl || "").trim().replace(/\/+$/, "");
   if (!trimmed) {
     throw new Error("OpenAI 兼容协议需要配置 base_url");
   }
-  return trimmed.endsWith("/chat/completions") ? trimmed : `${trimmed}/chat/completions`;
+  return fullUrl || trimmed.endsWith("/chat/completions") ? trimmed : `${trimmed}/chat/completions`;
 }
 
 export function extractAnthropicTextContent(content = []) {
@@ -789,7 +790,7 @@ async function callAnthropicModel(prompt, config, maxTokens, taskLabel) {
 }
 
 async function callOpenAiCompatibleModel(prompt, config, maxTokens, taskLabel) {
-  const endpoint = buildOpenAiChatEndpoint(config.base_url);
+  const endpoint = buildOpenAiChatEndpoint(config.base_url, config.base_url_is_full);
   const promptBytes = Buffer.byteLength(String(prompt || ""), "utf8");
   const memoryBefore = process.memoryUsage();
   process.stderr.write(

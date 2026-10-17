@@ -1,3 +1,4 @@
+import { DropdownMenuCheck } from '../common/AppDropdownSelect.jsx'
 import React, { useMemo, useRef, useState } from 'react'
 import {
   DROPDOWN_MENU_LIST_CLASS,
@@ -71,34 +72,13 @@ export default function SiteMultiSelect({ sites, selectedIds, onToggle, disabled
                 className={dropdownMenuCheckItemClassName({ selected: checked })}
               >
                 <span style={optionTextStyle}>{site.name}</span>
-                {checked ? <MenuCheckIcon /> : null}
+                <DropdownMenuCheck selected={checked} />
               </button>
             )
           })}
         </div>
       </DropdownMenuPortal>
     </div>
-  )
-}
-
-function MenuCheckIcon() {
-  return (
-    <svg
-      className="app-dropdown-menu-check-icon"
-      width="14"
-      height="14"
-      viewBox="0 0 14 14"
-      fill="none"
-      aria-hidden="true"
-    >
-      <path
-        d="M2.5 7.2 5.5 10.2 11.5 3.8"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
   )
 }
 

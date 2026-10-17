@@ -13,6 +13,7 @@ test('packaged Extension and WebCLI preserve the certified API Adapter scope', a
   ))
   const profile = JSON.parse(fs.readFileSync(path.join(weworkerRoot, 'build-profile.json'), 'utf8'))
   const packageJson = JSON.parse(fs.readFileSync(path.join(weworkerRoot, 'package.json'), 'utf8'))
+  const installerScript = fs.readFileSync(path.join(weworkerRoot, 'installer.nsh'), 'utf8')
   const inventory = await loadShippedApiInventory({ repoRoot })
 
   assert.equal(inventory.adapterCount, inventory.adapters.length)
@@ -27,6 +28,11 @@ test('packaged Extension and WebCLI preserve the certified API Adapter scope', a
   const extensionResource = packageJson.build.extraResources.find((entry) => entry.to === 'extension')
   assert.ok(extensionResource)
   assert.equal(extensionResource.from, 'build/extension-dist/')
+  assert.equal(packageJson.build.nsis.include, 'installer.nsh')
+  assert.match(installerScript, /!macro customRemoveFiles/)
+  assert.match(installerScript, /taskkill \/F \/T \/IM WeWorker\.exe/)
+  assert.match(installerScript, /taskkill \/F \/T \/IM Webwright\.exe/)
+  assert.match(installerScript, /RMDir \/r \"\$INSTDIR\"/)
 
   for (const buildCommand of [packageJson.scripts['build:mac'], packageJson.scripts['build:win']]) {
     assert.ok(buildCommand.startsWith('node scripts/prepare-build.cjs &&'))

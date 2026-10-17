@@ -1,0 +1,66 @@
+.model-settings-layout.channel-profiles-layout { grid-template-columns: 150px minmax(0, 1fr); }
+.channel-profiles-layout .channel-types .model-settings-sidebar__header { padding: 14px 10px; gap: 4px; }
+.channel-types .model-settings-add { width: 30px; height: 30px; min-width: 30px; }
+.channel-profiles-workspace { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--bg-primary); }
+.channel-profiles-content { display: grid; grid-template-columns: minmax(0, 1fr); flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
+.channel-profile-menu button { border: 0; background: transparent; color: var(--text-secondary); cursor: pointer; }
+.channel-profile-row { display: flex; align-items: center; gap: 2px; min-height: 38px; padding: 3px 4px 3px 8px; border-radius: 7px; margin-bottom: 4px; }
+.channel-profile-row:hover, .channel-profile-row:focus-within { background: var(--dropdown-hover); }
+.channel-profile-row.is-selected { background: #edf7ef; color: #168442; }
+.channel-profile-name { flex: 1; min-width: 0; padding: 6px 0; text-align: left; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: inherit; font-size: 12px; }
+.channel-profile-row.is-selected .channel-profile-name { color: #168442; }
+.channel-profile-actions { display: flex; align-items: center; flex-shrink: 0; gap: 1px; }
+.channel-profile-actions button { width: 25px; height: 26px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border-radius: 5px; font-size: 13px; }
+.channel-profile-menu .channel-profile-row button:hover:not(:disabled),
+.channel-profile-menu .channel-profile-row button:focus { background: transparent; }
+.channel-profile-actions button.is-active { color: #168442; opacity: 1; }
+.channel-profile-actions button.is-delete:hover { color: var(--error); }
+.channel-profile-menu button:disabled:not(.is-active) { cursor: default; opacity: .5; }
+.channel-profile-menu button:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+.channel-profile-rename { width: 0; min-width: 0; flex: 1; height: 28px; padding: 3px 4px; border: 1px solid var(--accent); border-radius: 4px; color: var(--text-primary); background: var(--bg-primary); font-size: 12px; outline: none; }
+.channel-profile-hint, .channel-profile-empty { color: var(--text-muted); font-size: 11px; padding: 10px 12px; margin: 0; }
+.channel-profile-hint { border-top: 1px solid var(--border); }
+.channel-profiles-error { color: var(--error); padding: 8px 14px; font-size: 12px; }
+.channel-profiles-layout .channel-settings-toolbar { padding: 8px 14px; gap: 8px; }
+.channel-profiles-layout .channel-settings-body { padding: 14px; }
+@media (max-width: 1100px) {
+  .model-settings-layout.channel-profiles-layout { grid-template-columns: 136px minmax(0, 1fr); }
+  .channel-types .model-settings-sidebar__count { display: none; }
+  .channel-profiles-layout .channel-settings-toolbar-actions { gap: 4px; }
+}
+@media (max-width: 800px) {
+  .model-settings-layout.channel-profiles-layout { grid-template-columns: 124px minmax(0, 1fr); }
+  .channel-profiles-layout .channel-settings-toolbar-actions { flex-direction: column; align-items: stretch; }
+}
+
+.channel-types .channel-settings-item { white-space: nowrap; gap: 7px; padding: 8px; }
+.channel-types .model-settings-provider-list { padding: 8px 6px; }
+.channel-profile-heading { display: flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; }
+.channel-profile-heading__edit { display: inline-flex; align-items: center; gap: 7px; min-width: 0; max-width: 240px; padding: 4px 0; border: 0; background: transparent; color: var(--text-primary); font: inherit; cursor: pointer; }
+.channel-profile-heading__edit > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.channel-profile-heading__edit .anticon { color: var(--text-muted); font-size: 12px; flex-shrink: 0; }
+.channel-profile-heading__edit:hover .anticon { color: var(--accent); }
+.channel-profile-heading__edit:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+.channel-profile-heading__input { width: 180px; max-width: 100%; min-width: 0; height: 28px; padding: 3px 6px; border: 1px solid var(--accent); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary); font: inherit; outline: none; }
+
+.channel-profile-select { display: inline-flex; align-items: center; gap: 10px; max-width: 260px; min-width: 0; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-primary); color: var(--text-primary); font: inherit; cursor: pointer; }
+.channel-profile-select > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.channel-profile-select .anticon { flex-shrink: 0; font-size: 11px; color: var(--text-secondary); }
+.channel-profile-select:hover { border-color: var(--accent); }
+.channel-profile-select:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.channel-profile-menu__list { max-height: 280px; overflow-y: auto; overscroll-behavior: contain; }
+.channel-profile-menu .channel-profile-row { margin-bottom: 2px; }
+.channel-profile-menu .app-dropdown-menu-item { width: 100%; }
+.channel-profile-heading__edit { justify-content: center; width: 28px; height: 28px; padding: 0; flex-shrink: 0; }
+.channel-profile-type { display: inline-flex; align-items: center; gap: 12px; font-size: 12px; }
+.channel-profile-type > span { color: var(--text-muted); }
+.channel-profile-type strong { font-weight: 500; color: var(--text-primary); }
+
+.channel-profile-menu > [role="dialog"] { display: flex; flex-direction: column; min-height: 0; }
+.channel-profile-menu__list { flex: 1 1 auto; min-height: 0; }
+.channel-profile-menu .app-dropdown-menu-item, .channel-profile-menu .channel-profile-hint { flex-shrink: 0; }
+
+.channel-settings-group--type { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 64px; }
+.channel-settings-body .channel-settings-group--config { padding-top: 14px; }
+.channel-settings-group--config .channel-settings-field { padding: 14px 0; }
+.channel-settings-group--config .channel-settings-field__label { color: var(--text-primary); }

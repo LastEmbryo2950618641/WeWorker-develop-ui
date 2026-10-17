@@ -1,4 +1,5 @@
-export type MemoryType = 'user_usage' | 'task_execution' | `extension:${string}`
+/** `other` = 用户明确要求记住、或不属于其他类别的稳定长期事实/约定。 */
+export type MemoryType = 'user_usage' | 'task_execution' | 'other' | `extension:${string}`
 export type MemoryStatus = 'active' | 'superseded' | 'invalid'
 export type MemoryEventTrigger =
   | 'agent_decision'

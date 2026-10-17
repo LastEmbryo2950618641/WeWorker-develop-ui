@@ -21,10 +21,21 @@ class ManagedModelConfig:
     model: str
     api_key: str
     structured_output: str
+    base_url_is_full: bool = False
+
+    @property
+    def request_endpoint(self) -> str:
+        if self.base_url_is_full:
+            return self.base_url
+        suffix = "/v1/messages" if self.protocol == "anthropic_messages" else "/chat/completions"
+        return self.base_url.rstrip("/") + suffix
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "ManagedModelConfig":
-        values = {name: str(payload.get(name) or "").strip() for name in cls.__annotations__}
+        values = {name: str(payload.get(name) or "").strip() for name in cls.__annotations__ if name != "base_url_is_full"}
+        full_url = payload.get("base_url_is_full", False)
+        if not isinstance(full_url, bool):
+            raise ManagedModelConfigError("WeWorker returned an invalid full URL option.")
         if values["protocol"] not in {"anthropic_messages", "openai_chat_completions"}:
             raise ManagedModelConfigError("WeWorker returned an unsupported model protocol.")
         if values["model_class"] not in {"anthropic", "zhipu", "openai_chat"}:
@@ -41,9 +52,9 @@ class ManagedModelConfig:
         if values["structured_output"] != expected_output:
             raise ManagedModelConfigError("WeWorker returned an incompatible structured-output mode.")
         parsed = urlparse(values["base_url"])
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password or (parsed.query and not full_url) or parsed.fragment:
             raise ManagedModelConfigError("WeWorker returned an invalid model Base URL.")
-        return cls(**values)
+        return cls(**values, base_url_is_full=full_url)
 
 
 def load_managed_model_config(

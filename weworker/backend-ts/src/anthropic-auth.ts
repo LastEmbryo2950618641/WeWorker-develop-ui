@@ -12,8 +12,8 @@ export function usesAnthropicBearerToken(
   providerId: string | undefined,
   customAuthType?: AnthropicAuthType,
 ): boolean {
-  return (providerId === 'builtin' || providerId === 'custom')
-    && normalizeAnthropicAuthType(customAuthType) === 'auth_token'
+  return providerId === 'builtin' || (providerId === 'custom'
+    && normalizeAnthropicAuthType(customAuthType) === 'auth_token')
 }
 
 export function buildAnthropicAuthHeaders(

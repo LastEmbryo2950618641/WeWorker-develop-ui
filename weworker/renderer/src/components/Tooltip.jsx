@@ -30,16 +30,23 @@ export default function Tooltip({ text, children, delay = 420, light = true, pla
   const tooltipRef = useRef(null)
 
   const show = useCallback((e) => {
+    clearTimeout(timerRef.current)
     const rect = e.currentTarget.getBoundingClientRect()
     setTriggerRect(rect)
-    timerRef.current = setTimeout(() => setVisible(true), delay)
+    timerRef.current = setTimeout(() => {
+      timerRef.current = null
+      setVisible(true)
+    }, delay)
   }, [delay, placement])
 
   const hide = useCallback(() => {
     clearTimeout(timerRef.current)
+    timerRef.current = null
     setVisible(false)
     setTriggerRect(null)
   }, [])
+
+  useLayoutEffect(() => () => clearTimeout(timerRef.current), [])
 
   useLayoutEffect(() => {
     if (!visible || !triggerRect || !tooltipRef.current) return
@@ -56,6 +63,7 @@ export default function Tooltip({ text, children, delay = 420, light = true, pla
         onMouseLeave={hide}
         onFocus={show}
         onBlur={hide}
+        onClickCapture={hide}
         style={{ display: 'inline-flex', WebkitAppRegion: 'no-drag' }}
       >
         {children}

@@ -14,6 +14,41 @@ function settings(overrides: Partial<Settings> = {}): Settings {
 }
 
 describe('Webwright managed model config', () => {
+  it('passes through exact custom OpenAI URLs and each configuration URL mode', () => {
+    const endpoint = 'https://example.com/custom/inference/?v=1&route=a%2Fb'
+    const legacy = settings({ active_provider: 'custom', openai_base_url_custom: endpoint, openai_base_url_is_full_custom: true })
+    expect(resolveWebwrightModelConfig(legacy)).toMatchObject({ base_url: endpoint, base_url_is_full: true })
+    expect(suggestExplorationBaseUrl(legacy)).toEqual({ url: endpoint, generated: false, fullUrl: true })
+    const configured = { ...legacy, active_model_configuration: 'model-fixture', model_configurations: {
+      'model-fixture': { provider_id: 'custom', model: 'fixture-model', api_key: 'fixture-key', context_limit: 1000000,
+        base_url: 'https://example.com/anthropic', base_url_is_full: false,
+        openai_base_url: endpoint, openai_base_url_is_full: true, auth_type: 'api_key' as const },
+    } }
+    expect(resolveWebwrightModelConfig(configured)).toMatchObject({ base_url: endpoint, base_url_is_full: true })
+    configured.model_configurations['model-fixture'].openai_base_url_is_full = false
+    configured.model_configurations['model-fixture'].openai_base_url = 'https://example.com/v1'
+    expect(resolveWebwrightModelConfig(configured)).not.toHaveProperty('base_url_is_full')
+  })
+
+  it('does not infer an exploration endpoint from a complete Anthropic URL', () => {
+    const value = settings({ active_provider: 'custom',
+      base_url_custom: 'https://example.com/inference/?version=1', base_url_is_full_custom: true })
+    expect(suggestExplorationBaseUrl(value)).toEqual({ url: '', generated: false })
+    expect(() => resolveWebwrightModelConfig(value)).toThrow('请填写网站探索服务地址')
+  })
+
+  it('keeps independent exploration URL mode separate from both main URL modes', () => {
+    const main = settings({ active_provider: 'custom',
+      base_url_custom: 'https://example.com/inference/?version=1', base_url_is_full_custom: true,
+      openai_base_url_custom: 'https://example.com/chat/?version=1', openai_base_url_is_full_custom: true })
+    const base = { ...main, exploration_base_url: 'https://example.org/v1' }
+    expect(resolveWebwrightModelConfig(base)).toMatchObject({ base_url: 'https://example.org/v1' })
+    expect(resolveWebwrightModelConfig(base)).not.toHaveProperty('base_url_is_full')
+    const full = { ...main, exploration_base_url: 'https://example.org/chat/?v=1', exploration_base_url_is_full: true }
+    expect(resolveWebwrightModelConfig(full)).toMatchObject({ base_url: full.exploration_base_url, base_url_is_full: true })
+    expect(suggestExplorationBaseUrl(full)).toEqual({ url: full.exploration_base_url, generated: false, fullUrl: true })
+  })
+
   it.each([
     ['https://example.com', 'https://example.com/v1'],
     ['https://example.com/', 'https://example.com/v1'],

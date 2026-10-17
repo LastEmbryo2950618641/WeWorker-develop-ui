@@ -13,7 +13,7 @@ import type {
 const CJK_OR_FULL_WIDTH = /[\u2e80-\u9fff\uf900-\ufaff\uff01-\uff60]/u
 const WHITESPACE = /\s/u
 
-/** Deterministic local estimate for UI composition only; provider usage remains authoritative. */
+/** Deterministic local estimate for UI composition; billing usage stays separate from context size. */
 export function estimateContextTokens(value: string): number {
   const text = String(value || '')
   if (!text) return 0
@@ -164,12 +164,13 @@ export interface TurnContextEvent {
   name?: string
   args?: unknown
   result?: string
+  // Kept for event compatibility; normal query usage is billing data and is
+  // intentionally ignored by the turn context collector.
   usage?: { total_input_tokens?: number }
 }
 
 export function createTurnContextCollector(requestSnapshot: ContextSnapshot) {
   let assistantText = ''
-  let actualInputTokens: number | undefined
   const toolCalls = new Map<string, { name: string; result?: string }>()
   const skillTexts = new Map<string, string>()
 
@@ -185,9 +186,6 @@ export function createTurnContextCollector(requestSnapshot: ContextSnapshot) {
       } else if (event.type === 'tool_call_result' && event.id) {
         const existing = toolCalls.get(event.id) ?? { name: 'tool' }
         toolCalls.set(event.id, { ...existing, result: event.result })
-      } else if (event.type === 'usage') {
-        const inputTokens = Number(event.usage?.total_input_tokens)
-        if (Number.isFinite(inputTokens)) actualInputTokens = Math.max(0, inputTokens)
       }
     },
     finish(): [
@@ -208,7 +206,6 @@ export function createTurnContextCollector(requestSnapshot: ContextSnapshot) {
       const context = buildTurnEndContextSnapshot(
         snapshot,
         `${assistantText}${toolText}`,
-        actualInputTokens,
       )
       return [
         { type: 'context_snapshot', context },

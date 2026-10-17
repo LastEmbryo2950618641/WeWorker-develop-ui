@@ -24,6 +24,10 @@ const PROMPT_BRACE_EXPRESSION = /{+[^{}]*}+/g
 const QUERY_ROUTES_CONFIG = process.env.WEWORKER_QUERY_ROUTES_CONFIG
   ? path.resolve(process.env.WEWORKER_QUERY_ROUTES_CONFIG)
   : path.resolve(__dirname, '../query-routes.public.json')
+// 智能路由分层配置：随包默认目录，可被 Profile Overlay 指向内部配置目录
+const ROUTER_CONFIG_DIR = process.env.WEWORKER_ROUTER_CONFIG_DIR
+  ? path.resolve(process.env.WEWORKER_ROUTER_CONFIG_DIR)
+  : path.resolve(__dirname, '../router-config')
 
 const KEYRING_PLATFORM_PACKAGES = {
   'win32-x64': '@napi-rs/keyring-win32-x64-msvc',
@@ -121,9 +125,11 @@ try {
   console.warn('[bundle-backend-ts] .build-defines.json not found, using built-in defaults (dev mode)')
   buildDefines = {
     providers: [
-      { id: 'anthropic', name: 'Anthropic', models: ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'], defaultModel: 'claude-sonnet-4-6', weworker: { protocol: 'anthropic_messages', baseUrl: 'https://api.anthropic.com' }, webwright: { protocol: 'anthropic_messages', modelClass: 'anthropic', baseUrl: 'https://api.anthropic.com', structuredOutput: 'anthropic_json_schema' } },
-      { id: 'glm', name: '智谱 coding plan', models: ['glm-5.2', 'glm-4.7'], defaultModel: 'glm-5.2', weworker: { protocol: 'anthropic_messages', baseUrl: 'https://open.bigmodel.cn/api/anthropic' }, webwright: { protocol: 'openai_chat_completions', modelClass: 'zhipu', baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4', structuredOutput: 'openai_json_object' } },
-      { id: 'deepseek', name: 'DeepSeek', models: ['deepseek-v4-flash', 'deepseek-v4-pro'], defaultModel: 'deepseek-v4-flash', weworker: { protocol: 'anthropic_messages', baseUrl: 'https://api.deepseek.com/anthropic' }, webwright: { protocol: 'openai_chat_completions', modelClass: 'openai_chat', baseUrl: 'https://api.deepseek.com', structuredOutput: 'openai_json_object' } },
+      {"id":"builtin","name":"内置模型","models":["ark-code-latest"],"defaultModel":"ark-code-latest","weworker":{"protocol":"anthropic_messages","baseUrl":"https://ark.cn-beijing.volces.com/api/plan"},"webwright":{"protocol":"openai_chat_completions","modelClass":"zhipu","baseUrl":"https://ark.cn-beijing.volces.com/api/plan/v3","structuredOutput":"openai_json_object"}},
+      {"id":"builtin_dev","name":"内置模型（开发）","models":["deepseek-v4-flash"],"defaultModel":"deepseek-v4-flash","weworker":{"protocol":"anthropic_messages","baseUrl":""},"webwright":{"protocol":"anthropic_messages","modelClass":"anthropic","baseUrl":"","structuredOutput":"anthropic_json_schema"}},
+      { id: 'anthropic', name: 'Anthropic', models: [], defaultModel: '', weworker: { protocol: 'anthropic_messages', baseUrl: 'https://api.anthropic.com' }, webwright: { protocol: 'anthropic_messages', modelClass: 'anthropic', baseUrl: 'https://api.anthropic.com', structuredOutput: 'anthropic_json_schema' } },
+      { id: 'glm', name: '智谱 coding plan', models: [], defaultModel: '', weworker: { protocol: 'anthropic_messages', baseUrl: 'https://open.bigmodel.cn/api/anthropic' }, webwright: { protocol: 'openai_chat_completions', modelClass: 'zhipu', baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4', structuredOutput: 'openai_json_object' } },
+      { id: 'deepseek', name: 'DeepSeek', models: [], defaultModel: '', weworker: { protocol: 'anthropic_messages', baseUrl: 'https://api.deepseek.com/anthropic' }, webwright: { protocol: 'openai_chat_completions', modelClass: 'openai_chat', baseUrl: 'https://api.deepseek.com', structuredOutput: 'openai_json_object' } },
       { id: 'custom', name: '自定义', models: [], defaultModel: '', weworker: { protocol: 'anthropic_messages', baseUrl: '' }, webwright: { protocol: 'openai_chat_completions', modelClass: 'openai_chat', baseUrl: '', structuredOutput: 'openai_json_object' } },
     ],
     defaultProvider: 'anthropic',
@@ -168,6 +174,19 @@ function bundleBackend(options = {}) {
   if (fs.existsSync(QUERY_ROUTES_CONFIG)) {
     fs.copyFileSync(QUERY_ROUTES_CONFIG, path.join(outDir, 'query-routes.json'))
     console.log(`[bundle-backend-ts] Copied query routes: ${QUERY_ROUTES_CONFIG}`)
+  }
+
+  // 分层配置文件与 server.cjs 同目录，运行时按 MODULE_DIR/router-config 命中
+  if (fs.existsSync(ROUTER_CONFIG_DIR)) {
+    const routerOutDir = path.join(outDir, 'router-config')
+    fs.mkdirSync(routerOutDir, { recursive: true })
+    const copied = fs.readdirSync(ROUTER_CONFIG_DIR).filter((name) => name.endsWith('.json'))
+    for (const name of copied) {
+      fs.copyFileSync(path.join(ROUTER_CONFIG_DIR, name), path.join(routerOutDir, name))
+    }
+    console.log(`[bundle-backend-ts] Copied router config (${copied.length} files): ${ROUTER_CONFIG_DIR}`)
+  } else {
+    console.warn(`[bundle-backend-ts] Router config dir not found, skipping: ${ROUTER_CONFIG_DIR}`)
   }
 
   fs.writeFileSync(

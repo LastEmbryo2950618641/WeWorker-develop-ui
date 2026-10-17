@@ -1,0 +1,147 @@
+.skill-files-group {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-primary);
+}
+
+.skill-file-section { min-width: 0; }
+.skill-file-section + .skill-file-section { border-top: 1px solid var(--border); }
+
+.skill-file-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 44px;
+  padding-right: 10px;
+  background: var(--bg-primary);
+}
+
+.skill-file-section:first-child > .skill-file-section-header { border-radius: 10px 10px 0 0; }
+.skill-file-section:last-child > .skill-file-section-header { border-radius: 0 0 10px 10px; }
+.skill-file-section:only-child > .skill-file-section-header { border-radius: 10px; }
+.skill-file-section-header.is-sticky { position: sticky; top: 0; z-index: 6; }
+.skill-file-section-header:has(.skill-file-section-toggle:hover) { background: var(--bg-secondary); }
+
+.skill-file-section-toggle {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.skill-file-section-chevron { flex: 0 0 auto; color: var(--text-muted); font-size: 10px; transition: transform 160ms ease; }
+.skill-file-section-toggle[aria-expanded='true'] .skill-file-section-chevron { transform: rotate(90deg); }
+.skill-file-section-icon { display: inline-flex; flex: 0 0 auto; color: var(--text-secondary); font-size: 15px; }
+.skill-file-section-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; line-height: 20px; }
+.skill-file-section-meta { flex: 0 0 auto; color: var(--text-muted); font-size: 11px; font-weight: 400; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.skill-file-section-actions { display: flex; align-items: center; flex: 0 0 auto; }
+.skill-file-section-notice { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.skill-file-section-body { min-width: 0; border-top: 1px solid var(--border); padding: 8px; }
+
+.skill-file-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.skill-file-add:hover, .skill-file-add[aria-expanded='true'] { color: var(--text-primary); background: var(--bg-secondary); }
+.skill-file-section-toggle:focus-visible, .skill-file-add:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .skill-file-section-chevron { transition: none; }
+}
+
+.skill-editor-header-content {
+  min-width: 0;
+  flex: 1 1 auto;
+  padding: 2px 0 0;
+}
+
+.skill-editor-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.skill-editor-kicker-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.skill-editor-header-content h3 {
+  margin: 0 0 4px;
+  font-size: 21px;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+.skill-editor-header-content .skill-editor-kicker {
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.skill-editor-header-content .skill-editor-kicker-dot {
+  width: 5px;
+  height: 5px;
+}
+
+.skill-editor-header-content .skill-tags {
+  margin: 6px 0 0;
+  gap: 4px;
+  font-size: 10px;
+}
+
+.skill-editor-header-content .skill-tag {
+  gap: 3px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  line-height: 14px;
+}
+
+.skill-editor-header-content .skill-tag button,
+.skill-editor-header-content .skill-tag-add {
+  gap: 3px;
+  padding: 1px;
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.skill-editor-actions {
+  align-self: flex-start;
+  padding-top: 1px;
+}

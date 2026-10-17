@@ -31,6 +31,10 @@ import { formatCallOutput, resolveOutputFormat } from "./output-format.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = dirname(__filename);
 
+// CLI 进程启动时刻：随 call_tool 一起发给 bridge，用于把「内置 shell → CLI 启动」
+// 与「bridge 派发」「扩展内部执行」分开观测（bridge 侧的调用分段日志）。
+const CLI_STARTED_AT = Date.now();
+
 const WS_PORT    = 3711;
 const WEBCLI_DIR = join(homedir(), ".webcli");
 const WEBMCP_DIR = join(homedir(), ".webmcp"); // backward compat
@@ -467,7 +471,7 @@ async function cmdCall(toolName, argsStr, options = {}) {
   ws.on("open", () => {
     const id = "cli-" + Date.now();
     const traceID = randomUUID().replace(/-/g, "").slice(0, 12);
-    ws.send(JSON.stringify({ type: "call_tool", toolName, args, id, traceID, adapterSnapshot: v2Match?.snapshot }));
+    ws.send(JSON.stringify({ type: "call_tool", toolName, args, id, traceID, adapterSnapshot: v2Match?.snapshot, clientStartedAt: CLI_STARTED_AT }));
 
     ws.on("message", async (data) => {
       const msg = JSON.parse(data.toString());

@@ -127,7 +127,7 @@ export default function SiteSkillsScenariosAction({
             border: '1px solid var(--border)',
             borderRadius: 10,
             background: 'var(--bg-secondary)',
-            boxShadow: '0 10px 24px rgba(0,0,0,0.14)',
+            boxShadow: 'none',
             padding: '4px 0',
             overflow: 'hidden',
             visibility: menuPosition ? 'visible' : 'hidden',

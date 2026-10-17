@@ -215,6 +215,11 @@ interface McpServerContext {
   platform?: NodeJS.Platform
   channelPermissionMode?: ChannelPermissionMode
   workId?: string | null
+  /**
+   * Work resolved at tool-call time. A pre-started chat session is created
+   * before its work is known and is bound to the work on its first turn.
+   */
+  workIdRef?: { current: string | null }
   abortSignal?: AbortSignal | null
   askUserSSECallback?: AskUserSSECallback | null
   channelAskUserHandler?: ChannelAskUserHandler | null
@@ -264,7 +269,8 @@ function _findDecryptExe(): string | null {
 // ── MCP Server (weworker-specific tools only) ─────────────────────────────────
 
 export function buildMcpServer(opts?: McpServerContext) {
-  const workId = opts?.workId ?? null
+  const fixedWorkId = opts?.workId ?? null
+  const currentWorkId = (): string | null => (opts?.workIdRef ? opts.workIdRef.current : fixedWorkId)
   const abortSignal = opts?.abortSignal ?? null
   const askUserSSECallback = opts?.askUserSSECallback ?? null
   const channelAskUserHandler = opts?.channelAskUserHandler ?? null
@@ -296,7 +302,7 @@ export function buildMcpServer(opts?: McpServerContext) {
       },
       async ({ file, mode, fields, keyword, index, page, pageSize, includeRaw }) => {
         try {
-          let resolved = file ? assertPathInsideUserDirectory(file, 'file') : getLatestCacheFile(workId)
+          let resolved = file ? assertPathInsideUserDirectory(file, 'file') : getLatestCacheFile(currentWorkId())
           if (!resolved) {
             return {
               content: [{
@@ -364,7 +370,7 @@ export function buildMcpServer(opts?: McpServerContext) {
             shell,
             outputEncoding,
             source: 'ai',
-            workId,
+            workId: currentWorkId(),
             signal: abortSignal,
           })
           return {
@@ -403,6 +409,7 @@ export function buildMcpServer(opts?: McpServerContext) {
         })).describe('可选项列表（2-6个）'),
       },
       async ({ question, options }) => {
+        const workId = currentWorkId()
         if (!workId) {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'No active work context' }) }] }
         }
@@ -558,7 +565,7 @@ export function buildMcpServer(opts?: McpServerContext) {
             const exePath = _findDecryptExe()
             if (!exePath) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: '未找到 sd_decrypt.exe' }) }] }
             const execFileAsync = promisify(execFile)
-            const { text } = await checkFileEncryptionCached(workId, resolved, mtimeMs, async () => {
+            const { text } = await checkFileEncryptionCached(currentWorkId(), resolved, mtimeMs, async () => {
               const { stdout } = await execFileAsync(exePath, ['--check', '--json', resolved], { timeout: 15000 })
               return stdout.trim()
             })

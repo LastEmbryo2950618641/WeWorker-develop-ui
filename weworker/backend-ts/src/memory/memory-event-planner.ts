@@ -122,6 +122,15 @@ export function planCompletedChatMemoryEvents(input: {
       expectedMemoryType: 'task_execution',
       ...taskMeta,
     })
+  } else if (candidate.memory_type === 'other') {
+    // 用户明确要求记住、或不属于其他类别的稳定长期事实/约定。
+    events.push({
+      eventId: `${input.baseEventId}:agent-other`,
+      trigger: 'agent_decision',
+      scope,
+      expectedMemoryType: 'other',
+      ...meta,
+    })
   } else if (candidate.memory_type.startsWith('extension:') && scope.extension) {
     events.push({
       eventId: `${input.baseEventId}:agent-extension`,

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { createWeWorkerToolPolicy } from '../agent-tool-policy.js'
 import {
   buildClaudeNativeShellEnv,
   buildDisallowedTools,
@@ -23,6 +24,30 @@ function createTempResourcesDir(): string {
 }
 
 describe('packaged Claude Code entrypoint', () => {
+  it('hides unsupported native tools in every permission mode while preserving supported tools', async () => {
+    const unsupported = [
+      'EnterWorktree', 'ExitWorktree', 'ListAgents', 'ReportFindings',
+      'ScheduleWakeup', 'SendMessage', 'TaskCreate', 'TaskGet', 'TaskList',
+      'TaskStop', 'TaskUpdate', 'WebSearch', 'Workflow',
+    ]
+    for (const mode of ['full', 'no_bash', 'qa_only'] as const) {
+      for (const platform of ['win32', 'darwin', 'linux'] as const) {
+        const excluded = buildDisallowedTools(mode, platform)
+        expect(excluded).toEqual(expect.arrayContaining(unsupported))
+        for (const name of unsupported) {
+          await expect(createWeWorkerToolPolicy(mode)(name, {}, {} as never))
+            .resolves.toMatchObject({ behavior: 'deny' })
+        }
+        if (mode !== 'qa_only') {
+          for (const name of ['Skill', 'Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit']) {
+            expect(excluded).not.toContain(name)
+          }
+        }
+        expect(excluded).not.toContain('mcp__weworker__ask_user')
+      }
+    }
+  })
+
   it('uses the bundled native runtime first', () => {
     const runtimeDir = createTempResourcesDir()
     const nativeBin = path.join(runtimeDir, 'claude-code', 'bin', 'claude.exe')
@@ -122,19 +147,5 @@ describe('packaged Claude Code entrypoint', () => {
     }
 
     expect(packageJson.dependencies?.['@anthropic-ai/claude-agent-sdk']).toBe('0.3.252')
-  })
-
-  it('packages bundled ZCF templates at the runtime lookup path', () => {
-    const packageJsonPath = path.resolve(process.cwd(), '..', 'package.json')
-    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8')) as {
-      build?: {
-        extraResources?: Array<{ from?: string; to?: string; filter?: string[] }>
-      }
-    }
-
-    const bundledZcfResource = packageJson.build?.extraResources?.find((entry) => entry.to === 'bundled')
-
-    expect(bundledZcfResource?.from).toBe('backend-ts/bundled/')
-    expect(bundledZcfResource?.filter).toEqual(expect.arrayContaining(['zcf/**']))
   })
 })

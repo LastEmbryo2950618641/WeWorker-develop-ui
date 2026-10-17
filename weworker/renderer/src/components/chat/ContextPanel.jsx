@@ -15,6 +15,7 @@ export default function ContextPanel({ snapshot, contextLimit }) {
     [snapshot, contextLimit],
   )
   const [open, setOpen] = useState(false)
+  const [hoveredCategoryId, setHoveredCategoryId] = useState(null)
   const buttonRef = useRef(null)
   const [placement, setPlacement] = useState(null)
 
@@ -77,13 +78,6 @@ export default function ContextPanel({ snapshot, contextLimit }) {
           <div className="context-panel__header">
             <div>
               <div className="context-panel__title">上下文</div>
-              <div className="context-panel__subtitle">
-                {normalized.phase === 'turn_end' ? '任务结束快照；' : '请求开始快照；'}
-                {normalized.token_source === 'provider_calibrated'
-                  ? `模型真实输入 ${formatContextTokens(normalized.actual_input_tokens)}；分类按本地比例校准`
-                  : '本地估算组成；等待模型真实 token'}
-                {normalized.compaction ? `；已压缩对话 ${formatContextTokens(normalized.compaction.before_tokens)}→${formatContextTokens(normalized.compaction.after_tokens)}` : ''}
-              </div>
             </div>
             <button type="button" className="context-panel__close" onClick={() => setOpen(false)} aria-label="关闭上下文面板" title="关闭">×</button>
           </div>
@@ -100,7 +94,14 @@ export default function ContextPanel({ snapshot, contextLimit }) {
               const width = normalized.context_limit > 0
                 ? (displayedTokens / normalized.context_limit) * 100
                 : 0
-              return <span key={item.id} style={{ width: `${width}%`, background: CONTEXT_CATEGORY_META[item.id].color }} />
+              const isDimmed = hoveredCategoryId !== null && hoveredCategoryId !== item.id
+              return (
+                <span
+                  key={item.id}
+                  className={isDimmed ? 'is-dimmed' : undefined}
+                  style={{ width: `${width}%`, background: CONTEXT_CATEGORY_META[item.id].color }}
+                />
+              )
             })}
           </div>
           <div className="context-panel__groups">
@@ -110,7 +111,12 @@ export default function ContextPanel({ snapshot, contextLimit }) {
                 {group.items.map((item) => {
                   const meta = CONTEXT_CATEGORY_META[item.id]
                   return (
-                    <div className="context-panel__row" key={item.id}>
+                    <div
+                      className="context-panel__row"
+                      key={item.id}
+                      onMouseEnter={() => setHoveredCategoryId(item.id)}
+                      onMouseLeave={() => setHoveredCategoryId(null)}
+                    >
                       <span className="context-panel__swatch" style={{ background: meta.color }} aria-hidden="true" />
                       <span className="context-panel__name">{meta.label}</span>
                       <span className="context-panel__tokens">{formatContextTokens(item.calibrated_tokens ?? item.estimated_tokens)}</span>

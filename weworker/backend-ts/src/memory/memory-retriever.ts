@@ -30,11 +30,13 @@ export function retrieveMemories(store: MemoryStore, input: MemorySearchInput): 
   const recalled = store.search(input)
   // User preferences are applicable across tasks even when the new request
   // contains none of the words used when the preference was saved.
+  // `other` (用户明确要求记住的稳定事实/约定) is recalled the same stable way.
   const stableMemories = input.scope?.user
     ? [
         ...store.listActive({ scope: input.scope, type: 'user_usage', limit: input.limit }),
         ...store.listActive({ scope: input.scope, type: 'task_execution', limit: input.limit })
           .filter((memory) => isRelevantScopedMemory(input.query, memory)),
+        ...store.listActive({ scope: input.scope, type: 'other', limit: input.limit }),
       ]
     : []
   const seen = new Set(recalled.map((memory) => memory.id))

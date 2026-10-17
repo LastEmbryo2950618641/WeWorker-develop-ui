@@ -7,7 +7,9 @@ import { generationFailureHint, generationPendingQuestion } from '../utils/explo
 
 const testDir = path.dirname(fileURLToPath(import.meta.url))
 const componentSource = fs.readFileSync(path.resolve(testDir, '../components/exploration/ExplorationPage.jsx'), 'utf8')
+const appSource = fs.readFileSync(path.resolve(testDir, '../App.jsx'), 'utf8')
 const sidebarSource = fs.readFileSync(path.resolve(testDir, '../components/layout/Sidebar.jsx'), 'utf8')
+const railSource = fs.readFileSync(path.resolve(testDir, '../components/layout/AppRail.jsx'), 'utf8')
 const apiSource = fs.readFileSync(path.resolve(testDir, '../api/exploration-api.js'), 'utf8')
 
 test('client exploration exposes draft generation and reviewed local installation', () => {
@@ -37,10 +39,23 @@ test('client exploration exposes draft generation and reviewed local installatio
 })
 
 test('API exploration is distinct from the DOM exploration agent in user-facing copy', () => {
-  assert.match(sidebarSource, />API 探索</)
+  assert.doesNotMatch(sidebarSource, />API 探索</)
+  assert.doesNotMatch(sidebarSource, />网站探索agent/)
+  assert.match(railSource, /label="API 探索"/)
+  assert.match(railSource, /label="网站探索agent"/)
   assert.match(componentSource, /网站 API 探索/)
   assert.match(componentSource, /开始 API 探索/)
   assert.doesNotMatch(componentSource, /网站探索agent|开始自动探索/)
+})
+
+test('exploration pages own the workspace and extension issues are accessible from the rail', () => {
+  assert.match(appSource, /const focusedWorkspaceOpen = toolPackageOpen \|\| explorationOpen \|\| websiteOpen/)
+  assert.match(appSource, /\{!showSettings && !focusedWorkspaceOpen && \(/)
+  assert.match(appSource, /onOpenExtension=\{\(\) => \{ setShowSettings\(false\); setShowExtensionGuide\(true\) \}\}/)
+  assert.doesNotMatch(sidebarSource, /StatusBar|sidebar-footer|检查浏览器扩展/)
+  assert.match(railSource, /浏览器扩展未连接/)
+  assert.match(railSource, /issueCount > 0/)
+  assert.match(railSource, /onClick=\{onOpenExtension\}/)
 })
 
 test('client exploration API owns the generation lifecycle endpoints', () => {

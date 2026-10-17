@@ -13,8 +13,19 @@ window.addEventListener('drop', (event) => {
 }, true)
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  platform: process.platform,
   getStatus: () => ipcRenderer.invoke('get-status'),
   getVersion: () => ipcRenderer.invoke('get-version'),
+  minimizeWindow: () => ipcRenderer.invoke('window:minimize'),
+  toggleMaximizeWindow: () => ipcRenderer.invoke('window:toggle-maximize'),
+  isWindowMaximized: () => ipcRenderer.invoke('window:is-maximized'),
+  closeWindow: () => ipcRenderer.invoke('window:close'),
+  onWindowMaximizedState: (callback) => {
+    if (typeof callback !== 'function') return () => {}
+    const handler = (_event, maximized) => callback(maximized === true)
+    ipcRenderer.on('window:maximized-state', handler)
+    return () => ipcRenderer.removeListener('window:maximized-state', handler)
+  },
   getUpdateState: () => ipcRenderer.invoke('updates:get-state'),
   getUpdateSettings: () => ipcRenderer.invoke('updates:get-settings'),
   setUpdateSettings: (settings) => ipcRenderer.invoke('updates:set-settings', settings),
@@ -28,6 +39,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('updates:state', handler)
   },
   getHttpAuthToken: () => ipcRenderer.invoke('get-http-auth-token'),
+  getAppSettings: () => ipcRenderer.invoke('app-settings:get'),
+  setAppSettings: (patch) => ipcRenderer.invoke('app-settings:set', patch),
+  onOpenDedicatedAgents: (callback) => {
+    if (typeof callback !== 'function') return () => {}
+    const handler = () => callback()
+    ipcRenderer.on('app:open-dedicated-agents', handler)
+    return () => ipcRenderer.removeListener('app:open-dedicated-agents', handler)
+  },
   focusWindow: () => ipcRenderer.invoke('focus-main-window'),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
   openWebwright: () => ipcRenderer.invoke('open-webwright'),

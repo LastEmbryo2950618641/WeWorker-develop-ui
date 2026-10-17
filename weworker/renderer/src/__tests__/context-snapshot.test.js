@@ -270,6 +270,29 @@ describe('context snapshot display helpers', () => {
     useWorksStore.setState({ contextSnapshots: {}, contextTokenAnchors: {} })
   })
 
+  it('ignores cumulative normal query usage for context display', () => {
+    useWorksStore.setState({ contextSnapshots: {}, contextTokenAnchors: {} })
+    useWorksStore.getState().setContextSnapshot('work-1', {
+      phase: 'turn_end',
+      estimated_total_tokens: 1200,
+      context_limit: 2000,
+      displayed_total_tokens: 1200,
+      token_source: 'estimated',
+      categories: [
+        { id: 'rules', scope: 'runtime', estimated_tokens: 700 },
+        { id: 'conversation', scope: 'work', estimated_tokens: 500 },
+      ],
+    })
+
+    useWorksStore.getState().setContextUsage('work-1', { total_input_tokens: 173900 })
+
+    const snapshot = useWorksStore.getState().contextSnapshots['work-1']
+    assert.equal(snapshot.displayed_total_tokens, 1200)
+    assert.equal(snapshot.token_source, 'estimated')
+    assert.equal(snapshot.categories.find((item) => item.id === 'rules').calibrated_tokens, undefined)
+    useWorksStore.setState({ contextSnapshots: {}, contextTokenAnchors: {} })
+  })
+
   it('keeps the provider anchor in the works store across request-start snapshots', () => {
     useWorksStore.setState({ contextSnapshots: {} })
     const first = {

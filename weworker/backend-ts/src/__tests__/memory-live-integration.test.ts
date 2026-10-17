@@ -74,9 +74,9 @@ describe.runIf(runLive)('真实模型跨会话记忆验收', () => {
       })
 
       expect(longTerm.recalled).not.toBe('')
-      expect(assembled.sdk.prompt).toContain('[相关长期记忆]')
-      expect(assembled.sdk.prompt).toMatch(/中文/u)
-      expect(assembled.sdk.prompt).toMatch(/简洁/u)
+      expect(assembled.sdk.system_prompt).toContain('[相关长期记忆]')
+      expect(assembled.sdk.system_prompt).toMatch(/中文/u)
+      expect(assembled.sdk.system_prompt).toMatch(/简洁/u)
     } finally {
       firstSession?.close()
       secondSession?.close()

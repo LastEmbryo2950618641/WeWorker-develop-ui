@@ -158,7 +158,7 @@ export async function notify(
     const result = await sendChannelNotification(payload, channel)
     if (result.success) {
       // 记录通知发送成功到对话中，方便桌面端追踪
-      const channelLabel = channel === 'weixin' ? '微信' : channel === 'qq' ? 'QQ' : channel
+      const channelLabel = channel === 'weixin' ? '微信' : channel === 'qq' ? 'QQ' : channel === 'wecom' ? '企业微信' : channel === 'feishu' ? '飞书' : channel
       try {
         store.appendMessage(payload.workId, 'assistant', [{
           type: 'text',

@@ -384,6 +384,26 @@ export function registerIpcHandlers(bridgeManager, pythonManager, webwrightManag
 
   ipcMain.handle('get-version', () => app.getVersion())
 
+  ipcMain.handle('window:minimize', (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize()
+    return true
+  })
+
+  ipcMain.handle('window:toggle-maximize', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win) return false
+    if (win.isMaximized()) win.unmaximize()
+    else win.maximize()
+    return win.isMaximized()
+  })
+
+  ipcMain.handle('window:is-maximized', (event) => BrowserWindow.fromWebContents(event.sender)?.isMaximized() === true)
+
+  ipcMain.handle('window:close', (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.close()
+    return true
+  })
+
   ipcMain.handle('updates:get-state', () => updateManager?.getState?.() || null)
 
   ipcMain.handle('updates:get-settings', () => updateManager?.getSettings?.() || null)

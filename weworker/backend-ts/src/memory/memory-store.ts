@@ -339,6 +339,20 @@ export class MemoryStore {
     return rows.map(rowToRecord)
   }
 
+  /**
+   * 容量管理专用读取：返回全部 active 记录（不分作用域、不受公共召回的 20 条上限约束）。
+   * 仅用于记忆预算执行与 Renderer 记忆查询，不参与上下文召回。
+   */
+  listActiveAll(): MemoryRecord[] {
+    const rows = this.database.prepare(`
+      SELECT m.*
+      FROM memories m
+      WHERE m.status = 'active'
+      ORDER BY m.updated_at DESC, m.confidence DESC
+    `).all() as unknown as MemoryRow[]
+    return rows.map(rowToRecord)
+  }
+
   close(): void {
     this.database.close()
   }

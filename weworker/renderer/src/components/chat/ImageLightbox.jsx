@@ -25,7 +25,7 @@ export default function ImageLightbox({ src, onClose }) {
           maxWidth: '90vw',
           maxHeight: '90vh',
           borderRadius: 8,
-          boxShadow: '0 8px 40px rgba(0,0,0,0.6)',
+          boxShadow: 'none',
           cursor: 'default',
         }}
         alt="screenshot"

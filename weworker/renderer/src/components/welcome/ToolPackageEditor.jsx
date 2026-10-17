@@ -1,5 +1,10 @@
+import { RightOutlined, FileTextOutlined, FolderOutlined, PlusOutlined, EyeOutlined, UploadOutlined } from '@ant-design/icons'
+import './skill-files.css'
+import SkillTags from './SkillTags.jsx'
+import { SKILL_TAGS_STORAGE_KEY, skillTagKey, normalizeSkillTags, skillTags, matchesSkillSearch, loadSkillTagOverrides } from '../../utils/skill-tags.js'
+import { DropdownMenuCheck } from '../common/AppDropdownSelect.jsx'
 import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { createSiteScenario, deleteSiteScenario, fetchCustomSkillDirectory, fetchPublicSkillDirectory, importCustomSkillResources, importPublicSkillResources, loadSkillResourcePreview, resetSiteScenario, updateSiteCustomSkills, updateSiteScenario } from '../../api/sites-api.js'
+import { createSiteScenario, deleteSiteScenario, fetchCustomSkillDirectory, fetchPublicSkillDirectory, importCustomSkillResources, importPublicSkillResources, importPublicSkillZipPath, loadSkillResourcePreview, resetSiteScenario, updateSiteCustomSkills, updateSiteScenario } from '../../api/sites-api.js'
 import { buildPreviewExtensionSet, enrichResourcesForPreview, isReadableResourceName } from '../../utils/resource-preview-extensions.js'
 import customSkillTemplateMarkdown from './custom-skill-template.md?raw'
 import {
@@ -8,7 +13,6 @@ import {
   buildOfficialAdapterToolSection,
 } from './custom-skill-builtins.js'
 import SkillMarkdownCodeTextarea from './SkillMarkdownCodeTextarea.jsx'
-import SiteMultiSelect from './SiteMultiSelect.jsx'
 import { useFitTextareaHeight } from './use-fit-textarea-height.js'
 import {
   CODE_EDITOR_FONT_SIZE,
@@ -37,6 +41,7 @@ import {
   findDuplicateCustomSkillNameForSkill,
 } from '../../utils/custom-skill-duplicates.js'
 import { backendFetch } from '../../api/http.js'
+import { showAlert, showConfirm } from '../../store/dialog.js'
 
 const SKILLS_API = 'http://127.0.0.1:8765'
 const PUBLIC_BUILTIN_SKILL_NAMES = new Set(['webcli', 'personal-codewords', 'complex-task-planner'])
@@ -697,6 +702,7 @@ function ResourcesCollapsibleSection({
     <ResourceSectionStickyContext.Provider value={setActiveFileSentinel}>
       <CollapsibleSection
         title="资源文件"
+        fileIcon={<FolderOutlined />}
         stickyPath={stickyPath}
         meta={meta}
         collapsed={collapsed}
@@ -921,8 +927,8 @@ export default function ToolPackageEditor({
 }) {
   const isPublicScope = skillScope === SKILL_SCOPE_PUBLIC
   const siteList = useMemo(
-    () => (isPublicScope ? [] : (sites?.length ? sites : [site])),
-    [isPublicScope, site, sites],
+    () => (allSites?.length ? allSites : sites?.length ? sites : [site]).filter(item => item?.id),
+    [allSites, site, sites],
   )
   const officialTools = useMemo(
     () => siteList.flatMap((toolSite) => (
@@ -953,16 +959,16 @@ export default function ToolPackageEditor({
   const [toolkitKind, setToolkitKind] = useState(TOOLKIT_KIND_SCENE)
   const systemTools = useSitesStore((s) => s.systemTools)
   const refreshSites = useSitesStore((s) => s.refreshSites)
-  const [toolKindFilter, setToolKindFilter] = useState('all')
-  const [toolSiteFilter, setToolSiteFilter] = useState('')
   const [dragOverEditor, setDragOverEditor] = useState(false)
   const [leftPaneWidth, setLeftPaneWidth] = useState(DEFAULT_SIDE_PANE_WIDTH)
   const [rightPaneWidth, setRightPaneWidth] = useState(DEFAULT_SIDE_PANE_WIDTH)
   const [resizingSide, setResizingSide] = useState('')
   const [rightPaneOpen, setRightPaneOpen] = useState(false)
+  const [rightPaneView, setRightPaneView] = useState('skill')
   const [scenarioDirty, setScenarioDirty] = useState(false)
   const [creatingScenario, setCreatingScenario] = useState(false)
   const [refreshingSkills, setRefreshingSkills] = useState(false)
+  const [importingSkillZip, setImportingSkillZip] = useState(false)
   const [customSkillBlockedSaveSiteId, setCustomSkillBlockedSaveSiteId] = useState('')
   const [workspaceWidth, setWorkspaceWidth] = useState(0)
   const resizeStateRef = useRef(null)
@@ -983,7 +989,6 @@ export default function ToolPackageEditor({
   }, [])
 
   React.useEffect(() => {
-    if (!isPublicScope) return undefined
     let cancelled = false
     fetchPublicSkillsFromApi().then(({ builtin, custom }) => {
       if (cancelled) return
@@ -993,7 +998,7 @@ export default function ToolPackageEditor({
     return () => {
       cancelled = true
     }
-  }, [isPublicScope])
+  }, [])
 
   const catalogPublicBuiltinSkills = useMemo(
     () => publicBuiltinSkills,
@@ -1046,10 +1051,8 @@ export default function ToolPackageEditor({
   }, [siteList, customSkillsBySite])
 
   const allSkills = useMemo(
-    () => (isPublicScope
-      ? [...catalogPublicBuiltinSkills, ...catalogPublicCustomSkills]
-      : [...catalogOfficialSkills, ...catalogCustomSkills]),
-    [isPublicScope, catalogPublicBuiltinSkills, catalogPublicCustomSkills, catalogOfficialSkills, catalogCustomSkills],
+    () => [...catalogPublicBuiltinSkills, ...catalogPublicCustomSkills, ...catalogOfficialSkills, ...catalogCustomSkills],
+    [catalogPublicBuiltinSkills, catalogPublicCustomSkills, catalogOfficialSkills, catalogCustomSkills],
   )
 
   const selectedScenario = scenarioList.find((scenario) => scenarioKey(scenario) === selectedScenarioId) || scenarioList[0]
@@ -1088,24 +1091,14 @@ export default function ToolPackageEditor({
     [workspaceWidth, leftPaneWidth, rightPaneWidth, effectiveRightPaneOpen],
   )
 
-  const showMultiSiteContext = siteList.length > 1
-  const filterToolsBySearch = (tools) => {
-    const query = toolSearchQuery.trim().toLowerCase()
-    if (!query) return tools
-    return tools.filter((tool) => {
-      const haystack = [
-        tool.name,
-        tool.description,
-        tool.siteName,
-        ...((tool.parameters || []).flatMap((param) => [param.name, param.type, param.description])),
-      ].join(' ').toLowerCase()
-      return haystack.includes(query)
-    })
+  const [tagOverrides, setTagOverrides] = useState(() => loadSkillTagOverrides(window.localStorage))
+  const getTags = tool => skillTags(tool, tagOverrides)
+  const saveTags = (tool, tags) => {
+    const next = { ...tagOverrides, [skillTagKey(tool)]: normalizeSkillTags(tags) }
+    try { window.localStorage.setItem(SKILL_TAGS_STORAGE_KEY, JSON.stringify(next)); setTagOverrides(next); return true }
+    catch { void showAlert('标签保存失败，请重试'); return false }
   }
-  const filterToolsBySite = (tools) => {
-    if (!toolSiteFilter) return tools
-    return tools.filter((tool) => tool.siteId === toolSiteFilter)
-  }
+  const visibleSkills = allSkills.filter(tool => matchesSkillSearch(tool, toolSearchQuery, getTags(tool)))
   const filterToolkitToolsBySearch = (tools) => {
     const query = toolkitSearchQuery.trim().toLowerCase()
     if (!query) return tools
@@ -1119,15 +1112,6 @@ export default function ToolPackageEditor({
       return haystack.includes(query)
     })
   }
-  const filterVisibleTools = (tools) => filterToolsBySite(filterToolsBySearch(tools))
-  const showOfficialSkills = toolKindFilter === 'all' || toolKindFilter === 'official'
-  const showCustomSkills = toolKindFilter === 'all' || toolKindFilter === 'custom'
-  const visibleOfficialSkills = showOfficialSkills
-    ? filterVisibleTools(isPublicScope ? catalogPublicBuiltinSkills : catalogOfficialSkills)
-    : []
-  const visibleCustomSkills = showCustomSkills
-    ? filterVisibleTools(isPublicScope ? catalogPublicCustomSkills : catalogCustomSkills)
-    : []
   const builtinToolkitTools = useMemo(
     () => (systemTools || []).map((tool) => normalizeTool(tool, 'system')),
     [systemTools],
@@ -1136,15 +1120,15 @@ export default function ToolPackageEditor({
     { value: TOOLKIT_KIND_SCENE, label: '场景工具包' },
     { value: TOOLKIT_KIND_BUILTIN, label: '内置工具包' },
   ]), [])
+  const selectedTool = allSkills.find((tool) => toolKey(tool) === selectedToolKey) || null
   const visibleToolkitTools = useMemo(() => {
     const base = toolkitKind === TOOLKIT_KIND_BUILTIN
       ? builtinToolkitTools
-      : filterToolsBySite(officialTools)
+      : officialTools.filter(tool => tool.siteId === selectedTool?.siteId)
     return filterToolkitToolsBySearch(base)
-  }, [toolkitKind, builtinToolkitTools, officialTools, toolSiteFilter, toolkitSearchQuery])
-  const showSceneToolkitUnavailable = isPublicScope && toolkitKind === TOOLKIT_KIND_SCENE
+  }, [toolkitKind, builtinToolkitTools, officialTools, selectedTool?.siteId, toolkitSearchQuery])
+  const showSceneToolkitUnavailable = selectedTool?.source?.startsWith('public-') && toolkitKind === TOOLKIT_KIND_SCENE
   const showToolkitSearch = !showSceneToolkitUnavailable
-  const selectedTool = allSkills.find((tool) => toolKey(tool) === selectedToolKey) || null
   const selectedToolSite = siteList.find((item) => item.id === selectedTool?.siteId) || site
   const selectedIsCustom = selectedTool?.source === 'custom' || selectedTool?.source === 'public-custom'
   const selectedIsEditable = selectedIsCustom
@@ -1155,24 +1139,13 @@ export default function ToolPackageEditor({
       : ''
 
   const slashMenuTools = useMemo(() => {
-    const sourceSites = isPublicScope
+    const sourceSites = selectedTool?.source?.startsWith('public-')
       ? (allSites?.length ? allSites : sites?.length ? sites : [site]).filter(Boolean)
       : [selectedToolSite].filter(Boolean)
     return sourceSites.flatMap((toolSite) => (
       (toolSite.tools || []).map((tool) => attachToolSite(normalizeTool(tool, 'official'), toolSite))
     ))
-  }, [allSites, isPublicScope, selectedToolSite, site, sites])
-
-  useEffect(() => {
-    if (!toolSiteFilter) return
-    if (siteList.some((item) => item.id === toolSiteFilter)) return
-    setToolSiteFilter('')
-  }, [siteList, toolSiteFilter])
-
-  useEffect(() => {
-    if (showMultiSiteContext || !toolSiteFilter) return
-    setToolSiteFilter('')
-  }, [showMultiSiteContext, toolSiteFilter])
+  }, [allSites, selectedTool, selectedToolSite, site, sites])
 
   useEffect(() => {
     setCustomSkillsBySite((current) => {
@@ -1195,7 +1168,6 @@ export default function ToolPackageEditor({
   }, [siteList, hasPendingCustomSkillSave, customSkillSaveSiteId, blockedCustomSkillSaveSiteId])
 
   useEffect(() => {
-    if (isPublicScope) return undefined
     const timer = setInterval(() => {
       if (!customSkillsSaveTimerRef.current) refreshSites?.()
     }, 2000)
@@ -1245,7 +1217,7 @@ export default function ToolPackageEditor({
           setCustomSkillBlockedSaveSiteId(siteId)
           return
         }
-        window.alert(e instanceof Error ? e.message : '保存自定义 skill 失败')
+        showAlert(e instanceof Error ? e.message : '保存自定义 skill 失败')
         await onReloadSites?.()
       }
     }, 700)
@@ -1258,7 +1230,7 @@ export default function ToolPackageEditor({
   }, [customSkillSaveSiteId, customSkillSaveTick, onReloadSites])
 
   useEffect(() => {
-    if (!isPublicScope || !publicCustomSaveName || publicCustomSaveTick === 0) return undefined
+    if (!publicCustomSaveName || publicCustomSaveTick === 0) return undefined
     const saveName = publicCustomSaveName
     const timer = setTimeout(async () => {
       const skill = publicCustomSkillsRef.current.find((item) => item.id === saveName || item.name === saveName)
@@ -1284,6 +1256,13 @@ export default function ToolPackageEditor({
               : item
           )))
           if (savedName !== saveName) {
+            const oldKey = skillTagKey(skill)
+            const overrides = loadSkillTagOverrides(window.localStorage)
+            if (Object.hasOwn(overrides, oldKey)) {
+              const next = { ...overrides, [skillTagKey({ ...skill, id: savedName })]: overrides[oldKey] }
+              try { window.localStorage.setItem(SKILL_TAGS_STORAGE_KEY, JSON.stringify(next)); setTagOverrides(next) }
+              catch { void showAlert('名称已保存，但标签同步失败，请重新设置标签') }
+            }
             setPublicCustomSaveName(savedName)
             setSelectedToolKey((current) => current === toolKey(skill) ? `public-custom::${savedName}` : current)
           }
@@ -1298,7 +1277,7 @@ export default function ToolPackageEditor({
           setPublicCustomSaveTick(0)
           return
         }
-        window.alert(e instanceof Error ? e.message : '保存公共 skill 失败')
+        showAlert(e instanceof Error ? e.message : '保存公共 skill 失败')
       }
     }, 700)
     return () => clearTimeout(timer)
@@ -1412,14 +1391,14 @@ export default function ToolPackageEditor({
     setResizingSide(side)
   }
 
-  const confirmDiscardScenarioChanges = () => !scenarioDirty || window.confirm(UNSAVED_SCENARIO_MESSAGE)
+  const confirmDiscardScenarioChanges = async () => !scenarioDirty || await showConfirm(UNSAVED_SCENARIO_MESSAGE, '未保存的修改')
 
   const markScenarioCleanAfterLeave = () => {
     if (scenarioDirty) setScenarioDirty(false)
   }
 
-  const handleClose = () => {
-    if (!confirmDiscardScenarioChanges()) return
+  const handleClose = async () => {
+    if (!await confirmDiscardScenarioChanges()) return
     markScenarioCleanAfterLeave()
     onClose?.()
   }
@@ -1432,44 +1411,47 @@ export default function ToolPackageEditor({
         clearTimeout(customSkillsSaveTimerRef.current)
         customSkillsSaveTimerRef.current = null
       }
-      if (isPublicScope) {
-        await reloadPublicSkills()
-      } else {
-        setCustomSkillBlockedSaveSiteId('')
-        for (const toolSite of siteList) clearLocalCustomSkills(toolSite.id)
-        await refreshSites?.()
-        await onReloadSites?.()
-      }
+      await reloadPublicSkills()
+      setCustomSkillBlockedSaveSiteId('')
+      for (const toolSite of siteList) clearLocalCustomSkills(toolSite.id)
+      await refreshSites?.()
+      await onReloadSites?.()
     } catch (error) {
       console.error('[tool-package] refresh skills failed:', error)
-      window.alert(error instanceof Error ? error.message : '刷新 skills 失败')
+      showAlert(error instanceof Error ? error.message : '刷新 skills 失败')
     } finally {
       setRefreshingSkills(false)
     }
   }
 
-  const selectTool = (tool) => {
+  const selectTool = async (tool) => {
     const nextKey = toolKey(tool)
-    if (workspaceTab === WORKSPACE_TAB_SKILLS && selectedToolKey === nextKey) return
-    if (!confirmDiscardScenarioChanges()) return
+    if (workspaceTab === WORKSPACE_TAB_SKILLS && selectedToolKey === nextKey) {
+      setRightPaneView('skill')
+      setRightPaneOpen(true)
+      return
+    }
+    if (!await confirmDiscardScenarioChanges()) return
     markScenarioCleanAfterLeave()
     setSelectedToolKey(nextKey)
     setWorkspaceTab(WORKSPACE_TAB_SKILLS)
+    setRightPaneView('skill')
+    setRightPaneOpen(true)
   }
 
-  const selectScenario = (scenario) => {
+  const selectScenario = async (scenario) => {
     const nextKey = scenarioKey(scenario)
     if (workspaceTab === WORKSPACE_TAB_SCENARIOS && selectedScenarioId === nextKey) return
-    if (!confirmDiscardScenarioChanges()) return
+    if (!await confirmDiscardScenarioChanges()) return
     markScenarioCleanAfterLeave()
     setSelectedScenarioId(nextKey)
     setWorkspaceTab(WORKSPACE_TAB_SCENARIOS)
   }
 
-  const switchWorkspaceTab = (nextTab) => {
+  const switchWorkspaceTab = async (nextTab) => {
     if (nextTab === workspaceTab) return
     if (workspaceTab === WORKSPACE_TAB_SCENARIOS && nextTab === WORKSPACE_TAB_SKILLS) {
-      if (!confirmDiscardScenarioChanges()) return
+      if (!await confirmDiscardScenarioChanges()) return
       markScenarioCleanAfterLeave()
     }
     setWorkspaceTab(nextTab)
@@ -1563,7 +1545,7 @@ export default function ToolPackageEditor({
       throw new Error('官方场景不可删除')
     }
     const scenarioName = selectedScenario.title || '未命名场景'
-    if (!window.confirm(`确定删除自定义场景「${scenarioName}」吗？删除后无法直接恢复。`)) return false
+    if (!await showConfirm(`确定删除自定义场景「${scenarioName}」吗？删除后无法直接恢复。`, '删除场景')) return false
     const scenarioSiteId = resolveScenarioSiteId(selectedScenario, scenarioSiteIds, site.id)
     const apiScenarioId = resolveScenarioApiId(selectedScenario)
     const listKey = scenarioKey(selectedScenario)
@@ -1582,12 +1564,12 @@ export default function ToolPackageEditor({
 
   const addScenario = async () => {
     if (creatingScenario) return
-    if (!confirmDiscardScenarioChanges()) return
+    if (!await confirmDiscardScenarioChanges()) return
     markScenarioCleanAfterLeave()
     const scenarioSiteId = selectedScenarioSiteId
     const scenarioSite = editableSites.find((item) => item.id === scenarioSiteId) || site
     if (!scenarioSiteId) {
-      window.alert('请先选择站点')
+      showAlert('请先选择站点')
       return
     }
     const id = makeScenarioId()
@@ -1615,7 +1597,7 @@ export default function ToolPackageEditor({
       await onReloadSites?.()
     } catch (error) {
       console.error('[tool-package] create scenario failed:', error)
-      window.alert(error instanceof Error ? error.message : '新增场景失败')
+      showAlert(error instanceof Error ? error.message : '新增场景失败')
     } finally {
       setCreatingScenario(false)
     }
@@ -1647,35 +1629,48 @@ export default function ToolPackageEditor({
   }
 
   const addCustomSkill = async (baseTool) => {
-    if (!confirmDiscardScenarioChanges()) return
+    if (!await confirmDiscardScenarioChanges()) return
     markScenarioCleanAfterLeave()
-    if (isPublicScope) {
-      const next = baseTool
-        ? { ...cloneAsCustom(baseTool), id: `public-${makeSkillId().replace(/^custom-/, '')}`, source: 'public-custom', siteId: '', siteName: '' }
-        : createEmptyPublicSkill()
-      setPublicCustomSkills((current) => [next, ...current])
-      setSelectedToolKey(toolKey(next))
-      setWorkspaceTab(WORKSPACE_TAB_SKILLS)
-      try {
-        await persistPublicCustomSkill(next)
-        await reloadPublicSkills()
-        setSelectedToolKey(toolKey(next))
-      } catch (e) {
-        console.error('[tool-package] create public custom skill failed:', e)
-      }
-      return
-    }
-    const targetSite = siteList.find((item) => item.id === (toolSiteFilter || site.id)) || site
-    const next = baseTool ? cloneAsCustom(baseTool) : createEmptySkill(targetSite.id)
-    mutateCustomSkillsForSite(targetSite.id, (current) => [next, ...current])
-    setSelectedToolKey(toolKey(attachToolSite(next, targetSite)))
+    setToolSearchQuery('')
+    const next = baseTool
+      ? { ...cloneAsCustom(baseTool), id: `public-${makeSkillId().replace(/^custom-/, '')}`, source: 'public-custom', siteId: '', siteName: '' }
+      : createEmptyPublicSkill()
+    setPublicCustomSkills((current) => [next, ...current])
+    setSelectedToolKey(toolKey(next))
     setWorkspaceTab(WORKSPACE_TAB_SKILLS)
+    try {
+      await persistPublicCustomSkill(next)
+      await reloadPublicSkills()
+      setSelectedToolKey(toolKey(next))
+    } catch (e) {
+      void showAlert(e instanceof Error ? e.message : '新增 Skill 失败，请重试')
+    }
+  }
+
+  const importSkillZipFile = async () => {
+    const paths = await window.electronAPI?.selectFiles?.({
+      title: '导入 Skill ZIP',
+      filters: [{ name: 'Skill ZIP', extensions: ['zip'] }],
+    })
+    const archivePath = paths?.[0]
+    if (!archivePath) return
+    setImportingSkillZip(true)
+    try {
+      const result = await importPublicSkillZipPath(archivePath)
+      await reloadPublicSkills()
+      const names = Array.isArray(result?.skills) ? result.skills.map((item) => item?.name).filter(Boolean) : []
+      void showAlert(names.length ? `已导入 ${names.length} 个 Skill` : 'Skill 导入成功')
+    } catch (error) {
+      void showAlert(error instanceof Error ? error.message : '导入 Skill ZIP 失败')
+    } finally {
+      setImportingSkillZip(false)
+    }
   }
 
   const deleteCustomSkill = async () => {
     if (!selectedIsCustom || !selectedTool) return
     const skillName = selectedTool.name || selectedTool.id || '未命名 skill'
-    if (!window.confirm(`确定删除自定义 skill「${skillName}」吗？删除后无法直接恢复。`)) return
+    if (!await showConfirm(`确定删除自定义 skill「${skillName}」吗？删除后无法直接恢复。`, '删除 Skill')) return
     if (selectedTool.source === 'public-custom') {
       const diskName = selectedTool.id || selectedTool.name
       try {
@@ -1723,7 +1718,7 @@ export default function ToolPackageEditor({
               )}
               {showRightPaneShell && (
                 <IconButton
-                  label={rightPaneOpen ? '隐藏右侧面板' : '展开右侧面板'}
+                  label={rightPaneOpen ? '隐藏 Skill 面板' : '展开 Skill 面板'}
                   onClick={() => setRightPaneOpen((current) => !current)}
                 >
                   {rightPaneOpen ? <PanelHideIcon /> : <PanelExpandIcon />}
@@ -1741,7 +1736,7 @@ export default function ToolPackageEditor({
           className="tool-package-workspace"
           style={workspaceStyle}
         >
-        <aside className="scrollbar-hover-only" style={{ ...leftPaneStyle, flex: `0 0 ${leftPaneWidth}px`, width: leftPaneWidth, maxWidth: leftPaneWidth }}>
+        <aside className={`scrollbar-hover-only${showSkillsRightPane ? ' skill-catalog-workspace' : ''}${showScenarioWorkspace ? ' scenario-workspace-sidebar' : ''}`} style={{ ...leftPaneStyle, flex: showSkillsRightPane ? '1 1 0' : `0 0 ${leftPaneWidth}px`, width: showSkillsRightPane ? undefined : leftPaneWidth, maxWidth: showSkillsRightPane ? undefined : leftPaneWidth }}>
           {showScenarioWorkspace ? (
             <>
               <button
@@ -1761,7 +1756,7 @@ export default function ToolPackageEditor({
                 selectedId={selectedScenarioSiteId}
                 onChange={onToggleScenarioSiteId}
               />
-              <div style={scenarioSearchShellStyle}>
+              <div className="scenario-search-field" style={scenarioSearchShellStyle}>
                 <input
                   type="search"
                   value={scenarioSearchQuery}
@@ -1771,7 +1766,7 @@ export default function ToolPackageEditor({
                   style={scenarioSearchInputStyle}
                 />
               </div>
-              <div style={rightPanelHeaderStyle}>
+              <div className="scenario-list-heading" style={rightPanelHeaderStyle}>
                 <div style={paneTitleStyle}>可用场景</div>
                 <div style={rightPanelMetaStyle}>共 {visibleScenarioList.length} 个</div>
               </div>
@@ -1784,47 +1779,21 @@ export default function ToolPackageEditor({
             </>
           ) : (
             <>
-          <div style={skillsHeaderControlsStyle}>
-          <button type="button" className="tool-package-primary-btn" onClick={() => addCustomSkill()} style={primaryButtonStyle}>新增 skill</button>
-          <ScopeFilters
-            skillScope={skillScope}
-            onSkillScopeChange={onSkillScopeChange}
-            isPublicScope={isPublicScope}
-            editableSites={editableSites}
-            selectedSiteIds={selectedSiteIds}
-            onToggleSiteId={onToggleSiteId}
-          />
+          <div className="skill-catalog-toolbar">
+            <input type="search" aria-label="搜索 Skill 名称、描述或标签" placeholder="搜索名称、描述或标签" value={toolSearchQuery} onChange={event => setToolSearchQuery(event.target.value)} />
+            <button type="button" aria-label="导入 Skill ZIP" title="导入 Skill ZIP" onClick={importSkillZipFile} disabled={importingSkillZip}>
+              <span className="skill-add-icon" aria-hidden="true">
+                <UploadOutlined />
+              </span>
+            </button>
           </div>
-          <SkillToolFilterBar
-            toolSearchQuery={toolSearchQuery}
-            onToolSearchQueryChange={setToolSearchQuery}
-            toolSiteFilter={toolSiteFilter}
-            onToolSiteFilterChange={setToolSiteFilter}
-            toolKindFilter={toolKindFilter}
-            onToolKindFilterChange={setToolKindFilter}
-            showSiteFilter={!isPublicScope && showMultiSiteContext}
-            siteList={siteList}
-          />
-          {visibleOfficialSkills.length > 0 && (
-            <>
-              <div style={paneTitleStyle}>{isPublicScope ? '公共 skill' : '官方 skill'}</div>
-              <ToolList tools={visibleOfficialSkills} selectedTool={selectedTool} onSelect={selectTool} />
-            </>
-          )}
-          {visibleCustomSkills.length > 0 && (
-            <>
-              <div style={paneTitleStyle}>自定义 skill</div>
-              <ToolList tools={visibleCustomSkills} selectedTool={selectedTool} onSelect={selectTool} />
-            </>
-          )}
-          {visibleOfficialSkills.length === 0 && visibleCustomSkills.length === 0 && (
-            <div style={emptyEditorStyle}>没有匹配的 skill。</div>
-          )}
+          <ToolList tools={visibleSkills} selectedTool={selectedTool} onSelect={selectTool} getTags={getTags} />
+          {!visibleSkills.length && <div style={emptyEditorStyle}>没有匹配的 skill。</div>}
             </>
           )}
         </aside>
 
-        <div
+        {showScenarioWorkspace && <div
           role="separator"
           aria-label="调整左侧工具列表宽度"
           aria-orientation="vertical"
@@ -1834,10 +1803,10 @@ export default function ToolPackageEditor({
             flex: `0 0 ${RESIZE_HANDLE_WIDTH}px`,
             ...(resizingSide === 'left' ? resizeHandleActiveStyle : null),
           }}
-        />
+        />}
 
-        <main
-          className="tool-package-editor-pane"
+        {showScenarioWorkspace && <main
+          className="tool-package-editor-pane scenario-workspace-editor"
           style={{
             ...editorPaneStyle,
             flex: '1 1 0',
@@ -1867,6 +1836,8 @@ export default function ToolPackageEditor({
             <div style={emptyEditorStyle}>请选择一个场景。</div>
           ) : selectedTool ? (
             <ToolEditor
+              tags={getTags(selectedTool)}
+              onTagsChange={tags => saveTags(selectedTool, tags)}
               key={selectedToolKey}
               tool={selectedTool}
               site={selectedToolSite}
@@ -1885,32 +1856,45 @@ export default function ToolPackageEditor({
           ) : (
             <div style={emptyEditorStyle}>{isPublicScope ? '请选择一个公共 skill。' : '请选择一个工具，或点击新增 skill。'}</div>
           )}
-        </main>
+        </main>}
 
-        {showRightPaneShell && (
-          <div
-            className={`tool-package-right-column${effectiveRightPaneOpen ? ' is-open' : ''}${resizingSide === 'right' ? ' is-resizing' : ''}`}
-            style={{
-              flex: effectiveRightPaneOpen
-                ? `0 0 ${effectiveRightPaneWidth + RESIZE_HANDLE_WIDTH}px`
-                : '0 0 0px',
-              width: effectiveRightPaneOpen ? effectiveRightPaneWidth + RESIZE_HANDLE_WIDTH : 0,
-              minWidth: 0,
-            }}
-          >
-            <div
-              role="separator"
-              aria-label="调整右侧列表宽度"
-              aria-orientation="vertical"
-              aria-hidden={!effectiveRightPaneOpen}
-              onPointerDown={(event) => startPaneResize('right', event)}
-              style={{
-                ...resizeHandleStyle,
-                flex: `0 0 ${RESIZE_HANDLE_WIDTH}px`,
-                ...(resizingSide === 'right' ? resizeHandleActiveStyle : null),
-              }}
-            />
-            <aside style={{ ...rightPaneStyle, width: effectiveRightPaneWidth, flex: `0 0 ${effectiveRightPaneWidth}px`, maxWidth: effectiveRightPaneWidth }}>
+        {showRightPaneShell && <div
+          className={`skill-detail-drawer${effectiveRightPaneOpen ? ' is-open' : ''}`}
+          aria-hidden={!effectiveRightPaneOpen}
+          style={{
+            flex: effectiveRightPaneOpen ? `0 0 ${Math.min(560, Math.max(0, workspaceWidth - 280, workspaceWidth * 0.42))}px` : '0 0 0px',
+            width: effectiveRightPaneOpen ? Math.min(560, Math.max(0, workspaceWidth - 280, workspaceWidth * 0.42)) : 0,
+          }}
+        >
+          <div className="skill-detail-drawer-header">
+            <div className="skill-detail-drawer-tabs" role="tablist" aria-label="Skill 侧栏视图">
+              <button type="button" role="tab" aria-selected={rightPaneView === 'skill'} onClick={() => setRightPaneView('skill')}>Skill 详情</button>
+              <button type="button" role="tab" aria-selected={rightPaneView === 'toolkit'} onClick={() => setRightPaneView('toolkit')}>工具包</button>
+            </div>
+            <IconButton label="关闭右侧面板" onClick={() => setRightPaneOpen(false)}><PanelHideIcon /></IconButton>
+          </div>
+          <div className="skill-detail-drawer-content">
+            {rightPaneView === 'skill' && selectedTool ? (
+              <ToolEditor
+                tags={getTags(selectedTool)}
+                onTagsChange={tags => saveTags(selectedTool, tags)}
+                key={selectedToolKey}
+                tool={selectedTool}
+                site={selectedToolSite}
+                scenarios={scenarioList}
+                editable={selectedIsEditable}
+                isCustom={selectedIsCustom}
+                slashMenuTools={slashMenuTools}
+                slashSystemTools={builtinToolkitTools}
+                duplicateNameWarning={selectedCustomSkillDuplicateName}
+                onChange={updateSelectedSkill}
+                onParamChange={updateParam}
+                onAddParam={() => updateSelectedSkill({ parameters: [...selectedTool.parameters, { ...EMPTY_PARAM }] })}
+                onDeleteParam={(index) => updateSelectedSkill({ parameters: selectedTool.parameters.filter((_, i) => i !== index) })}
+                onDelete={deleteCustomSkill}
+              />
+            ) : rightPaneView === 'toolkit' ? (
+              <aside className="skill-drawer-toolkit" style={{ ...rightPaneStyle, width: '100%', flex: '1 1 auto', maxWidth: 'none' }}>
               <div style={rightPanelHeaderStyle}>
                 <div style={rightPanelHeaderTopRowStyle}>
                   <DropdownSelect
@@ -1947,158 +1931,12 @@ export default function ToolPackageEditor({
               ) : (
                 <ToolkitToolList tools={visibleToolkitTools} searchQuery={toolkitSearchQuery} />
               )}
-            </aside>
+              </aside>
+            ) : <div style={emptyEditorStyle}>请选择一个 Skill。</div>}
           </div>
-        )}
+        </div>}
         </div>
       </div>
-    </div>
-  )
-}
-
-function FilterSelect({
-  value,
-  options,
-  onChange,
-  ariaLabel,
-  mode = 'full',
-  defaultValue,
-}) {
-  const [open, setOpen] = useState(false)
-  const triggerRef = useRef(null)
-  const menuRef = useRef(null)
-
-  const selected = options.find((option) => option.value === value) || options[0]
-  const isActive = value !== defaultValue
-  const displayLabel = mode === 'full'
-    ? selected?.label
-    : mode === 'compact'
-      ? (selected?.compactLabel || selected?.label)
-      : ''
-
-  const closeMenu = () => setOpen(false)
-  useDropdownDismiss(open, closeMenu, triggerRef, menuRef)
-
-  return (
-    <div style={filterSelectRootStyle}>
-      <button
-        ref={triggerRef}
-        type="button"
-        onClick={() => setOpen((current) => !current)}
-        style={getFilterSelectTriggerStyle(mode, isActive)}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label={mode === 'icon' ? `${ariaLabel}：${selected?.label || ''}` : ariaLabel}
-        title={selected?.label || ariaLabel}
-      >
-        {mode !== 'icon' && (
-          <span style={filterSelectLabelStyle}>{displayLabel}</span>
-        )}
-        <span style={filterSelectCaretStyle} aria-hidden="true">{open ? '▴' : '▾'}</span>
-      </button>
-      <DropdownMenuPortal
-        ref={menuRef}
-        open={open}
-        anchorRef={triggerRef}
-        minWidth={128}
-      >
-        <div role="listbox" aria-label={ariaLabel}>
-          {options.map((option) => (
-            <button
-              key={option.value || '__all__'}
-              type="button"
-              role="option"
-              aria-selected={value === option.value}
-              onClick={() => {
-                onChange(option.value)
-                closeMenu()
-              }}
-              className={dropdownMenuItemClassName({ selected: value === option.value })}
-            >
-              {option.label}
-            </button>
-          ))}
-        </div>
-      </DropdownMenuPortal>
-    </div>
-  )
-}
-
-function SkillToolFilterBar({
-  toolSearchQuery,
-  onToolSearchQueryChange,
-  toolSiteFilter,
-  onToolSiteFilterChange,
-  toolKindFilter,
-  onToolKindFilterChange,
-  showSiteFilter,
-  siteList,
-}) {
-  const barRef = useRef(null)
-  const [barWidth, setBarWidth] = useState(0)
-
-  useEffect(() => {
-    const node = barRef.current
-    if (!node) return undefined
-
-    const syncWidth = () => {
-      setBarWidth(node.clientWidth)
-    }
-
-    syncWidth()
-    const observer = new ResizeObserver(syncWidth)
-    observer.observe(node)
-    return () => observer.disconnect()
-  }, [showSiteFilter])
-
-  const filterMode = barWidth >= 248 ? 'full' : barWidth >= 168 ? 'compact' : 'icon'
-
-  const siteOptions = useMemo(() => ([
-    { value: '', label: '全部站点', compactLabel: '全部' },
-    ...siteList.map((site) => ({
-      value: site.id,
-      label: site.name,
-      compactLabel: site.name.length > 4 ? `${site.name.slice(0, 3)}…` : site.name,
-    })),
-  ]), [siteList])
-
-  const kindOptions = useMemo(() => ([
-    { value: 'all', label: '所有 skills', compactLabel: '所有' },
-    { value: 'official', label: '官方 skills', compactLabel: '官方' },
-    { value: 'custom', label: '自定义 skills', compactLabel: '自定义' },
-  ]), [])
-
-  return (
-    <div ref={barRef} style={toolFilterBarStyle}>
-      <input
-        type="search"
-        value={toolSearchQuery}
-        onChange={(event) => onToolSearchQueryChange(event.target.value)}
-        placeholder="搜索"
-        style={{
-          ...filterInputStyle,
-          flex: '1 1 0',
-          minWidth: filterMode === 'icon' ? 52 : 40,
-        }}
-      />
-      {showSiteFilter && (
-        <FilterSelect
-          value={toolSiteFilter}
-          options={siteOptions}
-          onChange={onToolSiteFilterChange}
-          ariaLabel="按已选站点筛选"
-          mode={filterMode}
-          defaultValue=""
-        />
-      )}
-      <FilterSelect
-        value={toolKindFilter}
-        options={kindOptions}
-        onChange={onToolKindFilterChange}
-        ariaLabel="按 skill 类型筛选"
-        mode={filterMode}
-        defaultValue="all"
-      />
     </div>
   )
 }
@@ -2167,61 +2005,11 @@ function DropdownSelect({
               className={dropdownMenuItemClassName({ selected: value === option.value })}
             >
               {option.label}
+              <DropdownMenuCheck selected={value === option.value} />
             </button>
           ))}
         </div>
       </DropdownMenuPortal>
-    </div>
-  )
-}
-
-function ScopeSelect({ value, onChange, fullWidth = false, compact = false }) {
-  const options = [
-    { value: SKILL_SCOPE_SITE, label: '站点 skills' },
-    { value: SKILL_SCOPE_PUBLIC, label: '公共 skills' },
-  ]
-
-  return (
-    <DropdownSelect
-      value={value}
-      onChange={onChange}
-      options={options}
-      ariaLabel="Skill 范围"
-      fullWidth={fullWidth}
-      compact={compact}
-    />
-  )
-}
-
-function ScopeFilters({
-  skillScope,
-  onSkillScopeChange,
-  isPublicScope,
-  editableSites,
-  selectedSiteIds,
-  onToggleSiteId,
-  compact = false,
-}) {
-  return (
-    <div style={compact ? scopeFiltersCompactStyle : scopeFiltersStyle}>
-      <ScopeSelect
-        value={skillScope}
-        onChange={onSkillScopeChange}
-        fullWidth={!compact}
-        compact={compact}
-      />
-      <div style={scopeFiltersSecondaryStyle}>
-        {isPublicScope ? (
-          <div style={scopeHintFullStyle}>不绑定具体站点</div>
-        ) : (
-          <SiteMultiSelect
-            sites={editableSites}
-            selectedIds={selectedSiteIds}
-            onToggle={onToggleSiteId}
-            fullWidth={!compact}
-          />
-        )}
-      </div>
     </div>
   )
 }
@@ -2379,7 +2167,7 @@ function ScenarioSiteSelect({ sites, selectedId, onChange }) {
   }
 
   return (
-    <div style={scenarioSiteSelectShellStyle}>
+    <div className="scenario-site-select" style={scenarioSiteSelectShellStyle}>
       <span style={scenarioSiteSelectLabelStyle}>场景站点</span>
       <button
         ref={triggerRef}
@@ -2414,6 +2202,7 @@ function ScenarioSiteSelect({ sites, selectedId, onChange }) {
                 className={dropdownMenuItemClassName({ selected })}
               >
                 {site.name}
+                <DropdownMenuCheck selected={selected} />
               </button>
             )
           })}
@@ -2425,7 +2214,7 @@ function ScenarioSiteSelect({ sites, selectedId, onChange }) {
 
 function ScenarioSidebarList({ scenarios, selectedScenarioId, onSelect, searchQuery = '' }) {
   return (
-    <div style={toolListStyle}>
+    <div className="scenario-list" style={toolListStyle}>
       {scenarios.map((scenario) => {
         const key = scenarioKey(scenario)
         const active = key === selectedScenarioId
@@ -2453,28 +2242,27 @@ function ScenarioSidebarList({ scenarios, selectedScenarioId, onSelect, searchQu
   )
 }
 
-function ToolList({ tools, selectedTool, onSelect }) {
+function ToolList({ tools, selectedTool, onSelect, getTags }) {
   return (
-    <div style={toolListStyle}>
+    <div className="skill-catalog-grid" style={toolListStyle}>
       {tools.map((tool) => {
         const key = toolKey(tool)
         const active = selectedTool && key === toolKey(selectedTool)
         return (
-          <button
+          <div
             key={key}
-            type="button"
             draggable
             onDragStart={(event) => event.dataTransfer.setData('application/x-weworker-tool', key)}
-            onClick={() => onSelect(tool)}
-            title={buildToolTooltip(tool)}
-            className={`tool-package-list-item${active ? ' is-active' : ''}`}
+            title={tool.name || '未命名 skill'}
+            className={`tool-package-list-item skill-catalog-item${active ? ' is-active' : ''}`}
           >
             <span style={toolNameStyle}>{tool.name}</span>
             <span style={toolDescStyle}>{tool.description || summarizeParams(tool.parameters)}</span>
-            <span style={toolMetaStyle}>
-              {buildToolSiteMetaPrefix(tool)}{skillSourceLabel(tool)}
-            </span>
-          </button>
+            <span className="skill-catalog-list-tags">{getTags(tool).map(tag => <span key={tag}>{tag}</span>)}</span>
+            <button type="button" className="skill-card-view" aria-label={`查看 ${tool.name || '未命名 skill'}`} onClick={(event) => { event.stopPropagation(); onSelect(tool) }}>
+              <EyeOutlined aria-hidden="true" />查看
+            </button>
+          </div>
         )
       })}
     </div>
@@ -2607,6 +2395,7 @@ function ScenarioEditor({ scenario, editable = false, canReset = false, onSave, 
   return (
     <EditorPaneShell
       layoutKey={`scenario:${scenarioKey(scenario)}`}
+      className="scenario-editor-shell"
       header={(
         <>
           <div>
@@ -2646,7 +2435,7 @@ function ScenarioEditor({ scenario, editable = false, canReset = false, onSave, 
         </>
       )}
     >
-        <div style={formStyle}>
+        <div className="scenario-editor-form" style={formStyle}>
       <CollapsibleSection
         title="场景名称"
         meta={`${countLines(draft.title)} 行`}
@@ -2696,7 +2485,7 @@ function ScenarioEditor({ scenario, editable = false, canReset = false, onSave, 
   )
 }
 
-function EditorPaneShell({ header, children, layoutKey = '' }) {
+function EditorPaneShell({ header, children, layoutKey = '', className = '' }) {
   const shellRef = useRef(null)
   const headerRef = useRef(null)
   const scrollRef = useRef(null)
@@ -2725,7 +2514,7 @@ function EditorPaneShell({ header, children, layoutKey = '' }) {
 
   return (
     <EditorPaneScrollContext.Provider value={scrollRef}>
-      <div ref={shellRef} className="tool-package-editor-shell" style={editorPaneShellStyle}>
+      <div ref={shellRef} className={`tool-package-editor-shell${className ? ` ${className}` : ''}`} style={editorPaneShellStyle}>
         <div ref={headerRef} style={editorPaneHeaderStyle}>{header}</div>
         <div
           ref={scrollRef}
@@ -2903,7 +2692,7 @@ function ResourceNodeNameField({
   )
 }
 
-function CollapsibleSection({ title, stickyPath, meta, collapsed, onToggle, actions, titleAddon, children, sticky = true }) {
+function CollapsibleSection({ title, stickyPath, meta, collapsed, onToggle, actions, titleAddon, children, sticky = true, fileIcon }) {
   const handleKeyDown = (event) => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault()
@@ -2911,6 +2700,30 @@ function CollapsibleSection({ title, stickyPath, meta, collapsed, onToggle, acti
     }
   }
   const displayTitle = !collapsed && stickyPath ? stickyPath : title
+
+  if (fileIcon) {
+    return (
+      <section className="skill-file-section">
+        <div className={`skill-file-section-header${!collapsed && sticky ? ' is-sticky' : ''}`}>
+          <button
+            type="button"
+            className="skill-file-section-toggle"
+            aria-label={title}
+            aria-expanded={!collapsed}
+            onClick={onToggle}
+          >
+            <RightOutlined className="skill-file-section-chevron" aria-hidden="true" />
+            <span className="skill-file-section-icon" aria-hidden="true">{fileIcon}</span>
+            <span className="skill-file-section-title" title={displayTitle}>{displayTitle}</span>
+            {meta && <span className="skill-file-section-meta">{meta}</span>}
+          </button>
+          {titleAddon && <div className="skill-file-section-notice">{titleAddon}</div>}
+          {actions && <div className="skill-file-section-actions">{actions}</div>}
+        </div>
+        {!collapsed && <div className="skill-file-section-body">{children}</div>}
+      </section>
+    )
+  }
 
   return (
     <section style={collapsibleSectionStyle}>
@@ -3020,10 +2833,11 @@ function CodeTextarea({ value, onChange, minHeight = 96, readOnly = false, maxHe
   )
 }
 
-function ToolEditor({ tool, site, scenarios, editable, isCustom = false, slashMenuTools = [], slashSystemTools = [], duplicateNameWarning = '', onChange, onDelete }) {
+function ToolEditor({ tags, onTagsChange, tool, site, scenarios, editable, isCustom = false, slashMenuTools = [], slashSystemTools = [], duplicateNameWarning = '', onChange, onDelete }) {
   if (editable) {
     return (
       <SkillDocumentEditor
+        tags={tags} onTagsChange={onTagsChange}
         tool={tool}
         site={site}
         scenarios={scenarios}
@@ -3040,6 +2854,7 @@ function ToolEditor({ tool, site, scenarios, editable, isCustom = false, slashMe
 
   return (
     <SkillDocumentEditor
+        tags={tags} onTagsChange={onTagsChange}
       tool={tool}
       site={site}
       scenarios={scenarios}
@@ -3082,7 +2897,7 @@ function updateResourceContent(resources, relativePath, content) {
   })
 }
 
-function SkillDocumentEditor({ tool, site, scenarios, editable, isCustom = false, slashMenuTools = [], slashSystemTools = [], duplicateNameWarning = '', onChange, onDelete }) {
+function SkillDocumentEditor({ tags, onTagsChange, tool, site, scenarios, editable, isCustom = false, slashMenuTools = [], slashSystemTools = [], duplicateNameWarning = '', onChange, onDelete }) {
   const [expandedPath, setExpandedPath] = useState(SKILL_MD_PATH)
   const [renamingPath, setRenamingPath] = useState(null)
   const [forcedPreviews, setForcedPreviews] = useState({})
@@ -3265,7 +3080,7 @@ function SkillDocumentEditor({ tool, site, scenarios, editable, isCustom = false
       setResourceImportProgress((current) => (current?.status === 'done' ? null : current))
     } catch (error) {
       console.error('[tool-package] upload resource files failed:', error)
-      window.alert(error instanceof Error ? error.message : '上传文件失败')
+      showAlert(error instanceof Error ? error.message : '上传文件失败')
       setResourceImportProgress(null)
     }
   }
@@ -3306,18 +3121,18 @@ function SkillDocumentEditor({ tool, site, scenarios, editable, isCustom = false
       setResourceImportProgress((current) => (current?.status === 'done' ? null : current))
     } catch (error) {
       console.error('[tool-package] upload resource folder failed:', error)
-      window.alert(error instanceof Error ? error.message : '上传文件夹失败')
+      showAlert(error instanceof Error ? error.message : '上传文件夹失败')
       setResourceImportProgress(null)
     }
   }
 
-  const handleDeleteResource = (relativePath, { isFolder = false } = {}) => {
+  const handleDeleteResource = async (relativePath, { isFolder = false } = {}) => {
     const normalized = normalizeResourcePath(relativePath)
     const name = normalized.split('/').filter(Boolean).pop() || normalized
     const confirmMessage = isFolder
       ? `确定删除文件夹「${name}」及其中的所有文件吗？`
       : `确定删除资源文件「${name}」吗？`
-    if (!window.confirm(confirmMessage)) return
+    if (!await showConfirm(confirmMessage, '删除资源')) return
     const nextResources = isFolder
       ? removeResourcePath(resources, relativePath)
       : removeResourceFile(resources, relativePath)
@@ -3342,7 +3157,7 @@ function SkillDocumentEditor({ tool, site, scenarios, editable, isCustom = false
 
   const handleRequestPreview = async (relativePath, resource) => {
     if (!resource || resource.is_directory || resource.readable === true) return
-    if (!window.confirm(buildForcePreviewConfirmMessage(resource))) return
+    if (!await showConfirm(buildForcePreviewConfirmMessage(resource), '预览资源')) return
 
     const normalizedPath = normalizeResourcePath(relativePath)
     markResourceExpanded(normalizedPath)
@@ -3350,7 +3165,7 @@ function SkillDocumentEditor({ tool, site, scenarios, editable, isCustom = false
     try {
       await loadResourcePreview(normalizedPath)
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : '预览失败')
+      showAlert(error instanceof Error ? error.message : '预览失败')
     }
   }
 
@@ -3359,12 +3174,16 @@ function SkillDocumentEditor({ tool, site, scenarios, editable, isCustom = false
       layoutKey={`${tool.id || tool.name}:${expandedPath || 'none'}`}
       header={(
         <>
-          <div>
-            <div style={sourceBadgeStyle}>{skillSourceBadgeLabel(tool)}</div>
+          <div className="skill-editor-header-content">
             <h3 style={editorTitleStyle}>{tool.name || '未命名 skill'}</h3>
+            <div className="skill-editor-kicker">
+              <span className="skill-editor-kicker-dot" aria-hidden="true" />
+              {skillSourceBadgeLabel(tool)}
+            </div>
+            <SkillTags key={toolKey(tool)} tags={tags} onChange={onTagsChange} />
           </div>
           {editable && (
-            <div style={scenarioHeaderActionsStyle}>
+            <div className="skill-editor-actions" style={scenarioHeaderActionsStyle}>
               {hasSkillDiskLocation(tool) && (
                 <OpenSkillFolderButton site={site} tool={tool} />
               )}
@@ -3375,9 +3194,10 @@ function SkillDocumentEditor({ tool, site, scenarios, editable, isCustom = false
         </>
       )}
     >
-        <div style={formStyle}>
+        <div className="skill-files-group">
       <CollapsibleSection
         title="SKILL.md"
+        fileIcon={<FileTextOutlined />}
         stickyPath={SKILL_MD_PATH}
         meta={`${countLines(markdown)} 行`}
         collapsed={expandedPath !== SKILL_MD_PATH}
@@ -3424,16 +3244,12 @@ function SkillDocumentEditor({ tool, site, scenarios, editable, isCustom = false
         collapsed={resourcesSectionCollapsed}
         onToggle={toggleResourcesSection}
         actions={editable ? (
-          <ResourceNodeActions
-            add={(
-              <ResourceAddMenu
+              <ResourceAddMenu showLabel
                 onNewFolder={() => handleCreateFolder('')}
                 onNewFile={() => handleCreateFile('')}
                 onUploadFolder={() => handleUploadFolder('')}
                 onUploadFiles={() => handleUploadFiles('')}
               />
-            )}
-          />
         ) : null}
       >
         {resourceImportProgress && (
@@ -3483,7 +3299,7 @@ function OpenSkillFolderButton({ site, tool }) {
           dirPath = data.path
         } catch (error) {
           if (error instanceof Error && error.message === 'Skill not found') {
-            window.alert('Skill folder not found. Please refresh the skill list.')
+            showAlert('Skill folder not found. Please refresh the skill list.')
             return
           }
           dirPath = await window.electronAPI?.resolveSkillDirectory?.({
@@ -3514,22 +3330,22 @@ function OpenSkillFolderButton({ site, tool }) {
           })
         }
       } else {
-        window.alert('当前 skill 没有本地文件夹')
+        showAlert('当前 skill 没有本地文件夹')
         return
       }
       if (!dirPath) {
-        window.alert('无法获取 skill 文件夹路径')
+        showAlert('无法获取 skill 文件夹路径')
         return
       }
       const openPath = window.electronAPI?.openPath
       if (!openPath) {
-        window.alert('当前环境无法打开文件夹')
+        showAlert('当前环境无法打开文件夹')
         return
       }
       const err = await openPath(dirPath)
-      if (err) window.alert(err)
+      if (err) showAlert(err)
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : '打开文件夹失败')
+      showAlert(error instanceof Error ? error.message : '打开文件夹失败')
     } finally {
       setOpening(false)
     }
@@ -3646,7 +3462,7 @@ function SkillResourceImportProgress({ progress }) {
   )
 }
 
-function ResourceAddMenu({ onNewFolder, onNewFile, onUploadFolder, onUploadFiles }) {
+function ResourceAddMenu({ onNewFolder, onNewFile, onUploadFolder, onUploadFiles, showLabel = false }) {
   const [open, setOpen] = useState(false)
   const shellRef = useRef(null)
   const menuRef = useRef(null)
@@ -3666,13 +3482,25 @@ function ResourceAddMenu({ onNewFolder, onNewFile, onUploadFolder, onUploadFiles
       onClick={(event) => event.stopPropagation()}
       onPointerDown={(event) => event.stopPropagation()}
     >
-      <IconButton
+      {showLabel ? (
+        <button
+          type="button"
+          className="skill-file-add"
+          aria-label="新建或上传"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+        >
+          <PlusOutlined aria-hidden="true" />
+          添加
+        </button>
+      ) : <IconButton
         label="新建或上传"
         onClick={() => setOpen((value) => !value)}
         compact
       >
         <PlusIcon />
-      </IconButton>
+      </IconButton>}
       <DropdownMenuPortal
         ref={menuRef}
         open={open}
@@ -3716,7 +3544,7 @@ function ResourceTree({
   }
 
   if (editable && !displayNodes.length) {
-    return <div style={resourceEmptyFolderStyle}>暂无文件，使用标题栏 + 新建或上传。</div>
+    return <div style={resourceEmptyFolderStyle}>暂无文件，可从右上角添加。</div>
   }
 
   return (
@@ -5010,7 +4838,7 @@ const builtinHelpPanelStyle = {
   border: '1px solid var(--border)',
   borderRadius: 10,
   background: 'var(--bg-primary)',
-  boxShadow: '0 14px 36px rgba(15, 23, 42, 0.16)',
+  boxShadow: 'none',
   padding: '12px 14px',
   boxSizing: 'border-box',
 }

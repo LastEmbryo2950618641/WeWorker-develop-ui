@@ -2,7 +2,7 @@ import { scopedGenerationPreviewScripts } from './generation-preview-bundle.js';
 import { buildV2Bootstrap, v2InjectionFiles } from "./v2-loader.js";
 import { injectAdapterSources } from './adapter-script-loader.js';
 import { createHostAdapterClient } from './host-adapter-client.js';
-import { createHostAdapterRuntime, assertAdapterNavigationUrl, navigateAdapterTab } from './host-adapter-runtime.js';
+import { createHostAdapterRuntime, assertAdapterNavigationUrl, createNavigationGuard, navigateAdapterTab } from './host-adapter-runtime.js';
 import { createManagedBackgroundRuntime, MANAGED_RUNNER_PATH } from './managed-background-runtime.js';
 
 /**
@@ -2525,6 +2525,8 @@ function connectToNativeHost() {
       clearNativeHeartbeatAckTimer();
       return;
     }
+    // ③ 扩展内部耗时观测的起点（结果/错误回传时在 sendToNative 里结算）。
+    noteCallToolStart(msg);
     await handleNativeMessage(msg);
   });
 
@@ -2691,7 +2693,7 @@ async function handleNativeMessage(msg) {
           tab = await chrome.tabs.create({ url: startUrl, active: false });
         }
         const result = await getHostAdapterRuntime().execute(tab.id, selected.manifest, tab.url,
-          (remainingMs) => callToolInTab(tab.id, selected.manifest.name + '.' + selected.command.id, args || {}, traceID, false, remainingMs), selected.command);
+          (remainingMs) => callToolInTab(tab.id, selected.manifest.name + '.' + selected.command.id, args || {}, traceID, false, remainingMs), selected.command, traceID);
         sendToNative({ type: 'call_tool_result', id: msg.id, result, traceID });
         return;
       }
@@ -3343,6 +3345,7 @@ async function handleNativeMessage(msg) {
 }
 
 function sendToNative(msg) {
+  logCallToolTiming(msg);
   if (!ws || ws.readyState !== WebSocket.OPEN) {
     console.warn("[WebMCP] Cannot send to native: not connected");
     return false;
@@ -3356,6 +3359,29 @@ function sendToNative(msg) {
     resetNativeSocket(err.message);
     return false;
   }
+}
+
+/**
+ * ③ 扩展内部耗时观测：从收到 call_tool 到把结果/错误交回 bridge。
+ * 写成既有 trace 的一部分（`webcli trace <traceID>` 可看到 ①②③ 三段），
+ * 不记录参数与用户数据，也不改变控制流。
+ */
+const callToolTimings = new Map();
+
+function noteCallToolStart(msg) {
+  if (msg?.type !== 'call_tool' || !msg.id) return;
+  callToolTimings.set(msg.id, { startedAt: Date.now(), traceID: msg.traceID || null, toolName: String(msg.toolName || '') });
+  // 防御性上限：结果消息丢失时不会无限增长。
+  if (callToolTimings.size > 64) callToolTimings.delete(callToolTimings.keys().next().value);
+}
+
+function logCallToolTiming(msg) {
+  if (msg?.type !== 'call_tool_result' && msg?.type !== 'call_tool_error') return;
+  const timing = callToolTimings.get(msg.id);
+  if (!timing) return;
+  callToolTimings.delete(msg.id);
+  const internalMs = Date.now() - timing.startedAt;
+  traceLog(timing.traceID || msg.traceID, `[ServiceWorker] call_tool 内部耗时 ${internalMs}ms (${timing.toolName || 'unknown'})`);
 }
 
 // ─── Trace 日志存储（按需拉取，不主动推送） ──────────────────────────────────
@@ -6937,14 +6963,24 @@ async function callManagedBackgroundTool(manifest, command, args, traceID) {
   return runtime.execute(manifest, command, args, context);
 }
 
-async function waitForManagedPageReady(tabId, manifest, resume, timeoutMs) {
+async function waitForManagedPageReady(tabId, manifest, resume, timeoutMs, traceID = null) {
   const deadline = Date.now() + timeoutMs;
+  // Fail fast: while the page is still loading, the URL may already prove that
+  // the final host is not declared (e.g. jd.com → www.jd.com), in which case
+  // there is no point in waiting for `complete`. A redirect that later lands on
+  // a declared host keeps changing tab.url and resets the guard's settle timer,
+  // so a still-redirecting tab is never rejected.
+  const guard = createNavigationGuard(manifest, resume);
   let stableUrl = null;
   while (Date.now() < deadline) {
     const tab = await chrome.tabs.get(tabId);
     if (!tab) throw new Error('Adapter tab was closed.');
     if (tab.status === 'complete' && stableUrl === tab.url) return assertAdapterNavigationUrl(manifest, tab.url, resume);
     stableUrl = tab.status === 'complete' ? tab.url : null;
+    if (guard.observe(tab.url, Date.now()) === 'reject') {
+      traceLog(traceID, `[ServiceWorker] 页面目标 host 不在白名单，提前结束等待: ${tab.url}`);
+      return assertAdapterNavigationUrl(manifest, tab.url, resume);
+    }
     await new Promise(resolve => setTimeout(resolve, 150));
   }
   throw new Error('Adapter page navigation timed out.');
@@ -6960,7 +6996,7 @@ function getHostAdapterRuntime() {
       tabInjectedAdapters.delete(tabId);
     },
     inject: injectV2AdapterWithCode,
-    ready: (tabId, manifest, timeoutMs) => waitForManagedPageReady(tabId, manifest, true, timeoutMs),
+    ready: (tabId, manifest, timeoutMs, traceID) => waitForManagedPageReady(tabId, manifest, true, timeoutMs, traceID),
     navigate: (tabId, url, manifest, resume, timeoutMs) => navigateAdapterTab(chrome, tabId, url, manifest, resume, timeoutMs),
   });
 }

@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useUserFilesStore } from '../../store/user-files.js'
+import { showAlert } from '../../store/dialog.js'
 import { collectClipboardFilePaths, readClipboardFilePaths } from '../../utils/clipboard-files.js'
 import Tooltip from '../Tooltip.jsx'
 import { CollapseAllIcon, FilePlusIcon, FolderIcon, FolderPlusIcon, RefreshIcon, RenameIcon, SearchIcon, TrashIcon } from '../icons/PanelIcons.jsx'
@@ -340,7 +341,7 @@ function FileContextMenu({ contextMenu, items, onClose }) {
         minWidth: CONTEXT_MENU_WIDTH,
         background: 'var(--bg-secondary)',
         border: '1px solid var(--border)',
-        boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+        boxShadow: 'none',
         borderRadius: 6,
         padding: '6px 0',
         color: 'var(--text-primary)',
@@ -391,7 +392,7 @@ function DeleteConfirmDialog({ item, onConfirm, onCancel }) {
           border: '1px solid var(--border)',
           background: 'var(--bg-secondary)',
           color: 'var(--text-primary)',
-          boxShadow: '0 18px 46px rgba(0,0,0,0.22)',
+          boxShadow: 'none',
           padding: 18,
           boxSizing: 'border-box',
         }}
@@ -731,13 +732,13 @@ export default function UserFilesSidePanel({ width = 340 }) {
   const handleRevealInFileManager = async (path) => {
     setContextMenu(null)
     const result = await window.electronAPI?.revealInFileManager?.(path)
-    if (result) window.alert(result)
+    if (result) showAlert(result)
   }
 
   const handleOpenTerminal = async (path) => {
     setContextMenu(null)
     const result = await window.electronAPI?.openTerminal?.(path)
-    if (result) window.alert(result)
+    if (result) showAlert(result)
   }
 
   const handleCutItem = (item) => {

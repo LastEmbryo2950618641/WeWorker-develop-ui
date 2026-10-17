@@ -1,3 +1,4 @@
+import AppSwitch from '../common/AppSwitch.jsx'
 ﻿import React, { useEffect, useState } from 'react'
 import { useSitesStore } from '../../store/sites.js'
 import { adapterPackageStatus } from '../../utils/adapter-status.js'
@@ -207,25 +208,12 @@ export default function SitesTab({ onClose }) {
                     )}
                   </svg>
                 </button>
-                <button
-                  type="button"
-                  onClick={() => toggle(site.id)}
+                <AppSwitch
+                  onChange={() => toggle(site.id)}
                   disabled={togglingIds.includes(site.id) || (site.managed && !site.enabled && !site.managed.canEnable)}
-                  role="switch"
-                  aria-checked={site.enabled}
-                  aria-label={`${site.enabled ? '禁用' : '启用'} ${site.name} 工具`}
-                  style={{
-                    width: 40, height: 22, borderRadius: 11, border: 'none', cursor: 'pointer',
-                    background: site.enabled ? 'var(--accent)' : 'var(--border)',
-                    position: 'relative', transition: 'background 0.2s',
-                  }}
-                >
-                  <span style={{
-                    position: 'absolute', top: 2, left: site.enabled ? 20 : 2,
-                    width: 18, height: 18, borderRadius: '50%', background: '#fff',
-                    transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
-                  }} />
-                </button>
+                  checked={site.enabled}
+                  aria-label={'启用 ' + site.name + ' 工具'}
+                />
               </div>
             </div>
 

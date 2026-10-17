@@ -16,6 +16,7 @@ export function connectionMessage(result) {
 export function explorationForm(data) {
   return {
     base_url: data.base_url || data.candidate_url || '',
+    base_url_is_full: data.base_url ? data.base_url_is_full === true : data.candidate_url_is_full === true,
     api_key: '',
     use_main_key: data.use_main_key !== false,
     model: data.configured_model || '',

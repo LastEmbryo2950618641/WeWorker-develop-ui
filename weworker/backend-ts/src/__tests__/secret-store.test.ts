@@ -9,6 +9,7 @@ import {
 import type { Settings } from '../config.js'
 
 const baseSettings = (): Settings => ({
+  onboarding_completed: true,
   active_provider: 'anthropic',
   api_key: 'active-key',
   base_url: 'https://api.anthropic.com',
@@ -24,7 +25,9 @@ const baseSettings = (): Settings => ({
   model_deepseek: 'deepseek-chat',
   context_limit_deepseek: 1_000_000,
   api_key_custom: '',
+  openai_api_key_custom: '',
   model_custom: '',
+  openai_model_custom: '',
   context_limit_custom: 1_000_000,
   base_url_custom: '',
   openai_base_url_custom: '',
@@ -33,10 +36,12 @@ const baseSettings = (): Settings => ({
   exploration_model: '',
   exploration_use_main_key: true,
   custom_auth_type: 'auth_token',
+  added_providers: [],
   channels: {
     qq: { enabled: true, app_id: 'qq-id', app_secret: 'qq-secret', owner_user_id: 'owner-1', owner_permission_level: 'full' },
     weixin: { enabled: true, token: 'wx-token', base_url: '', owner_user_id: '', owner_permission_level: 'full' },
     wecom: { enabled: true, bot_id: 'bot', secret: 'wecom-secret', owner_user_id: '', owner_permission_level: 'full' },
+    feishu: { enabled: true, app_id: 'feishu-app', app_secret: 'feishu-secret', owner_user_id: '', owner_permission_level: 'full' },
   },
   site_toggles: {},
   custom_test_prompts: {},
@@ -51,10 +56,9 @@ const baseSettings = (): Settings => ({
   resource_preview_extensions: null,
   user_directory_blacklist: [],
   zcf_default_role: 'weworker-clear',
-  zcf_default_mode: 'auto-plan',
-  zcf_lang: 'zh-CN',
   zcf_enabled_roles: ['weworker-clear'],
   zcf_custom_roles: [],
+  memory_budgets: { user_usage: 800, task_execution: 1600, other: 1200, extension: 800 },
 })
 
 describe('settings-secrets', () => {
@@ -70,6 +74,9 @@ describe('settings-secrets', () => {
     expect(secrets.exploration_api_key).toBe('fixture-exploration-key')
     expect(clearSecretsOnDisk(settings).exploration_api_key).toBe('')
     expect(applySecrets(cleared, secrets).exploration_api_key).toBe('fixture-exploration-key')
+    expect(secrets['channels.feishu.app_secret']).toBe('feishu-secret')
+    expect(clearSecretsOnDisk(settings).channels.feishu.app_secret).toBe('')
+    expect(applySecrets(cleared, secrets).channels.feishu.app_secret).toBe('feishu-secret')
   })
 
   it('detects legacy plaintext secrets in raw settings', () => {

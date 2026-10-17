@@ -197,6 +197,20 @@ export function admitMemoryCandidate(input: {
     }
   }
 
+  if (candidate.memory_type === 'other') {
+    // 项目契约：宁可漏记不可错记。`other` 不要求执行证据（那是 task_execution 专属规则），
+    // 但只在本回合整体成功时准入，且始终按 provisional 记录、置信度封顶。
+    if (!input.turnSucceeded) return { ok: false, reason: 'turn_failed', scope: input.baseScope }
+    return {
+      ok: true,
+      reason: 'admitted',
+      scope: { ...input.baseScope, ...(candidate.scope || {}) },
+      verification: 'provisional',
+      factsPatch: { verification: 'provisional' },
+      confidenceCap: 0.6,
+    }
+  }
+
   if (candidate.memory_type.startsWith('extension:')) {
     const extension = candidate.scope?.extension || input.baseScope.extension
     if (!extension) return { ok: false, reason: 'missing_site', scope: input.baseScope }

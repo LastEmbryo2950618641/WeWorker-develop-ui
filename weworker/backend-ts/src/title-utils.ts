@@ -4,8 +4,8 @@
  */
 import type { Settings } from './config.js'
 import { createLogger } from './logger.js'
-import { assertAllowedLlmBaseUrl } from './llm-egress.js'
-import { buildRuntimeAllowedLlmBaseUrls, findProviderByWeWorkerBaseUrl } from './provider-registry.js'
+import { resolveAnthropicEndpoint } from './llm-egress.js'
+import { findProviderByWeWorkerBaseUrl } from './provider-registry.js'
 import { buildAnthropicAuthHeaders } from './anthropic-auth.js'
 import { loadPrompt, renderPrompt } from './prompt-loader.js'
 
@@ -47,15 +47,14 @@ export async function generateTitleWithLLM(message: string, settings: Settings):
   if (!settings.api_key) return null
   try {
     const prompts = buildTitlePrompts(message)
-    const baseUrl = assertAllowedLlmBaseUrl(settings.base_url, buildRuntimeAllowedLlmBaseUrls(settings.base_url))
+    const endpoint = resolveAnthropicEndpoint(settings)
     const effectiveProviderId = settings.active_provider === 'custom'
-      ? findProviderByWeWorkerBaseUrl(baseUrl)?.id || settings.active_provider
+      ? findProviderByWeWorkerBaseUrl(settings.base_url)?.id || settings.active_provider
       : settings.active_provider
-    const endpoint = `${baseUrl}/v1/messages`
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
-        ...buildAnthropicAuthHeaders(settings.api_key, effectiveProviderId, settings.custom_auth_type),
+        ...buildAnthropicAuthHeaders(settings.api_key, effectiveProviderId, settings.active_auth_type ?? settings.custom_auth_type),
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },

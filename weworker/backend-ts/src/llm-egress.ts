@@ -23,6 +23,26 @@ export function normalizeLlmBaseUrl(raw: string): string {
   return url.toString().replace(/\/$/, '')
 }
 
+export function normalizeLlmUrlInput(raw: string, fullUrl: unknown = false): string {
+  if (typeof fullUrl !== 'boolean') throw new Error('使用完整 URL 必须为布尔值')
+  if (!fullUrl) return normalizeLlmBaseUrl(raw)
+  const value = raw.trim()
+  const url = new URL(value)
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('接口 URL 必须使用 HTTP 或 HTTPS')
+  if (url.username || url.password || url.hash) throw new Error('接口 URL 不允许包含用户凭据或片段')
+  return value
+}
+
+export function resolveAnthropicEndpoint(settings: { base_url: string; base_url_is_full?: boolean }): string {
+  const url = normalizeLlmUrlInput(settings.base_url || (settings.base_url_is_full ? '' : 'https://api.anthropic.com'), settings.base_url_is_full ?? false)
+  return settings.base_url_is_full ? url : `${url}/v1/messages`
+}
+
+export function resolveOpenAiEndpoint(url: string, fullUrl = false): string {
+  const value = normalizeLlmUrlInput(url, fullUrl)
+  return fullUrl ? value : `${value}/chat/completions`
+}
+
 export function buildAllowedLlmBaseUrls(providers: ProviderEntry[], extraCsv = process.env.WEWORKER_ALLOWED_LLM_BASE_URLS || ''): Set<string> {
   const urls = new Set<string>()
   for (const provider of providers) {

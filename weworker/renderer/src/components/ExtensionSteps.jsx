@@ -36,7 +36,7 @@ export function useExtensionSteps() {
     {
       num: 4,
       title: '完成',
-      desc: 'Chrome 右上角出现 WebMCP 图标，WeWorker 左下角显示"扩展已连接"即安装成功。',
+      desc: 'Chrome 右上角出现 WeWorker 扩展图标，WeWorker 左侧导航栏的拼图图标显示为已连接即安装成功。',
     },
   ]
 }

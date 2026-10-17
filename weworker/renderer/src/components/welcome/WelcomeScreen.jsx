@@ -16,7 +16,8 @@ import { normalizeSiteScenarios, getScenarioPromptText } from '../../utils/site-
 import { buildPromptFromTemplate, hasPromptTemplateVars } from '../../utils/prompt-template.js'
 import { getSiteDragId, hasSiteDragData, setSiteDragData } from '../../utils/site-drag.js'
 import FeaturedSiteActions from './FeaturedSiteActions.jsx'
-import { ClosePanelIcon, EyeIcon, EyeOffIcon, FourSquaresIcon, ListIcon, PlusIcon, RobotIcon, TrialChatIcon } from './WelcomeIcons.jsx'
+import { ClosePanelIcon, EyeIcon, EyeOffIcon, FourSquaresIcon, ListIcon, RobotIcon, TrialChatIcon } from './WelcomeIcons.jsx'
+import { AppstoreAddOutlined } from '@ant-design/icons'
 import {
   ADD_FEATURED_DROP_TARGET,
   CONVERSATION_EXAMPLE_VISIBLE_KEY,
@@ -347,11 +348,12 @@ export default function WelcomeScreen({ onFillInput }) {
   )
   const featuredSites = orderedRows.slice(0, visibleFeaturedCount)
   const hiddenFeaturedSites = orderedRows.slice(visibleFeaturedCount)
-  const featuredSiteLimitReached = visibleFeaturedCount >= maxVisibleFeaturedCount
-  const canAddFeaturedSite = visibleFeaturedCount < maxVisibleFeaturedCount
+  const featuredSiteLimitReached = visibleFeaturedCount >= featuredSiteLimit
+  const allAvailableFeaturedSitesShown = hiddenFeaturedSites.length === 0
+  const canAddFeaturedSite = visibleFeaturedCount < featuredSiteLimit && hiddenFeaturedSites.length > 0
   const addFeaturedLimitTitle = featuredSiteLimitReached
     ? `已达上限 ${featuredSiteLimit} 个，可在设置 → 配置中调整「欢迎页常用场景网站上限」`
-    : undefined
+    : (allAvailableFeaturedSitesShown ? '已添加全部可用网站' : undefined)
   const featuredLayoutSignature = `${featuredSquareCards ? 'grid' : 'list'}:${featuredSites.map(({ site }) => site.id).join('|')}:${canAddFeaturedSite ? 'add' : 'no-add'}`
   const filteredHiddenFeaturedSites = useMemo(() => {
     const query = addPickerQuery.trim().toLowerCase()
@@ -1064,7 +1066,7 @@ export default function WelcomeScreen({ onFillInput }) {
                       }}
                     >
                       <span style={featuredSquareCardIconStyle} data-featured-card-icon>
-                        <SiteIcon site={site} size={40} />
+                        <SiteIcon site={site} size={34} />
                       </span>
                       <span style={featuredSquareCardTitleStyle} data-featured-card-title>{site.name}</span>
                       <FeaturedSiteActions
@@ -1207,7 +1209,7 @@ export default function WelcomeScreen({ onFillInput }) {
               </div>
             )
           })}
-          {(canAddFeaturedSite || featuredSiteLimitReached) && (
+          {(canAddFeaturedSite || featuredSiteLimitReached || allAvailableFeaturedSitesShown) && (
             <div
               ref={bindFeaturedLayoutNode(ADD_FEATURED_DROP_TARGET)}
               style={{
@@ -1259,14 +1261,21 @@ export default function WelcomeScreen({ onFillInput }) {
                   ...(featuredSquareCards ? featuredSquareAddCardStyle : null),
                   justifyContent: featuredSquareCards ? 'center' : 'flex-start',
                   background: canAddFeaturedSite && (addTriggerHovered || addPickerOpen || dragOverSiteId === ADD_FEATURED_DROP_TARGET)
-                    ? 'var(--bg-hover)'
-                    : (featuredSquareCards ? 'var(--bg-secondary)' : addFeaturedCardStyle.background),
+                    ? 'color-mix(in srgb, var(--bg-tertiary) 64%, var(--bg-primary))'
+                    : (featuredSquareCards ? 'transparent' : addFeaturedCardStyle.background),
                   boxShadow: addFeaturedCardStyle.boxShadow,
                   opacity: canAddFeaturedSite ? 1 : 0.45,
                   cursor: canAddFeaturedSite ? 'pointer' : 'not-allowed',
                 }}
               >
-                <span style={featuredSquareCards ? featuredSquareAddIconStyle : addFeaturedIconStyle}><PlusIcon size={18} /></span>
+                <span
+                  style={{
+                    ...(featuredSquareCards ? featuredSquareAddIconStyle : addFeaturedIconStyle),
+                    color: addTriggerHovered || addPickerOpen ? 'var(--accent)' : 'var(--text-secondary)',
+                  }}
+                >
+                  <AppstoreAddOutlined aria-hidden="true" />
+                </span>
                 {!featuredSquareCards && (
                   <span style={addFeaturedCopyStyle}>
                     <span style={addFeaturedTitleStyle}>添加</span>
@@ -1353,6 +1362,7 @@ const welcomeScrollStyle = {
   boxSizing: 'border-box',
   width: '100%',
   minWidth: 0,
+  background: 'var(--bg-primary)',
 }
 
 const welcomeSectionStyle = {
@@ -1395,7 +1405,7 @@ const showcaseVisibleStyle = {
   opacity: 1,
   padding: '36px 52px 68px',
   border: '1px solid color-mix(in srgb, var(--accent) 16%, var(--border))',
-  boxShadow: '0 24px 70px rgba(0,0,0,0.13)',
+  boxShadow: 'none',
   transform: 'translateY(0)',
   pointerEvents: 'auto',
 }
@@ -1426,7 +1436,7 @@ const scenarioBadgeStyle = {
   borderRadius: 16,
   border: '1px solid color-mix(in srgb, var(--border) 70%, var(--bg-secondary))',
   background: 'color-mix(in srgb, var(--bg-secondary) 92%, transparent)',
-  boxShadow: '0 12px 30px rgba(0,0,0,0.12)',
+  boxShadow: 'none',
   fontSize: 16,
   lineHeight: 1.2,
   color: 'var(--text-primary)',
@@ -1476,7 +1486,7 @@ const userBubbleStyle = {
   borderRadius: '14px 14px 4px 14px',
   background: 'color-mix(in srgb, var(--bg-secondary) 94%, transparent)',
   border: '1px solid var(--border)',
-  boxShadow: '0 10px 24px rgba(0,0,0,0.10)',
+  boxShadow: 'none',
   fontSize: 13,
   lineHeight: 1.55,
   overflowWrap: 'anywhere',
@@ -1496,7 +1506,7 @@ const assistantBubbleStyle = {
   borderRadius: '14px 14px 14px 4px',
   background: 'color-mix(in srgb, var(--bg-secondary) 88%, var(--accent) 8%)',
   border: 'none',
-  boxShadow: 'inset 0 0 0 1px color-mix(in srgb, var(--accent) 24%, var(--border)), 0 10px 24px rgba(0,0,0,0.10)',
+  boxShadow: 'none',
   fontSize: 13,
   lineHeight: 1.55,
   overflowWrap: 'break-word',
@@ -1534,7 +1544,7 @@ const tryButtonStyle = {
   fontFamily: 'inherit',
   fontSize: 13,
   fontWeight: 780,
-  boxShadow: '0 10px 24px rgba(0,0,0,0.18)',
+  boxShadow: 'none',
   zIndex: 2,
 }
 
@@ -1621,8 +1631,8 @@ const featuredGridStyle = {
 
 const featuredSquareGridStyle = {
   display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fill, minmax(112px, 1fr))',
-  gap: 12,
+  gridTemplateColumns: 'repeat(auto-fill, minmax(96px, 1fr))',
+  gap: 10,
   overflow: 'visible',
 }
 
@@ -1636,51 +1646,51 @@ const featuredSquareCardUnitStyle = {
 const featuredSquareCardStyle = {
   position: 'relative',
   width: '100%',
-  minHeight: 112,
+  minHeight: 96,
   aspectRatio: '1',
-  borderRadius: 12,
-  border: '1px solid var(--border)',
+  borderRadius: 10,
+  border: '1px solid transparent',
   display: 'flex',
   flexDirection: 'column',
   alignItems: 'center',
   justifyContent: 'center',
-  gap: 8,
-  padding: '10px 8px',
+  gap: 6,
+  padding: '8px 6px',
   boxSizing: 'border-box',
   textAlign: 'center',
-  transition: 'background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, opacity 0.16s ease',
+  transition: 'background-color 0.16s ease, border-color 0.16s ease, opacity 0.16s ease',
 }
 
 function featuredCardFocusStyle({ active, hovered, dropTarget, square }) {
-  const idleBackground = square ? 'var(--bg-secondary)' : 'transparent'
+  const idleBackground = 'transparent'
   if (dropTarget) {
     return {
-      background: 'var(--bg-active)',
-      borderColor: 'var(--border)',
-      boxShadow: '0 10px 24px rgba(0, 0, 0, 0.08)',
-      transform: 'translateY(-2px)',
+      background: 'color-mix(in srgb, var(--accent) 8%, var(--bg-primary))',
+      borderColor: 'color-mix(in srgb, var(--accent) 46%, transparent)',
+      boxShadow: 'none',
+      transform: 'translateY(0)',
     }
   }
   if (active) {
     return {
-      background: 'var(--bg-active)',
-      borderColor: 'var(--border)',
-      boxShadow: '0 8px 20px rgba(0, 0, 0, 0.07)',
-      transform: 'translateY(-1px)',
+      background: 'color-mix(in srgb, var(--bg-tertiary) 82%, var(--bg-primary))',
+      borderColor: 'transparent',
+      boxShadow: 'none',
+      transform: 'translateY(0)',
     }
   }
   if (hovered) {
     return {
-      background: 'var(--bg-hover)',
-      borderColor: 'var(--border)',
-      boxShadow: '0 6px 18px rgba(0, 0, 0, 0.06)',
-      transform: 'translateY(-1px)',
+      background: 'color-mix(in srgb, var(--bg-tertiary) 48%, transparent)',
+      borderColor: 'transparent',
+      boxShadow: 'none',
+      transform: 'translateY(0)',
     }
   }
   return {
     background: idleBackground,
-    borderColor: square ? 'var(--border)' : 'transparent',
-    boxShadow: square ? '0 1px 3px rgba(0,0,0,0.04)' : 'none',
+    borderColor: 'transparent',
+    boxShadow: 'none',
     transform: 'translateY(0)',
   }
 }
@@ -1695,8 +1705,8 @@ const featuredSquareCardIconStyle = {
 const featuredSquareCardTitleStyle = {
   width: '100%',
   minWidth: 0,
-  padding: '0 4px',
-  fontSize: 12,
+  padding: '0 2px',
+  fontSize: 11,
   fontWeight: 700,
   lineHeight: 1.25,
   color: 'var(--text-primary)',
@@ -1706,24 +1716,27 @@ const featuredSquareCardTitleStyle = {
 }
 
 const featuredSquareAddCardStyle = {
-  minHeight: 112,
+  minHeight: 96,
   aspectRatio: '1',
-  borderRadius: 12,
-  padding: '10px',
+  borderRadius: 10,
+  border: '1px solid transparent',
+  background: 'transparent',
+  padding: '8px',
 }
 
 const featuredSquareAddIconStyle = {
-  width: 42,
-  height: 42,
-  borderRadius: 10,
-  border: '1px solid var(--border)',
-  background: 'var(--bg-primary)',
-  color: 'var(--accent)',
+  width: 40,
+  height: 40,
+  borderRadius: 12,
+  border: '1px solid color-mix(in srgb, var(--border) 52%, transparent)',
+  background: 'color-mix(in srgb, var(--bg-tertiary) 36%, transparent)',
+  fontSize: 21,
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
   flexShrink: 0,
   lineHeight: 0,
+  transition: 'color 0.16s ease, background-color 0.16s ease, border-color 0.16s ease',
 }
 
 const featuredSiteWrapStyle = {
@@ -1799,17 +1812,18 @@ const addFeaturedCardStyle = {
 }
 
 const addFeaturedIconStyle = {
-  width: 42,
-  height: 42,
-  borderRadius: 10,
-  border: '1px solid var(--border)',
-  background: 'var(--bg-primary)',
-  color: 'var(--accent)',
+  width: 36,
+  height: 36,
+  borderRadius: 11,
+  border: 0,
+  background: 'color-mix(in srgb, var(--bg-tertiary) 42%, transparent)',
+  fontSize: 20,
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
   flexShrink: 0,
   lineHeight: 0,
+  transition: 'color 0.16s ease, background-color 0.16s ease',
 }
 
 const addFeaturedCopyStyle = {
@@ -1846,7 +1860,7 @@ const floatingPickerStyle = (placement, { left = 0, right, minWidth = 0, width }
   border: '1px solid var(--border)',
   borderRadius: 12,
   background: 'var(--bg-secondary)',
-  boxShadow: '0 14px 34px rgba(0,0,0,0.14)',
+  boxShadow: 'none',
   maxHeight: placement.maxHeight,
   display: 'flex',
   flexDirection: 'column',

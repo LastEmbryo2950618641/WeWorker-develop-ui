@@ -6,7 +6,7 @@ import pytest
 
 from webwright.models.anthropic_model import AnthropicModel
 from webwright.models.openai_chat_model import OpenAIChatModel
-from webwright.server.weworker_model_config import ManagedModelConfigError, load_managed_model_config
+from webwright.server.weworker_model_config import ManagedModelConfig, ManagedModelConfigError, load_managed_model_config
 
 
 class FakeResponse:
@@ -21,6 +21,24 @@ class FakeResponse:
 
     def read(self) -> bytes:
         return json.dumps(self.payload).encode()
+
+
+def test_full_url_snapshot_preserves_custom_path_slash_and_query() -> None:
+    data = {**payload(), "provider_id": "custom", "model_class": "openai_chat", "base_url": "https://example.test/custom/infer/?v=1&route=a%2Fb", "base_url_is_full": True}
+    config = ManagedModelConfig.from_payload(data)
+    assert config.request_endpoint == data["base_url"]
+    model = OpenAIChatModel(model_name=config.model, openai_chat_api_key="test", openai_chat_endpoint=config.request_endpoint)
+    assert model._post_url() == data["base_url"]
+    with pytest.raises(ManagedModelConfigError):
+        ManagedModelConfig.from_payload({**data, "base_url_is_full": False})
+    with pytest.raises(ManagedModelConfigError):
+        ManagedModelConfig.from_payload({**data, "base_url_is_full": "true"})
+
+
+def test_old_snapshot_defaults_to_base_url_suffix() -> None:
+    config = ManagedModelConfig.from_payload(payload())
+    assert config.base_url_is_full is False
+    assert config.request_endpoint == "https://example.test/v1/chat/completions"
 
 
 def payload(protocol: str = "openai_chat_completions") -> dict:

@@ -1,9 +1,10 @@
 import { create } from 'zustand'
 import { mapMessageContentAfterStop } from '../utils/chat-generation-stop.js'
 import { applyTerminalEventToMessages } from '../utils/terminal-chat-output.js'
-import { calibrateCompactedContextSnapshot, calibrateContextSnapshot, createContextTokenAnchor, projectIncrementalContextSnapshot } from '../utils/context-snapshot.js'
+import { calibrateCompactedContextSnapshot, createContextTokenAnchor, projectIncrementalContextSnapshot } from '../utils/context-snapshot.js'
 import { backendFetch } from '../api/http.js'
 import { leaveWebsiteExploration } from './website-exploration.js'
+import { showAlert } from './dialog.js'
 
 const API = 'http://127.0.0.1:8765'
 
@@ -18,6 +19,7 @@ function getScheduledTasksStore() {
 
 export const useWorksStore = create((set, get) => ({
   works: [],
+  projects: [],
   activeWorkId: null,
   messages: {}, // workId -> Message[]
   contextSnapshots: {}, // workId -> latest local context composition
@@ -27,18 +29,21 @@ export const useWorksStore = create((set, get) => ({
   healthCheckMeta: null, // { siteId, siteName, toolNames } | null
   streamingWorkIds: new Set(), // workIds currently streaming — don't overwrite their messages
   abortControllers: {}, // workId -> AbortController — for stopping streaming from any view
+  pendingThinkingEffort: 'off',
   labelFilter: null, // null = show all, string = filter by label color
   labelNames: {}, // color -> custom name, e.g. { red: '紧急', blue: '参考' }
 
   loadWorks: async () => {
-    const [worksRes, namesRes] = await Promise.all([
+    const [worksRes, namesRes, projectsRes] = await Promise.all([
       backendFetch(`${API}/works`),
       backendFetch(`${API}/settings/label-names`).catch(() => null),
+      backendFetch(`${API}/projects`).catch(() => null),
     ])
     if (!worksRes.ok) return
     const works = await worksRes.json()
     const labelNames = namesRes?.ok ? await namesRes.json() : {}
-    set({ works: Array.isArray(works) ? works : [], labelNames })
+    const projects = projectsRes?.ok ? await projectsRes.json() : []
+    set({ works: Array.isArray(works) ? works : [], projects: Array.isArray(projects) ? projects : [], labelNames })
   },
 
   createWork: async (opts = {}) => {
@@ -46,13 +51,9 @@ export const useWorksStore = create((set, get) => ({
     const reuseEmptyWork = async (work) => {
       set({ activeWorkId: work.id })
       getScheduledTasksStore().then(s => s?.setState({ activeTaskId: null })).catch(() => {})
-      const prefs = {}
-      if (opts.zcf_role !== undefined) prefs.zcf_role = opts.zcf_role
-      if (opts.zcf_mode !== undefined) prefs.zcf_mode = opts.zcf_mode
-      const roleChanged = prefs.zcf_role !== undefined && work.zcf_role !== prefs.zcf_role
-      const modeChanged = prefs.zcf_mode !== undefined && work.zcf_mode !== prefs.zcf_mode
-      if (roleChanged || modeChanged) {
-        return get().updateWorkZcfPrefs(work.id, prefs)
+      // 风格沿用 work 上的 `zcf_role` 字段名（历史字段，改名需要数据迁移）。
+      if (opts.styleId !== undefined && work.zcf_role !== opts.styleId) {
+        return get().updateWorkStyle(work.id, { zcf_role: opts.styleId })
       }
       return work
     }
@@ -83,8 +84,8 @@ export const useWorksStore = create((set, get) => ({
         }
       }
       const body = {}
-      if (opts.zcf_role !== undefined) body.zcf_role = opts.zcf_role
-      if (opts.zcf_mode !== undefined) body.zcf_mode = opts.zcf_mode
+      if (opts.projectId !== undefined) body.project_id = opts.projectId
+      if (opts.styleId !== undefined) body.zcf_role = opts.styleId
       const res = await backendFetch(`${API}/works`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -97,9 +98,48 @@ export const useWorksStore = create((set, get) => ({
       return work
     } catch (e) {
       console.error('[works] createWork failed:', e)
-      window.alert('创建任务失败，请确认后端服务已启动')
+      showAlert('创建任务失败，请确认后端服务已启动')
       throw e
     }
+  },
+
+  createProject: async (name) => {
+    const res = await backendFetch(`${API}/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail || 'Failed to create project')
+    }
+    const project = await res.json()
+    set((s) => ({ projects: [project, ...s.projects] }))
+    return project
+  },
+
+  renameProject: async (id, name) => {
+    const res = await backendFetch(`${API}/projects/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail || 'Failed to rename project')
+    }
+    const project = await res.json()
+    set((s) => ({ projects: s.projects.map((item) => (item.id === id ? { ...item, ...project } : item)) }))
+    return project
+  },
+
+  deleteProject: async (id) => {
+    const res = await backendFetch(`${API}/projects/${id}`, { method: 'DELETE' })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.detail || 'Failed to delete project')
+    }
+    set((s) => ({ projects: s.projects.filter((project) => project.id !== id) }))
   },
 
   selectWork: async (id) => {
@@ -116,6 +156,20 @@ export const useWorksStore = create((set, get) => ({
       set((s) => ({ messages: { ...s.messages, [id]: data.messages } }))
     } catch (e) {
       console.error('[works] selectWork fetch failed:', e)
+    }
+  },
+
+  /** Reload a work's messages without making it the active main chat. */
+  refreshWorkMessages: async (id) => {
+    if (!id || get().streamingWorkIds.has(id)) return
+    try {
+      const res = await backendFetch(`${API}/works/${id}`)
+      if (!res.ok) return
+      const data = await res.json()
+      if (get().streamingWorkIds.has(id)) return
+      set((s) => ({ messages: { ...s.messages, [id]: data.messages } }))
+    } catch (e) {
+      console.error('[works] refreshWorkMessages failed:', e)
     }
   },
 
@@ -144,7 +198,7 @@ export const useWorksStore = create((set, get) => ({
       })
     } catch (e) {
       console.error('[works] deleteWork failed:', e)
-      window.alert('删除任务失败，请稍后重试')
+      showAlert('删除任务失败，请稍后重试')
       throw e
     }
   },
@@ -174,18 +228,22 @@ export const useWorksStore = create((set, get) => ({
     }))
   },
 
-  updateWorkZcfPrefs: async (id, prefs) => {
+  /**
+   * 修改某个 work 的风格（`zcf_role` 是历史字段名，后端 PATCH `/works/:id/style`）。
+   * 先做乐观更新，失败时回滚。
+   */
+  updateWorkStyle: async (id, prefs) => {
     const previous = get().works.find((w) => w.id === id)
     set((s) => ({
       works: s.works.map((w) => (w.id === id ? { ...w, ...prefs } : w)),
     }))
     try {
-      const res = await backendFetch(`${API}/works/${id}/zcf`, {
+      const res = await backendFetch(`${API}/works/${id}/style`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(prefs),
       })
-      if (!res.ok) throw new Error('Failed to update ZCF prefs')
+      if (!res.ok) throw new Error('Failed to update style')
       const work = await res.json()
       set((s) => ({
         works: s.works.map((w) => (w.id === id ? { ...w, ...work } : w)),
@@ -286,15 +344,13 @@ export const useWorksStore = create((set, get) => ({
   },
 
   setContextUsage: (workId, usage) => {
+    if (usage?.kind !== 'post_compaction_probe') return
     const actualInputTokens = Number(usage?.total_input_tokens)
     if (!workId || !Number.isFinite(actualInputTokens)) return
     set((s) => {
       const current = s.contextSnapshots[workId]
       if (!current) return s
-      const isPostCompactionProbe = usage?.kind === 'post_compaction_probe'
-      const nextSnapshot = isPostCompactionProbe
-        ? calibrateCompactedContextSnapshot(current, actualInputTokens, s.contextTokenAnchors[workId])
-        : calibrateContextSnapshot(current, actualInputTokens)
+      const nextSnapshot = calibrateCompactedContextSnapshot(current, actualInputTokens, s.contextTokenAnchors[workId])
       const nextAnchor = createContextTokenAnchor(nextSnapshot)
       return {
         contextSnapshots: {

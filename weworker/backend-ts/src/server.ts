@@ -1,3 +1,5 @@
+import { randomUUID as channelQrId } from 'node:crypto'
+import { changeChannelConfiguration, createChannelMutationQueue, getChannelConfiguration, isChannelType, publicChannelSettings, type ChannelType } from './channels/channel-configurations.js'
 import express from 'express'
 import cors from 'cors'
 import { createWebsiteExplorationRouter } from './website-exploration.js'
@@ -37,6 +39,9 @@ import {
   getOpenBrowserAllowedOrigins,
   normalizeOpenBrowserAllowedOrigin,
   normalizeOpenBrowserAllowedOrigins,
+  DEFAULT_MEMORY_BUDGETS,
+  normalizeMemoryBudgets,
+  type MemoryBudgets,
   type Settings,
 } from './config.js'
 import { normalizeDownloadSubdirectory } from './download-directory.js'
@@ -46,20 +51,27 @@ import {
   type UserDirectoryBlacklistEntry,
 } from './user-directory-blacklist.js'
 import { isAllowedHost, isAllowedOrigin, isAuthorizedHttpRequest, LOCAL_HTTP_PORT, redactSensitive } from './http-security.js'
-import { assertAllowedLlmBaseUrl, normalizeLlmBaseUrl } from './llm-egress.js'
+import { normalizeLlmUrlInput, resolveAnthropicEndpoint } from './llm-egress.js'
 import {
   ALLOWED_PROVIDER_IDS,
   PROVIDER_BASE_URLS,
-  buildRuntimeAllowedLlmBaseUrls,
   findProviderByWeWorkerBaseUrl,
+  PROVIDERS,
   getProvider,
 } from './provider-registry.js'
-import { listProviderModels, probeMainConnection, probeProviderProtocol, type ProbeTarget } from './provider-model-services.js'
+import { listProviderModels, probeTimedMainConnection, probeProviderProtocol, type ProbeTarget } from './provider-model-services.js'
+import { modelCatalogConfigPatch, resolveModelCatalogConfig } from './model-catalog-config.js'
 import { registerExplorationModelRoutes } from './exploration-model-settings.js'
+import { resolveThinkingEffort } from './thinking-effort.js'
+import { buildProviderVisibility } from './provider-visibility.js'
+import { createModelConfiguration, getModelConfiguration, activateModelConfiguration, updateModelConfiguration, publicModelConfigurations, buildModelConfigurationNames, renameModelConfiguration, deleteModelConfiguration } from './model-configurations.js'
 import { buildAnthropicAuthHeaders, isAnthropicAuthType } from './anthropic-auth.js'
+import { activateBuiltinProvider, builtinProviderAccess, isBuiltinProvider, publicBuiltinProviders } from './builtin-provider.js'
 import { parseContextLimit } from './context-window.js'
 import { isAuthorizedModelConfigRequest, resolveWebwrightModelConfig } from './webwright-model-config.js'
 import { assertAllowedWeixinBaseUrl, buildAllowedWeixinBaseUrls } from './channel-egress.js'
+import { resolveWeixinToken, syncWeixinChannel } from './channels/sync-weixin-channel.js'
+import { isProbeChannel, probeChannel } from './channels/channel-probe.js'
 import { normalizeOwnerPermissionLevel, validateOwnerUserId } from './channels/channel-permissions.js'
 import { clearAdapterCache, getRegistryDefaultIcon, getRegistryIconById, parseAllAdapters } from './adapter-parser.js'
 import type { StaticToolDef } from './adapter-parser.js'
@@ -85,40 +97,59 @@ import { execFile } from 'node:child_process'
 import { getSiteMemory, listSiteMemories, saveSiteMemoryFromActionCapture, saveSiteMemoryFromWorkflow } from './site-memory.js'
 import * as store from './works-store.js'
 import { tryBackendProfileQueryRoute } from './profile-query-route.js'
-import { buildConfiguredModelEnv, generateAssistantStatusLine, streamChat } from './agent.js'
+import { disposeChatSession, disposeIdleChatSession, hasChatSession, hasSpareChatSession } from './chat-session.js'
+import { buildConfiguredModelEnv, streamChat, type SSEEvent } from './agent.js'
+import { matchSiteAdapter, resolveSiteToolkitPrompt } from './site-gate.js'
+import { listToolkitSkills, resolveToolkitSkillPrompt, toolkitGateCandidates } from './toolkit-skills.js'
+import { decideTier4, openTier4Turn } from './tier4-dispatch.js'
+import { checkWebwrightHealth, fetchWebwrightTask } from './webwright-client.js'
+import { graduationHint, recordTier4HostUsage, shouldSuggestGraduation } from './tier4-graduation.js'
+import { computeRoutableSitesFromConfig, getScopedRouterConfig } from './router-config/index.js'
+import { listAliasTexts } from './api-query-router/aliases.js'
+import { tryIntelligentQueryRoute } from './api-query-router/index.js'
+import { prepareModelRuntime } from './anthropic-endpoint-relay.js'
 import { ensureRuntimeSkillsDir } from './runtime-skills-dir.js'
+import { importSkillZip, importSkillZipFile } from './skill-zip-import.js'
 import { renderPrompt } from './prompt-loader.js'
 import {
   configureAdapterRuntimeReload,
   scheduleAdapterRuntimeReload,
 } from './adapter-runtime-reload.js'
 import {
-  ensureBundledZcfInstalled,
-  buildZcfCatalogResponse,
-  getZcfPackageVersion,
-  readZcfSyncMeta,
-  resolveZcfPrefs,
-  sanitizeZcfRoleSettingsPatch,
-  sanitizeWorkZcfPrefsPatch,
-  sanitizeZcfDefaultSettings,
-  syncZcfTemplates,
-  type ZcfLang,
-} from './zcf-sync.js'
-import { appendAssistantStatusLine, extractAssistantStatusLine, finalizeAssistantTextWithStatus } from './assistant-status.js'
+  resolveStyleId,
+  sanitizeStyleSettingsPatch,
+  sanitizeWorkStylePatch,
+} from './style-settings.js'
 import { processMemoryEvent } from './memory/memory-lifecycle.js'
 import { buildMemoryEventContext } from './memory/memory-event-context.js'
 import { planCompletedChatMemoryEvents, applyAdmissionToCandidate } from './memory/memory-event-planner.js'
 import { isMemoryProtocolFailure } from './memory/memory-protocol.js'
 import type { MemoryParseOutcome } from './memory/memory-extractor.js'
-import { getMemoryStore } from './memory/memory-store.js'
+import { getMemoryStore, type MemoryStore } from './memory/memory-store.js'
+import {
+  enforceConfiguredMemoryBudget,
+  resolveMemoryBudgetKey,
+  summarizeMemoryBudgetUsage,
+  type MemoryBudgetKey,
+  type MemoryBudgetUsage,
+} from './memory/memory-capacity.js'
 import type { MemoryUpdateCandidate } from './memory/memory-types.js'
 import { buildAgentFilesystemSettings, createUnifiedToolGuard } from './user-directory-access.js'
 import { resolvePendingAskUser, resolveToolDisplayName } from './tools.js'
 import { inferTerminalShell, onTerminalEvent, runWeWorkerPowerShell, stopTerminalSession } from './powershell-runner.js'
+import { createTurnTimingLedger } from './turn-timing.js'
 import { channelManager } from './channels/channel-manager.js'
+import { QqQrService, FeishuQrService } from './channels/app-bot-qr.js'
+import { syncAppBotChannel } from './channels/sync-app-bot-channel.js'
 import { QQChannel } from './channels/qq-channel.js'
 import { WeixinChannel, fetchQRCode, pollQRStatus } from './channels/weixin-channel.js'
 import { WecomChannel } from './channels/wecom-channel.js'
+import { WecomQrService } from './channels/wecom-qr.js'
+import { syncWecomChannel } from './channels/sync-wecom-channel.js'
+import { FeishuChannel } from './channels/feishu-channel.js'
+import { registerDedicatedAgentRoutes } from './dedicated-agents/routes.js'
+import { buildDesktopAgentTurnOptions, startAllDedicatedAgents } from './dedicated-agents/agent-channel.js'
+import { findAgentByBotId, findAgentByWeixinToken, findAgentByWorkId, listAgentProjectIds } from './dedicated-agents/agent-store.js'
 import { scheduler, Scheduler } from './scheduler.js'
 import { broadcastSSE, registerSSEClient, unregisterSSEClient } from './notifier.js'
 import {
@@ -279,6 +310,7 @@ app.get('/internal/webwright/model-config', (req, res) => {
 app.use(requireHttpAuth)
 app.use(express.json({ limit: '50mb' }))
 app.use('/api/website-exploration', createWebsiteExplorationRouter())
+registerDedicatedAgentRoutes(app)
 app.use((err: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
   const detail = err instanceof Error ? err.message : String(err || '')
   const status = typeof (err as { status?: unknown })?.status === 'number'
@@ -338,8 +370,11 @@ function buildDefaultOpenBrowserAllowedOrigins(): string[] {
 }
 
 function buildSettingsResponse(s: ReturnType<typeof getSettings>) {
+  const visible = buildProviderVisibility(s)
+  const names = buildModelConfigurationNames(s)
   return {
-    active_provider: s.active_provider,
+    active_provider: s.active_model_configuration || s.active_provider,
+    onboarding_completed: s.onboarding_completed === true,
     user_directory: s.user_directory,
     download_subdirectory: getDownloadSubdirectory(),
     download_directory: getDownloadDirectory(),
@@ -356,19 +391,19 @@ function buildSettingsResponse(s: ReturnType<typeof getSettings>) {
     model: s.model,
     context_limit: s.context_limit,
     has_api_key: !!s.api_key,
-    providers: {
-      anthropic: { has_key: !!s.api_key_anthropic, model: s.model_anthropic, context_limit: s.context_limit_anthropic },
-      glm:       { has_key: !!s.api_key_glm,       model: s.model_glm, context_limit: s.context_limit_glm },
-      deepseek:  { has_key: !!s.api_key_deepseek,  model: s.model_deepseek, context_limit: s.context_limit_deepseek },
-      custom:    { has_key: !!s.api_key_custom,     model: s.model_custom, context_limit: s.context_limit_custom, base_url: s.base_url_custom, openai_base_url: s.openai_base_url_custom, auth_type: s.custom_auth_type },
-    },
+    providers: Object.fromEntries(Object.entries({
+      ...publicBuiltinProviders(PROVIDERS),
+      anthropic: { has_key: !!s.api_key_anthropic, model: s.model_anthropic, context_limit: s.context_limit_anthropic, added: s.added_providers.includes('anthropic'), visible: visible('anthropic') },
+      glm:       { has_key: !!s.api_key_glm,       model: s.model_glm, context_limit: s.context_limit_glm, added: s.added_providers.includes('glm'), visible: visible('glm') },
+      deepseek:  { has_key: !!s.api_key_deepseek,  model: s.model_deepseek, context_limit: s.context_limit_deepseek, added: s.added_providers.includes('deepseek'), visible: visible('deepseek') },
+      custom:    { models_url_is_full: s.models_url_is_full_custom ?? Boolean(s.models_url_custom), openai_models_url_is_full: s.openai_models_url_is_full_custom ?? Boolean(s.openai_models_url_custom), models_url: s.models_url_custom || '', models_auth_type: s.models_auth_type_custom || 'inherit', openai_models_url: s.openai_models_url_custom || '', has_key: !!s.api_key_custom, openai_has_key: !!s.openai_api_key_custom || !!s.api_key_custom, model: s.model_custom, openai_model: s.openai_model_custom || s.model_custom, context_limit: s.context_limit_custom, base_url: s.base_url_custom, base_url_is_full: s.base_url_is_full_custom === true, openai_base_url: s.openai_base_url_custom, openai_base_url_is_full: s.openai_base_url_is_full_custom === true, auth_type: s.custom_auth_type, added: s.added_providers.includes('custom'), visible: visible('custom') },
+      ...publicModelConfigurations(s),
+    }).map(([id, configuration]) => [id, { ...configuration, name: names[id] }])),
     zcf_default_role: s.zcf_default_role,
-    zcf_default_mode: s.zcf_default_mode,
-    zcf_lang: s.zcf_lang,
     zcf_enabled_roles: s.zcf_enabled_roles,
     zcf_custom_roles: s.zcf_custom_roles,
-    zcf_package_version: getZcfPackageVersion(),
-    zcf_sync: readZcfSyncMeta(),
+    // 长期记忆按档位预算（估算 token）；Renderer 设置页读取。
+    memory_budgets: normalizeMemoryBudgets(s.memory_budgets),
   }
 }
 
@@ -383,6 +418,53 @@ function saveDirectorySetting(rawValue: string | undefined, key: 'user_directory
 
 app.get('/settings', (_req, res) => {
   res.json(buildSettingsResponse(getSettings()))
+})
+
+// Complete the first-run model setup. Built-in providers need no user input;
+// predefined providers must already have a saved API key.
+app.post('/settings/onboarding/complete', (req, res) => {
+  const provider = typeof req.body?.provider === 'string' ? req.body.provider.trim() : ''
+  const isPredefined = provider === 'anthropic' || provider === 'glm' || provider === 'deepseek'
+  if (!isBuiltinProvider(provider) && !isPredefined) {
+    res.status(400).json({ detail: '请选择内置模型或预定义供应商' })
+    return
+  }
+
+  try {
+    const current = getSettings()
+    let updates: Partial<Settings>
+    if (isBuiltinProvider(provider)) {
+      const builtin = getProvider(provider)
+      if (!builtin) throw new Error('内置模型在当前构建中不可用')
+      updates = activateBuiltinProvider(builtin)
+    } else {
+      const apiKey = provider === 'anthropic' ? current.api_key_anthropic
+        : provider === 'glm' ? current.api_key_glm
+          : current.api_key_deepseek
+      if (!apiKey?.trim()) {
+        res.status(400).json({ detail: '请先填写并保存 API Key' })
+        return
+      }
+      const model = provider === 'anthropic' ? current.model_anthropic
+        : provider === 'glm' ? current.model_glm
+          : current.model_deepseek
+      updates = {
+        active_provider: provider,
+        active_model_configuration: '',
+        active_auth_type: 'api_key',
+        api_key: apiKey,
+        model,
+        context_limit: provider === 'anthropic' ? current.context_limit_anthropic
+          : provider === 'glm' ? current.context_limit_glm
+            : current.context_limit_deepseek,
+        base_url: PROVIDER_BASE_URLS[provider] || '',
+        base_url_is_full: false,
+      }
+    }
+    res.json(buildSettingsResponse(updateSettings({ ...updates, onboarding_completed: true })))
+  } catch (error) {
+    res.status(400).json({ detail: error instanceof Error ? error.message : String(error) })
+  }
 })
 
 app.post('/settings/user-directory', (req, res) => {
@@ -472,44 +554,14 @@ app.post('/settings/permissions', (req, res) => {
   })))
 })
 
-app.get('/zcf/catalog', (_req, res) => {
-  const settings = getSettings()
-  res.json(buildZcfCatalogResponse(settings))
-})
-
-app.post('/zcf/sync', async (req, res) => {
-  const settings = getSettings()
-  const lang = (req.body as { lang?: ZcfLang })?.lang ?? settings.zcf_lang ?? 'zh-CN'
-  try {
-    const meta = await syncZcfTemplates(lang)
-    updateSettings({ zcf_lang: lang })
-    res.json({ ok: true, ...meta, package_version: getZcfPackageVersion() })
-  } catch (e) {
-    res.status(500).json({ detail: e instanceof Error ? e.message : 'zcf sync failed' })
-  }
-})
-
-app.post('/settings/zcf-defaults', (req, res) => {
-  const { zcf_default_role, zcf_default_mode, zcf_lang } = req.body as {
-    zcf_default_role?: string
-    zcf_default_mode?: string
-    zcf_lang?: ZcfLang
-  }
-  const settings = getSettings()
-  const updates: Partial<Settings> = {
-    ...sanitizeZcfDefaultSettings({ zcf_default_role, zcf_default_mode }, settings),
-  }
-  if (zcf_lang === 'zh-CN' || zcf_lang === 'en') updates.zcf_lang = zcf_lang
-  res.json(buildSettingsResponse(updateSettings(updates)))
-})
-
-app.post('/settings/zcf-roles', (req, res) => {
+// 风格设置（默认 / 预定义内置 / 自定义）。沿用既有 zcf_* 键名以避免数据迁移。
+app.post('/settings/styles', (req, res) => {
   const { zcf_enabled_roles, zcf_custom_roles, zcf_default_role } = req.body as {
     zcf_enabled_roles?: string[]
     zcf_custom_roles?: Array<{ id?: string; label: string; prompt: string }>
     zcf_default_role?: string
   }
-  const updates: Partial<Settings> = sanitizeZcfRoleSettingsPatch({
+  const updates: Partial<Settings> = sanitizeStyleSettingsPatch({
     ...(typeof zcf_default_role === 'string' ? { zcf_default_role } : {}),
     ...(Array.isArray(zcf_enabled_roles) ? { zcf_enabled_roles } : {}),
     ...(Array.isArray(zcf_custom_roles) ? { zcf_custom_roles: zcf_custom_roles as Settings['zcf_custom_roles'] } : {}),
@@ -518,27 +570,80 @@ app.post('/settings/zcf-roles', (req, res) => {
 })
 
 // Save config for a specific provider (does NOT switch active provider)
+app.post('/settings/provider/add', (req, res) => {
+  try {
+    const { id, updates } = createModelConfiguration(getSettings(), req.body.provider)
+    res.json({ ...buildSettingsResponse(updateSettings(updates)), created_provider: id })
+  } catch (error) {
+    res.status(400).json({ detail: error instanceof Error ? error.message : String(error) })
+  }
+})
+
+app.post('/settings/provider/delete', (req, res) => {
+  try {
+    const provider = typeof req.body?.provider === 'string' ? req.body.provider : ''
+    res.json(buildSettingsResponse(updateSettings(deleteModelConfiguration(getSettings(), provider))))
+  } catch (error) {
+    res.status(400).json({ detail: error instanceof Error ? error.message : String(error) })
+  }
+})
+
 app.post('/settings/provider', (req, res) => {
-  const { provider, api_key, model, context_limit, base_url, openai_base_url, auth_type } = req.body as {
-    provider: string; api_key?: string; model?: string; context_limit?: unknown; base_url?: string; openai_base_url?: string; auth_type?: unknown
+  const { provider, name, api_key, openai_api_key, model, openai_model, context_limit, base_url, base_url_is_full, openai_base_url, openai_base_url_is_full, auth_type, added } = req.body as {
+    provider: string; name?: unknown; api_key?: string; openai_api_key?: string; model?: string; openai_model?: string; context_limit?: unknown; base_url?: string; base_url_is_full?: boolean; openai_base_url?: string; openai_base_url_is_full?: boolean; auth_type?: unknown; added?: boolean
+  }
+  let nameUpdates: Partial<Settings> = {}
+  if (name !== undefined) {
+    try {
+      nameUpdates = renameModelConfiguration(getSettings(), provider, name)
+      if (Object.keys(req.body).every(key => key === 'provider' || key === 'name')) {
+        res.json(buildSettingsResponse(updateSettings(nameUpdates)))
+        return
+      }
+    } catch (error) {
+      res.status(400).json({ detail: error instanceof Error ? error.message : String(error) })
+      return
+    }
+  }
+  if (getModelConfiguration(getSettings(), provider)) {
+    try {
+      res.json(buildSettingsResponse(updateSettings(updateModelConfiguration(getSettings(), provider, req.body))))
+    } catch (error) {
+      res.status(400).json({ detail: error instanceof Error ? error.message : String(error) })
+    }
+    return
   }
   if (!ALLOWED_PROVIDER_IDS.has(provider)) {
     res.status(400).json({ detail: `Provider '${provider}' is not allowed in this build` })
     return
   }
+  if (isBuiltinProvider(provider)) {
+    res.status(403).json({ detail: '内置模型由应用提供方管理，不支持修改' })
+    return
+  }
   let allowedBaseUrl: string | undefined
   let allowedOpenAiBaseUrl: string | undefined
-  if (provider === 'custom' && base_url !== undefined) {
+  if (provider === 'custom' && base_url_is_full !== undefined && typeof base_url_is_full !== 'boolean') {
+    res.status(400).json({ detail: '使用完整 URL 必须为布尔值' })
+    return
+  }
+  if (provider === 'custom' && (base_url !== undefined || base_url_is_full !== undefined)) {
     try {
-      allowedBaseUrl = normalizeLlmBaseUrl(base_url)
+      const value = base_url ?? getSettings().base_url_custom
+      if (value || base_url !== undefined) allowedBaseUrl = normalizeLlmUrlInput(value, base_url_is_full ?? getSettings().base_url_is_full_custom ?? false)
     } catch (e) {
       res.status(400).json({ detail: e instanceof Error ? e.message : String(e) })
       return
     }
   }
-  if (provider === 'custom' && openai_base_url !== undefined) {
+  if (provider === 'custom' && openai_base_url_is_full !== undefined && typeof openai_base_url_is_full !== 'boolean') {
+    res.status(400).json({ detail: '使用完整 URL 必须为布尔值' })
+    return
+  }
+  if (provider === 'custom' && (openai_base_url !== undefined || openai_base_url_is_full !== undefined)) {
     try {
-      allowedOpenAiBaseUrl = openai_base_url.trim() ? normalizeLlmBaseUrl(openai_base_url) : ''
+      const value = openai_base_url ?? getSettings().openai_base_url_custom
+      allowedOpenAiBaseUrl = value.trim() ? normalizeLlmUrlInput(value, openai_base_url_is_full ?? getSettings().openai_base_url_is_full_custom ?? false) : ''
     } catch (e) {
       res.status(400).json({ detail: e instanceof Error ? e.message : String(e) })
       return
@@ -553,19 +658,38 @@ app.post('/settings/provider', (req, res) => {
     res.status(400).json({ detail: '上下文窗口请输入 1K 到 100M 之间的整数，可使用 K/M 单位' })
     return
   }
-  const updates: Partial<ReturnType<typeof getSettings>> = {}
+  const updates: Partial<ReturnType<typeof getSettings>> = { ...nameUpdates }
+  if (provider === 'custom') {
+    try {
+      const current = getSettings()
+      const catalog = modelCatalogConfigPatch(req.body, {
+        models_url: current.models_url_custom, models_url_is_full: current.models_url_is_full_custom,
+        openai_models_url: current.openai_models_url_custom, openai_models_url_is_full: current.openai_models_url_is_full_custom,
+      })
+      if (catalog.models_url !== undefined) updates.models_url_custom = catalog.models_url
+      if (catalog.models_url_is_full !== undefined) updates.models_url_is_full_custom = catalog.models_url_is_full
+      if (catalog.models_auth_type !== undefined) updates.models_auth_type_custom = catalog.models_auth_type
+      if (catalog.openai_models_url !== undefined) updates.openai_models_url_custom = catalog.openai_models_url
+      if (catalog.openai_models_url_is_full !== undefined) updates.openai_models_url_is_full_custom = catalog.openai_models_url_is_full
+    } catch (error) {
+      res.status(400).json({ detail: error instanceof Error ? error.message : String(error) })
+      return
+    }
+  }
   if (api_key) {
     if (provider === 'anthropic') updates.api_key_anthropic = api_key
     else if (provider === 'glm') updates.api_key_glm = api_key
     else if (provider === 'deepseek') updates.api_key_deepseek = api_key
     else if (provider === 'custom') updates.api_key_custom = api_key
   }
+  if (openai_api_key && provider === 'custom') updates.openai_api_key_custom = openai_api_key
   if (model) {
     if (provider === 'anthropic') updates.model_anthropic = model
     else if (provider === 'glm') updates.model_glm = model
     else if (provider === 'deepseek') updates.model_deepseek = model
     else if (provider === 'custom') updates.model_custom = model
   }
+  if (openai_model && provider === 'custom') updates.openai_model_custom = openai_model.trim()
   if (parsedContextLimit !== undefined && parsedContextLimit !== null) {
     if (provider === 'anthropic') updates.context_limit_anthropic = parsedContextLimit
     else if (provider === 'glm') updates.context_limit_glm = parsedContextLimit
@@ -573,15 +697,24 @@ app.post('/settings/provider', (req, res) => {
     else if (provider === 'custom') updates.context_limit_custom = parsedContextLimit
   }
   if (provider === 'custom' && base_url !== undefined) updates.base_url_custom = allowedBaseUrl
+  if (provider === 'custom' && base_url_is_full !== undefined) updates.base_url_is_full_custom = base_url_is_full
   if (provider === 'custom' && openai_base_url !== undefined) updates.openai_base_url_custom = allowedOpenAiBaseUrl
+  if (provider === 'custom' && openai_base_url_is_full !== undefined) updates.openai_base_url_is_full_custom = openai_base_url_is_full
   if (provider === 'custom' && isAnthropicAuthType(auth_type)) updates.custom_auth_type = auth_type
   // If this provider is currently active, also update the active key/model/url
   const current = getSettings()
-  if (current.active_provider === provider) {
+  if (added === true) {
+    updates.added_providers = current.added_providers.includes(provider)
+      ? current.added_providers
+      : [...current.added_providers, provider]
+  }
+  if (current.active_provider === provider && !current.active_model_configuration) {
+    if (provider === 'custom' && isAnthropicAuthType(auth_type)) updates.active_auth_type = auth_type
     if (api_key) updates.api_key = api_key
     if (model) updates.model = model
     if (parsedContextLimit !== undefined && parsedContextLimit !== null) updates.context_limit = parsedContextLimit
     if (provider === 'custom' && base_url !== undefined) updates.base_url = allowedBaseUrl
+    if (provider === 'custom' && base_url_is_full !== undefined) updates.base_url_is_full = base_url_is_full
   }
   res.json(buildSettingsResponse(updateSettings(updates)))
 })
@@ -589,8 +722,25 @@ app.post('/settings/provider', (req, res) => {
 // Switch which provider is active
 app.post('/settings/provider/activate', (req, res) => {
   const { provider } = req.body as { provider: string }
+  if (getModelConfiguration(getSettings(), provider)) {
+    try {
+      res.json(buildSettingsResponse(updateSettings(activateModelConfiguration(getSettings(), provider))))
+    } catch (error) {
+      res.status(400).json({ detail: error instanceof Error ? error.message : String(error) })
+    }
+    return
+  }
   if (!ALLOWED_PROVIDER_IDS.has(provider)) {
     res.status(400).json({ detail: `Provider '${provider}' is not allowed in this build` })
+    return
+  }
+  const builtin = getProvider(provider)
+  if (builtin && isBuiltinProvider(provider)) {
+    try {
+      res.json(buildSettingsResponse(updateSettings(activateBuiltinProvider(builtin))))
+    } catch (error) {
+      res.status(400).json({ detail: error instanceof Error ? error.message : String(error) })
+    }
     return
   }
   const current = getSettings()
@@ -612,17 +762,20 @@ app.post('/settings/provider/activate', (req, res) => {
   const baseUrl =
     provider === 'custom' ? current.base_url_custom : (PROVIDER_BASE_URLS[provider] ?? '')
   try {
-    if (provider === 'custom') assertAllowedLlmBaseUrl(baseUrl, buildRuntimeAllowedLlmBaseUrls(baseUrl, current.openai_base_url_custom))
+    if (provider === 'custom') normalizeLlmUrlInput(baseUrl, current.base_url_is_full_custom ?? false)
   } catch (e) {
     res.status(400).json({ detail: e instanceof Error ? e.message : String(e) })
     return
   }
   const updates: Partial<ReturnType<typeof getSettings>> = {
     active_provider: provider,
+    active_model_configuration: '',
+    active_auth_type: provider === 'custom' ? current.custom_auth_type : 'api_key',
     api_key: key,
     model,
     context_limit: contextLimit,
     base_url: baseUrl,
+    base_url_is_full: provider === 'custom' && current.base_url_is_full_custom === true,
   }
   res.json(buildSettingsResponse(updateSettings(updates)))
 })
@@ -630,38 +783,53 @@ app.post('/settings/provider/activate', (req, res) => {
 type ProviderRequestBody = {
   provider?: string
   api_key?: string
+  openai_api_key?: string
   model?: string
+  openai_model?: string
   base_url?: string
+  base_url_is_full?: boolean
   openai_base_url?: string
+  openai_base_url_is_full?: boolean
   auth_type?: unknown
   target?: ProbeTarget
   auto_auth?: boolean
 }
 
 function resolveProviderAccess(body: ProviderRequestBody) {
-  const provider = getProvider(body.provider || '')
+  const configuration = getModelConfiguration(getSettings(), body.provider)
+  const provider = getProvider(configuration?.provider_id || body.provider || '')
   if (!provider) throw new Error(`Provider '${body.provider || ''}' is not allowed in this build`)
+  if (isBuiltinProvider(provider.id)) return builtinProviderAccess(provider)
   const settings = getSettings()
   const savedApiKey =
-    provider.id === 'anthropic' ? settings.api_key_anthropic :
-    provider.id === 'glm' ? settings.api_key_glm :
-    provider.id === 'deepseek' ? settings.api_key_deepseek : settings.api_key_custom
-  const normalizeOptionalBaseUrl = (value: string | undefined): string | undefined => {
-    if (!value?.trim()) return undefined
-    return normalizeLlmBaseUrl(value)
-  }
+    configuration?.api_key ?? (provider.id === 'anthropic' ? settings.api_key_anthropic :
+      provider.id === 'glm' ? settings.api_key_glm :
+      provider.id === 'deepseek' ? settings.api_key_deepseek : settings.api_key_custom)
+  const savedOpenAiApiKey = configuration?.openai_api_key ?? (provider.id === 'custom' ? settings.openai_api_key_custom || savedApiKey : savedApiKey)
+  const anthropicFullUrl = provider.id === 'custom'
+    && (body.base_url_is_full ?? (configuration ? configuration.base_url_is_full ?? false : settings.base_url_is_full_custom ?? false))
+  if (typeof anthropicFullUrl !== 'boolean') throw new Error('使用完整 URL 必须为布尔值')
+  const anthropicUrl = body.base_url === undefined ? configuration?.base_url ?? settings.base_url_custom : body.base_url
+  const openaiFullUrl = provider.id === 'custom'
+    && (body.openai_base_url_is_full ?? (configuration ? configuration.openai_base_url_is_full ?? false : settings.openai_base_url_is_full_custom ?? false))
+  if (typeof openaiFullUrl !== 'boolean') throw new Error('使用完整 URL 必须为布尔值')
+  const openaiUrl = body.openai_base_url === undefined ? configuration?.openai_base_url ?? settings.openai_base_url_custom : body.openai_base_url
   return {
     provider,
+    target: body.target,
     apiKey: body.api_key?.trim() || savedApiKey,
+    openaiApiKey: body.openai_api_key?.trim() || savedOpenAiApiKey,
     anthropicBaseUrl: provider.id === 'custom'
-      ? normalizeOptionalBaseUrl(body.base_url === undefined ? settings.base_url_custom : body.base_url)
+      ? anthropicUrl?.trim() ? normalizeLlmUrlInput(anthropicUrl, anthropicFullUrl) : undefined
       : provider.weworker.baseUrl,
+    anthropicFullUrl,
     openaiBaseUrl: provider.id === 'custom'
-      ? normalizeOptionalBaseUrl(body.openai_base_url === undefined ? settings.openai_base_url_custom : body.openai_base_url)
+      ? openaiUrl?.trim() ? normalizeLlmUrlInput(openaiUrl, openaiFullUrl) : undefined
       : provider.webwright.baseUrl,
+    openaiFullUrl,
     anthropicAuthType: provider.id === 'custom'
       ? (body.auth_type === undefined
-          ? settings.custom_auth_type
+          ? configuration?.auth_type ?? settings.custom_auth_type
           : isAnthropicAuthType(body.auth_type)
             ? body.auth_type
             : (() => { throw new Error("auth_type must be 'auth_token' or 'api_key'") })())
@@ -671,21 +839,44 @@ function resolveProviderAccess(body: ProviderRequestBody) {
 
 function resolveProviderRequest(body: ProviderRequestBody) {
   const access = resolveProviderAccess(body)
+  if (isBuiltinProvider(access.provider.id)) return { ...access, model: access.provider.defaultModel }
   const settings = getSettings()
   const savedModel =
+    getModelConfiguration(settings, body.provider)?.model ?? (
     access.provider.id === 'anthropic' ? settings.model_anthropic :
     access.provider.id === 'glm' ? settings.model_glm :
-    access.provider.id === 'deepseek' ? settings.model_deepseek : settings.model_custom
+    access.provider.id === 'deepseek' ? settings.model_deepseek : settings.model_custom)
+  const savedOpenAiModel = getModelConfiguration(settings, body.provider)?.openai_model || savedModel
   return {
     ...access,
     model: body.model === undefined ? savedModel : body.model.trim(),
+    openaiModel: body.openai_model === undefined ? savedOpenAiModel : body.openai_model.trim(),
   }
 }
 
 app.post('/settings/provider/models', async (req, res) => {
   try {
-    const input = resolveProviderAccess(req.body as ProviderRequestBody)
-    res.json(await listProviderModels(input))
+    const settings = getSettings()
+    const configuration = getModelConfiguration(settings, req.body.provider)
+    if ((configuration?.provider_id || req.body.provider) === 'custom') {
+      const saved = configuration || {
+        models_url: settings.models_url_custom, models_auth_type: settings.models_auth_type_custom,
+        models_url_is_full: settings.models_url_is_full_custom,
+        openai_models_url: settings.openai_models_url_custom,
+        openai_models_url_is_full: settings.openai_models_url_is_full_custom,
+      }
+      const catalog = resolveModelCatalogConfig({ ...req.body,
+        ...(req.body.target === 'weworker' ? { openai_models_url: '', openai_models_url_is_full: true } : {}),
+        ...(req.body.target === 'webwright' ? { models_url: '', models_url_is_full: true, models_auth_type: 'inherit' } : {}),
+      }, saved)
+      const input = resolveProviderAccess({ ...req.body,
+        ...(catalog.models_url || req.body.target === 'webwright' ? { base_url: '', base_url_is_full: false } : {}),
+        ...(catalog.openai_models_url || req.body.target === 'weworker' ? { openai_base_url: '', openai_base_url_is_full: false } : {}),
+      })
+      res.json(await listProviderModels({ ...input, modelsUrl: catalog.models_url,
+        modelsUrlIsFull: catalog.models_url_is_full, openaiModelsUrlIsFull: catalog.openai_models_url_is_full,
+        modelsAuthType: catalog.models_auth_type, openaiModelsUrl: catalog.openai_models_url }))
+    } else res.json(await listProviderModels(resolveProviderAccess(req.body as ProviderRequestBody)))
   } catch (error) {
     res.status(400).json({ detail: error instanceof Error ? error.message : String(error) })
   }
@@ -700,7 +891,7 @@ app.post('/settings/provider/probe', async (req, res) => {
     }
     const input = resolveProviderRequest(body)
     res.json(body.target === 'weworker'
-      ? await probeMainConnection({ ...input, autoAuth: body.auto_auth === true })
+      ? await probeTimedMainConnection({ ...input, autoAuth: body.auto_auth === true })
       : await probeProviderProtocol({ ...input, target: body.target, verifyResponse: true }))
   } catch (error) {
     res.status(400).json({ detail: error instanceof Error ? error.message : String(error) })
@@ -710,54 +901,124 @@ app.post('/settings/provider/probe', async (req, res) => {
 registerExplorationModelRoutes(app, { getSettings, updateSettings })
 
 app.get('/settings/channels', (_req, res) => {
-  const s = getSettings()
-  res.json({
-    qq: {
-      enabled: s.channels.qq.enabled,
-      app_id: s.channels.qq.app_id,
-      has_app_secret: !!s.channels.qq.app_secret,
-      owner_user_id: s.channels.qq.owner_user_id || '',
-      owner_permission_level: normalizeOwnerPermissionLevel(s.channels.qq.owner_permission_level),
-    },
-    weixin: {
-      enabled: s.channels.weixin.enabled,
-      has_token: !!s.channels.weixin.token,
-      base_url: s.channels.weixin.base_url || '',
-      owner_user_id: s.channels.weixin.owner_user_id || '',
-      owner_permission_level: normalizeOwnerPermissionLevel(s.channels.weixin.owner_permission_level),
-    },
-    wecom: {
-      enabled: s.channels.wecom.enabled,
-      bot_id: s.channels.wecom.bot_id,
-      has_secret: !!s.channels.wecom.secret,
-      owner_user_id: s.channels.wecom.owner_user_id || '',
-      owner_permission_level: normalizeOwnerPermissionLevel(s.channels.wecom.owner_permission_level),
-    },
+  res.json(publicChannelSettings(getSettings()))
+})
+
+const queueChannelMutation = createChannelMutationQueue()
+
+// A WeCom bot serves either the main channel or exactly one dedicated agent.
+function assertWecomBotNotUsedByAgent(botId: string | undefined): void {
+  const agent = botId ? findAgentByBotId(botId) : null
+  if (agent) throw new Error(`该企业微信机器人已被专属 Agent「${agent.name}」使用，一个机器人只能连接一个 Agent`)
+}
+
+// Same rule for WeChat bots, identified by their login token.
+function assertWeixinTokenNotUsedByAgent(token: string | undefined): void {
+  const agent = token ? findAgentByWeixinToken(token) : null
+  if (agent) throw new Error(`该微信机器人已被专属 Agent「${agent.name}」使用，一个机器人只能连接一个 Agent`)
+}
+
+async function syncChannelSettings(previous: Settings, updated: Settings) {
+  await syncAppBotChannel('qq', channelManager, previous.channels.qq, updated.channels.qq,
+    config => new QQChannel(config), () => channelLog.error('QQ channel start failed'))
+  await syncAppBotChannel('feishu', channelManager, previous.channels.feishu, updated.channels.feishu,
+    config => new FeishuChannel(config), () => channelLog.error('Feishu channel start failed'))
+  await syncWecomChannel(channelManager, previous.channels.wecom, updated.channels.wecom,
+    config => new WecomChannel(config), () => channelLog.error('WeCom channel start failed'))
+  await syncWeixinChannel(channelManager, previous.channels.weixin, updated.channels.weixin,
+    config => new WeixinChannel(config), () => channelLog.error('Weixin channel start failed'))
+}
+
+async function mutateChannelProfile(type: ChannelType, action: string, id: unknown, input: Record<string, unknown> = {}) {
+  return queueChannelMutation('settings', async () => {
+    const previous = getSettings()
+    if (type === 'weixin' && action === 'save' && input.base_url !== undefined) {
+      if (typeof input.base_url !== 'string') throw new Error('微信服务地址格式无效')
+      input = { ...input, base_url: assertAllowedWeixinBaseUrl(input.base_url, ALLOWED_WEIXIN_BASE_URLS) }
+    }
+    const change = changeChannelConfiguration(previous, type, action, id, input)
+    if (action === 'save' || action === 'activate') {
+      const entry = change.updates.channel_configurations[change.id]
+      if (type === 'wecom') assertWecomBotNotUsedByAgent(entry ? (entry.config as { bot_id?: string }).bot_id : '')
+      if (type === 'weixin') assertWeixinTokenNotUsedByAgent(entry ? (entry.config as { token?: string }).token : '')
+    }
+    const updated = updateSettings(change.updates)
+    await syncChannelSettings(previous, updated)
+    return { ...publicChannelSettings(getSettings()), selected_id: change.id }
   })
+}
+
+app.post('/settings/channels/configuration', async (req, res) => {
+  const { channel, action, id, config = {}, name } = req.body || {}
+  if (!isChannelType(channel) || !config || typeof config !== 'object' || Array.isArray(config)) return res.status(400).json({ detail: '机器人配置格式无效' })
+  try { res.json(await mutateChannelProfile(channel, action, id, action === 'rename' ? { name } : config)) }
+  catch (error) { res.status(400).json({ detail: error instanceof Error ? error.message : '机器人操作失败' }) }
+})
+
+const channelProbesInFlight = new Set<string>()
+app.post('/settings/channels/probe', async (req, res) => {
+  const { channel, config = {}, profile_id } = req.body || {}
+  if (!isProbeChannel(channel) || !config || typeof config !== 'object' || Array.isArray(config)) {
+    return res.status(400).json({ detail: '通道或配置格式无效' })
+  }
+  if (channelProbesInFlight.has(channel)) return res.status(409).json({ detail: '该通道正在检测，请稍后重试' })
+  channelProbesInFlight.add(channel)
+  try {
+    const settings = getSettings()
+    const saved = profile_id === undefined ? settings.channels[channel] : getChannelConfiguration(settings, channel, profile_id).config
+    const isActive = profile_id === undefined || settings.active_channel_configurations?.[channel] === profile_id
+    const active = channel === 'wecom' && isActive ? channelManager.getChannel('wecom') : undefined
+    const wxUser = channel === 'weixin' && isActive ? store.getLatestChannelNotifyTarget('weixin') : null
+    const result = await probeChannel(channel, config, { ...saved }, {
+      allowedWeixinUrls: ALLOWED_WEIXIN_BASE_URLS,
+      activeWecom: active instanceof WecomChannel ? active : undefined,
+      weixinUser: wxUser?.user_id ? { id: wxUser.user_id, contextToken: wxUser.extra?.context_token } : undefined,
+    })
+    res.json(result)
+  } catch {
+    res.status(500).json({ detail: '通道检测失败，请稍后重试' })
+  } finally {
+    channelProbesInFlight.delete(channel)
+  }
 })
 
 app.post('/settings/channels', async (req, res) => {
-  const { qq, weixin, wecom } = req.body as {
+  try { await queueChannelMutation('settings', async () => {
+  const { qq, weixin, wecom, feishu } = req.body as {
     qq?: { enabled?: boolean; app_id?: string; app_secret?: string; owner_user_id?: string; owner_permission_level?: string }
-    weixin?: { enabled?: boolean; base_url?: string; owner_user_id?: string; owner_permission_level?: string }
+    weixin?: { enabled?: boolean; token?: string; base_url?: string; owner_user_id?: string; owner_permission_level?: string }
     wecom?: { enabled?: boolean; bot_id?: string; secret?: string; owner_user_id?: string; owner_permission_level?: string }
+    feishu?: { enabled?: boolean; app_id?: string; app_secret?: string; owner_user_id?: string; owner_permission_level?: string }
   }
   const s = getSettings()
   const nextOwnerIds = {
     qq: qq?.owner_user_id ?? s.channels.qq.owner_user_id,
     weixin: weixin?.owner_user_id ?? s.channels.weixin.owner_user_id,
     wecom: wecom?.owner_user_id ?? s.channels.wecom.owner_user_id,
+    feishu: feishu?.owner_user_id ?? s.channels.feishu.owner_user_id,
   }
-  for (const channel of ['qq', 'weixin', 'wecom'] as const) {
+  for (const channel of ['qq', 'weixin', 'wecom', 'feishu'] as const) {
     const error = validateOwnerUserId(channel, nextOwnerIds[channel])
     if (error) return res.status(400).json({ detail: error })
   }
-  let nextWeixinBaseUrl: string
   try {
+    assertWecomBotNotUsedByAgent(String(wecom?.bot_id ?? s.channels.wecom.bot_id ?? '').trim())
+  } catch (e) {
+    return res.status(409).json({ detail: e instanceof Error ? e.message : String(e) })
+  }
+  let nextWeixinBaseUrl: string
+  let nextWeixinToken: string
+  try {
+    nextWeixinToken = resolveWeixinToken(weixin?.token, s.channels.weixin.token)
     nextWeixinBaseUrl = assertAllowedWeixinBaseUrl(weixin?.base_url ?? s.channels.weixin.base_url, ALLOWED_WEIXIN_BASE_URLS)
   } catch (e) {
     res.status(400).json({ detail: e instanceof Error ? e.message : String(e) })
     return
+  }
+  try {
+    assertWeixinTokenNotUsedByAgent(nextWeixinToken)
+  } catch (e) {
+    return res.status(409).json({ detail: e instanceof Error ? e.message : String(e) })
   }
 
   const updated = updateSettings({
@@ -771,7 +1032,7 @@ app.post('/settings/channels', async (req, res) => {
       },
       weixin: {
         enabled: weixin?.enabled ?? s.channels.weixin.enabled,
-        token: s.channels.weixin.token, // token is set via QR login, not here
+        token: nextWeixinToken,
         base_url: nextWeixinBaseUrl,
         owner_user_id: nextOwnerIds.weixin,
         owner_permission_level: normalizeOwnerPermissionLevel(weixin?.owner_permission_level ?? s.channels.weixin.owner_permission_level),
@@ -783,137 +1044,139 @@ app.post('/settings/channels', async (req, res) => {
         owner_user_id: nextOwnerIds.wecom,
         owner_permission_level: normalizeOwnerPermissionLevel(wecom?.owner_permission_level ?? s.channels.wecom.owner_permission_level),
       },
+      feishu: {
+        enabled: feishu?.enabled ?? s.channels.feishu.enabled,
+        app_id: feishu?.app_id ?? s.channels.feishu.app_id,
+        app_secret: feishu?.app_secret ?? s.channels.feishu.app_secret,
+        owner_user_id: nextOwnerIds.feishu,
+        owner_permission_level: normalizeOwnerPermissionLevel(feishu?.owner_permission_level ?? s.channels.feishu.owner_permission_level),
+      },
     },
   })
 
   // Dynamic channel start/stop based on new settings
-  // QQ
-  if (updated.channels.qq.enabled && updated.channels.qq.app_id && updated.channels.qq.app_secret) {
-    if (!channelManager.has('qq')) {
-      const qqChannel = new QQChannel(
-        { app_id: updated.channels.qq.app_id, app_secret: updated.channels.qq.app_secret },
-      )
-      channelManager.register('qq', qqChannel)
-      qqChannel.start().catch(e => channelLog.error('start error:', e))
-    }
-  } else {
-    await channelManager.unregister('qq')
-  }
+  if (qq) await syncAppBotChannel('qq', channelManager, s.channels.qq, updated.channels.qq,
+    config => new QQChannel(config), () => channelLog.error('QQ channel start failed'))
 
   // WeChat
-  if (updated.channels.weixin.enabled && updated.channels.weixin.token) {
-    if (!channelManager.has('weixin')) {
-      const wxChannel = new WeixinChannel(
-        { token: updated.channels.weixin.token, base_url: updated.channels.weixin.base_url },
-      )
-      channelManager.register('weixin', wxChannel)
-      wxChannel.start().catch(e => channelLog.error('start error:', e))
-    }
-  } else {
-    await channelManager.unregister('weixin')
-  }
+  await syncWeixinChannel(channelManager, s.channels.weixin, updated.channels.weixin,
+    config => new WeixinChannel(config), () => channelLog.error('Weixin channel start failed'))
 
   // WeCom (浼佷笟寰俊)
-  if (updated.channels.wecom.enabled && updated.channels.wecom.bot_id && updated.channels.wecom.secret) {
-    if (!channelManager.has('wecom')) {
-      const wecomChannel = new WecomChannel(
-        { enabled: true, bot_id: updated.channels.wecom.bot_id, secret: updated.channels.wecom.secret },
-      )
-      channelManager.register('wecom', wecomChannel)
-      wecomChannel.start().catch(e => channelLog.error('start error:', e))
-    }
-  } else {
-    await channelManager.unregister('wecom')
-  }
+  await syncWecomChannel(channelManager, s.channels.wecom, updated.channels.wecom,
+    config => new WecomChannel(config), () => channelLog.error('WeCom channel start failed'))
 
-  res.json({
-    qq: {
-      enabled: updated.channels.qq.enabled,
-      app_id: updated.channels.qq.app_id,
-      has_app_secret: !!updated.channels.qq.app_secret,
-      owner_user_id: updated.channels.qq.owner_user_id || '',
-      owner_permission_level: normalizeOwnerPermissionLevel(updated.channels.qq.owner_permission_level),
-    },
-    weixin: {
-      enabled: updated.channels.weixin.enabled,
-      has_token: !!updated.channels.weixin.token,
-      base_url: updated.channels.weixin.base_url || '',
-      owner_user_id: updated.channels.weixin.owner_user_id || '',
-      owner_permission_level: normalizeOwnerPermissionLevel(updated.channels.weixin.owner_permission_level),
-    },
-    wecom: {
-      enabled: updated.channels.wecom.enabled,
-      bot_id: updated.channels.wecom.bot_id,
-      has_secret: !!updated.channels.wecom.secret,
-      owner_user_id: updated.channels.wecom.owner_user_id || '',
-      owner_permission_level: normalizeOwnerPermissionLevel(updated.channels.wecom.owner_permission_level),
-    },
-  })
+  if (feishu) await syncAppBotChannel('feishu', channelManager, s.channels.feishu, updated.channels.feishu,
+    config => new FeishuChannel(config), () => channelLog.error('Feishu channel start failed'))
+
+  res.json(publicChannelSettings(updated))
+  }) } catch { res.status(500).json({ detail: '保存机器人配置失败，请重试' }) }
 })
 
 // 鈹€鈹€ WeChat QR Login 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-// In-memory QR login state
-let _weixinQrState: { qrcode: string; qrcodeUrl: string; startedAt: number } | null = null
+// These credential-bearing responses must never be cached or logged.
+for (const [type, service] of [['qq', new QqQrService()], ['feishu', new FeishuQrService()]] as const) {
+  app.post(`/settings/${type}/qr-start`, async (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store')
+    try { res.json(await service.start()) }
+    catch { res.status(502).json({ detail: '获取二维码失败，请稍后重试或手动配置' }) }
+  })
+  app.post(`/settings/${type}/qr-poll`, async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store')
+    if (typeof req.body?.session_id !== 'string') { res.status(400).json({ detail: '请先获取二维码' }); return }
+    try { res.json(await service.poll(req.body.session_id)) }
+    catch { res.status(502).json({ detail: '获取扫码结果失败，请重新扫码或手动配置' }) }
+  })
+  app.post(`/settings/${type}/qr-cancel`, (req, res) => {
+    res.setHeader('Cache-Control', 'no-store')
+    if (typeof req.body?.session_id === 'string') service.cancel(req.body.session_id)
+    res.json({ ok: true })
+  })
+}
 
-app.post('/settings/weixin/qr-start', async (_req, res) => {
+// In-memory QR login state
+const wecomQr = new WecomQrService()
+app.post('/settings/wecom/qr-start', async (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store')
+  try { res.json(await wecomQr.start()) }
+  catch { res.status(502).json({ detail: '获取企业微信二维码失败，请稍后重试' }) }
+})
+app.post('/settings/wecom/qr-poll', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store')
+  if (typeof req.body?.session_id !== 'string') { res.status(400).json({ detail: '请先获取二维码' }); return }
+  try { res.json(await wecomQr.poll(req.body.session_id)) }
+  catch { res.status(502).json({ detail: '获取扫码结果失败，请重新扫码或手动填写' }) }
+})
+app.post('/settings/wecom/qr-cancel', (req, res) => {
+  if (typeof req.body?.session_id === 'string') wecomQr.cancel(req.body.session_id)
+  res.json({ ok: true })
+})
+
+let _weixinQrState: { qrcode: string; qrcodeUrl: string; startedAt: number; profileId?: string; sessionId: string; completing?: boolean } | null = null
+
+app.post('/settings/weixin/qr-start', async (req, res) => {
   try {
     const s = getSettings()
-    const baseUrl = assertAllowedWeixinBaseUrl(s.channels.weixin.base_url, ALLOWED_WEIXIN_BASE_URLS)
+    const profileId = req.body?.profile_id
+    const saved = profileId === undefined ? s.channels.weixin : getChannelConfiguration(s, 'weixin', profileId).config as typeof s.channels.weixin
+    const baseUrl = assertAllowedWeixinBaseUrl(saved.base_url, ALLOWED_WEIXIN_BASE_URLS)
     const qr = await fetchQRCode(baseUrl)
-    _weixinQrState = { qrcode: qr.qrcode, qrcodeUrl: qr.qrcode_img_content, startedAt: Date.now() }
-    res.json({ ok: true, qrcode_url: qr.qrcode_img_content })
+    _weixinQrState = { qrcode: qr.qrcode, qrcodeUrl: qr.qrcode_img_content, startedAt: Date.now(), profileId, sessionId: channelQrId() }
+    res.json({ ok: true, qrcode_url: qr.qrcode_img_content, session_id: _weixinQrState.sessionId })
   } catch (e) {
     res.status(500).json({ detail: e instanceof Error ? e.message : String(e) })
   }
 })
 
-app.post('/settings/weixin/qr-poll', async (_req, res) => {
+app.post('/settings/weixin/qr-poll', async (req, res) => {
   if (!_weixinQrState) {
-    res.status(400).json({ detail: '璇峰厛鍙戣捣鎵爜鐧诲綍' })
+    res.status(400).json({ detail: '请先发起扫码登录' })
     return
   }
+  const run = _weixinQrState
+  if (run.completing) return res.json({ status: 'waiting', message: '正在保存配置…' })
+  if ((run.profileId && req.body?.session_id !== run.sessionId) || (req.body?.session_id && req.body.session_id !== run.sessionId)) return res.status(409).json({ detail: '二维码已被替换，请重新扫码' })
   // Expire after 5 minutes
   if (Date.now() - _weixinQrState.startedAt > 5 * 60_000) {
     _weixinQrState = null
-    res.json({ status: 'expired', message: '浜岀淮鐮佸凡杩囨湡锛岃閲嶆柊鐢熸垚' })
+    res.json({ status: 'expired', message: '二维码已过期，请重新生成' })
     return
   }
   try {
     const s = getSettings()
-    const baseUrl = assertAllowedWeixinBaseUrl(s.channels.weixin.base_url, ALLOWED_WEIXIN_BASE_URLS)
-    const status = await pollQRStatus(baseUrl, _weixinQrState.qrcode)
+    const saved = run.profileId ? getChannelConfiguration(s, 'weixin', run.profileId).config as typeof s.channels.weixin : s.channels.weixin
+    const baseUrl = assertAllowedWeixinBaseUrl(saved.base_url, ALLOWED_WEIXIN_BASE_URLS)
+    const status = await pollQRStatus(baseUrl, run.qrcode)
+    if (_weixinQrState !== run) return res.status(409).json({ detail: '二维码已更新，请重新扫码' })
 
     if (status.status === 'confirmed' && status.bot_token) {
-      // Save token and enable channel
-      updateSettings({
-        channels: {
-          ...s.channels,
-          weixin: {
-            enabled: true,
-            token: status.bot_token,
-            base_url: assertAllowedWeixinBaseUrl(status.baseurl || s.channels.weixin.base_url, ALLOWED_WEIXIN_BASE_URLS),
-            owner_user_id: s.channels.weixin.owner_user_id || '',
-            owner_permission_level: normalizeOwnerPermissionLevel(s.channels.weixin.owner_permission_level),
-          },
-        },
+      if (run.completing) return res.json({ status: 'waiting', message: '正在保存配置…' })
+      run.completing = true
+      const config = {
+        enabled: true, token: status.bot_token,
+        base_url: assertAllowedWeixinBaseUrl(status.baseurl || saved.base_url, ALLOWED_WEIXIN_BASE_URLS),
+        owner_user_id: saved.token === status.bot_token ? saved.owner_user_id : '',
+        owner_permission_level: saved.token === status.bot_token ? normalizeOwnerPermissionLevel(saved.owner_permission_level) : 'qa_only',
+      }
+      if (run.profileId) await mutateChannelProfile('weixin', 'save', run.profileId, config)
+      else await queueChannelMutation('settings', async () => {
+        assertWeixinTokenNotUsedByAgent(config.token)
+        const previous = getSettings()
+        const updated = updateSettings({ channels: { ...previous.channels, weixin: { ...previous.channels.weixin, ...config, owner_permission_level: normalizeOwnerPermissionLevel(config.owner_permission_level) } } })
+        await syncChannelSettings(previous, updated)
       })
-      _weixinQrState = null
+      if (_weixinQrState === run) _weixinQrState = null
 
-      // Start the channel
-      const wxConfig = { token: status.bot_token, base_url: assertAllowedWeixinBaseUrl(status.baseurl || s.channels.weixin.base_url, ALLOWED_WEIXIN_BASE_URLS) }
-      const wxChannel = new WeixinChannel(wxConfig)
-      channelManager.register('weixin', wxChannel)
-      wxChannel.start().catch(e => channelLog.error('start error:', e))
-
-      res.json({ status: 'confirmed', message: '鉁?寰俊杩炴帴鎴愬姛' })
+      res.json({ status: 'confirmed', message: '微信连接成功' })
     } else if (status.status === 'expired') {
       _weixinQrState = null
-      res.json({ status: 'expired', message: '浜岀淮鐮佸凡杩囨湡锛岃閲嶆柊鐢熸垚' })
+      res.json({ status: 'expired', message: '二维码已过期，请重新生成' })
     } else {
-      res.json({ status: status.status, message: status.status === 'scaned' ? '宸叉壂鐮侊紝璇峰湪寰俊纭' : '绛夊緟鎵爜...' })
+      res.json({ status: status.status, message: status.status === 'scaned' ? '已扫码，请在微信确认' : '等待扫码…' })
     }
   } catch (e) {
+    run.completing = false
     res.status(500).json({ detail: e instanceof Error ? e.message : String(e) })
   }
 })
@@ -971,6 +1234,36 @@ app.get('/skills', (_req, res) => {
     res.json(skills)
   } catch {
     res.json([])
+  }
+})
+
+app.post('/skills/import-zip', express.raw({ type: ['application/zip', 'application/x-zip-compressed'], limit: '50mb' }), async (req, res) => {
+  if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+    res.status(400).json({ detail: '请选择 ZIP 文件' })
+    return
+  }
+  try {
+    const archiveName = typeof req.query.name === 'string' && req.query.name
+      ? req.query.name
+      : 'imported-skill.zip'
+    const skills = await importSkillZip(req.body, SKILLS_DIR, archiveName)
+    res.json({ ok: true, skills })
+  } catch (error) {
+    res.status(400).json({ detail: error instanceof Error ? error.message : '导入 Skill ZIP 失败' })
+  }
+})
+
+app.post('/skills/import-zip-path', async (req, res) => {
+  const archivePath = typeof req.body?.path === 'string' ? req.body.path : ''
+  if (!archivePath) {
+    res.status(400).json({ detail: '请选择 ZIP 文件' })
+    return
+  }
+  try {
+    const skills = await importSkillZipFile(archivePath, SKILLS_DIR)
+    res.json({ ok: true, skills })
+  } catch (error) {
+    res.status(400).json({ detail: error instanceof Error ? error.message : '导入 Skill ZIP 失败' })
   }
 })
 
@@ -1086,7 +1379,9 @@ app.post('/debug/chat', async (_req, res) => {
   const mcpServer = buildMcpServer()
   log.debug(' static adapter tools:', [...parseAllAdapters().values()].flatMap(a => a.tools).map(t => t.name))
   const msgs: string[] = []
+  let runtime: Awaited<ReturnType<typeof prepareModelRuntime>> | undefined
   try {
+    runtime = await prepareModelRuntime(settings)
     for await (const msg of query({
       prompt: '浣犲ソ',
       options: {
@@ -1095,7 +1390,7 @@ app.post('/debug/chat', async (_req, res) => {
         canUseTool: createUnifiedToolGuard(),
         settings: buildAgentFilesystemSettings(getUserDirectory()),
         mcpServers: { weworker: mcpServer },
-        env: buildConfiguredModelEnv(settings),
+        env: buildConfiguredModelEnv(runtime.settings),
       },
     })) {
       msgs.push(msg.type)
@@ -1108,6 +1403,8 @@ app.post('/debug/chat', async (_req, res) => {
   } catch (e) {
     res.json({ ok: false, error: e instanceof Error ? e.message : String(e), msgs })
     return
+  } finally {
+    await runtime?.close()
   }
   res.json({ ok: false, msgs, note: 'no assistant message' })
 })
@@ -1201,7 +1498,34 @@ app.get('/sites', (_req, res) => {
     })),
     tools: formatAdapterToolsForApi(resolvedTools),
   }})
-  res.json(sites)
+  // 路由直达徽标（第 3/4 层之上的配置面）：只对**已启用**站点计算，且条目必须落在当前
+  // Adapter 集合内（作用域过滤），因此站点被禁用或它的路由条目引用了不存在的工具时，
+  // 徽标会如实熄灭，而不是留下一个「配置里还写着」的假亮。
+  // 坏配置不能让只读接口 500：加载失败一律退化为「全部不可直达」。
+  const enabledIds = new Set(sites.filter((site) => site.enabled).map((site) => site.id))
+  const { routable: routableIds, entryCount: routeEntryCount } = computeRoutableSitesFromConfig(enabledIds)
+  res.json(sites.map((site) => ({
+    ...site,
+    routable: routableIds.has(site.id),
+    routeEntryCount: routeEntryCount.get(site.id) ?? 0,
+  })))
+})
+
+// 当前生效的 `!别名` 清单（`router-config/aliases.json` + 用户覆盖层，经作用域过滤）。
+// 输入框据此判断「`!xxx` 是路由命令还是 shell 命令」，从而与后端别名**同源**——
+// 改配置后前端不需要跟着改硬编码清单，避免两边漂移。
+app.get('/router/aliases', (_req, res) => {
+  try {
+    const enabledIds = new Set(
+      [...parseAllAdapters().values()]
+        .filter(a => getSiteEnabled(a.id, a.defaultEnabled, a.managed?.enabled))
+        .map(a => a.id),
+    )
+    res.json({ aliases: listAliasTexts(getScopedRouterConfig(enabledIds).bundle.aliases?.aliases) })
+  } catch (error) {
+    log.warn('router aliases unavailable', error)
+    res.json({ aliases: [] })
+  }
 })
 
 app.post('/sites/:id/toggle', async (req, res) => {
@@ -1807,15 +2131,62 @@ app.post('/explore/scaffold', async (req, res) => {
 // 鈹€鈹€ Works 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 app.get('/works', (_req, res) => {
+  // Dedicated agent conversations share the same work records and are visible in the main list.
   res.json(store.listWorks())
 })
 
+app.get('/projects', (_req, res) => {
+  // 专属 Agent folders are generated from the Agent name: flag them so the
+  // renderer can hide the manual rename entry.
+  const agentProjectIds = listAgentProjectIds()
+  res.json(store.listProjects().map((project) => (
+    agentProjectIds.has(project.id) ? { ...project, dedicated_agent: true } : project
+  )))
+})
+
+app.post('/projects', (req, res) => {
+  try {
+    const { name } = req.body as { name?: string }
+    res.status(201).json(store.createProject(name || ''))
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e)
+    res.status(message.includes('already exists') ? 409 : 400).json({ detail: message })
+  }
+})
+
+app.patch('/projects/:id', (req, res) => {
+  try {
+    if (listAgentProjectIds().has(req.params.id)) {
+      res.status(400).json({ detail: '这个文件夹由专属 Agent 自动维护，改名请直接修改 Agent 名称' })
+      return
+    }
+    const { name } = req.body as { name?: string }
+    const project = store.renameProject(req.params.id, name || '')
+    if (!project) { res.status(404).json({ detail: 'Not found' }); return }
+    res.json(project)
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e)
+    res.status(message.includes('already exists') ? 409 : 400).json({ detail: message })
+  }
+})
+
+app.delete('/projects/:id', (req, res) => {
+  try {
+    store.deleteProject(req.params.id)
+    res.json({ ok: true })
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e)
+    if (message === 'project not found') { res.status(404).json({ detail: message }); return }
+    res.status(409).json({ detail: message })
+  }
+})
+
 app.post('/works', (req, res) => {
-  const work = store.createWork()
-  const { zcf_role, zcf_mode } = req.body as { zcf_role?: string | null; zcf_mode?: string | null }
-  if (zcf_role !== undefined || zcf_mode !== undefined) {
-    const prefs = sanitizeWorkZcfPrefsPatch({ zcf_role, zcf_mode }, getSettings())
-    const updated = store.updateWorkZcfPrefs(work.id, prefs)
+  const { project_id, zcf_role } = req.body as { project_id?: string | null; zcf_role?: string | null }
+  const work = store.createWork('', project_id ?? null)
+  if (zcf_role !== undefined) {
+    const prefs = sanitizeWorkStylePatch({ zcf_role }, getSettings())
+    const updated = store.updateWorkStyle(work.id, prefs)
     broadcastSSE({ type: 'works_changed', workId: work.id })
     res.json(updated ?? work)
     return
@@ -1824,10 +2195,10 @@ app.post('/works', (req, res) => {
   res.json(work)
 })
 
-app.patch('/works/:id/zcf', (req, res) => {
-  const { zcf_role, zcf_mode } = req.body as { zcf_role?: string | null; zcf_mode?: string | null }
-  const prefs = sanitizeWorkZcfPrefsPatch({ zcf_role, zcf_mode }, getSettings())
-  const updated = store.updateWorkZcfPrefs(req.params.id, prefs)
+app.patch('/works/:id/style', (req, res) => {
+  const { zcf_role } = req.body as { zcf_role?: string | null }
+  const prefs = sanitizeWorkStylePatch({ zcf_role }, getSettings())
+  const updated = store.updateWorkStyle(req.params.id, prefs)
   if (!updated) { res.status(404).json({ detail: 'Not found' }); return }
   res.json(updated)
 })
@@ -1850,6 +2221,7 @@ app.patch('/works/:id', (req, res) => {
 
 app.delete('/works/:id', (req, res) => {
   store.deleteWork(req.params.id)
+  disposeChatSession(req.params.id, 'work_deleted')
   res.json({ ok: true })
 })
 
@@ -2305,15 +2677,15 @@ app.post('/terminal/assist', async (req, res) => {
     return
   }
 
-  let baseUrl: string
+  let endpoint: string
   try {
-    baseUrl = assertAllowedLlmBaseUrl(settings.base_url, buildRuntimeAllowedLlmBaseUrls(settings.base_url_custom, settings.openai_base_url_custom))
+    endpoint = resolveAnthropicEndpoint(settings)
   } catch (e) {
     res.status(400).json({ detail: e instanceof Error ? e.message : String(e) })
     return
   }
   const effectiveProviderId = settings.active_provider === 'custom'
-    ? findProviderByWeWorkerBaseUrl(baseUrl)?.id || settings.active_provider
+    ? findProviderByWeWorkerBaseUrl(settings.base_url)?.id || settings.active_provider
     : settings.active_provider
 
   const terminalPrompt = renderPrompt('terminal', {})
@@ -2326,10 +2698,10 @@ app.post('/terminal/assist', async (req, res) => {
   ].filter(Boolean).join('\n\n')
 
   try {
-    const response = await fetch(`${baseUrl}/v1/messages`, {
+    const response = await fetch(endpoint, {
       method: 'POST',
       headers: {
-        ...buildAnthropicAuthHeaders(settings.api_key, effectiveProviderId, settings.custom_auth_type),
+        ...buildAnthropicAuthHeaders(settings.api_key, effectiveProviderId, settings.active_auth_type ?? settings.custom_auth_type),
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },
@@ -2417,6 +2789,8 @@ app.post('/works/:id/compact', async (req, res) => {
     const result = await streamConversationCompaction(workId, work.messages, settings, (event) => {
       events.push(event)
     })
+    // The next turn must start from the compacted history, not the live session's full context.
+    if (result.status === 'completed') disposeIdleChatSession(workId, 'manual_compaction')
     res.json({ ok: true, ...result, events })
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
@@ -2427,13 +2801,98 @@ app.post('/works/:id/compact', async (req, res) => {
 })
 
 
+// ── Chat pre-start: start the Claude Code CLI while the user is typing ─────────
+// Options must match the /works/:id/chat call below so the first turn's
+// configuration fingerprint equals the warm session's (see chat-session.ts).
+const chatWarmupsInFlight = new Set<string>()
+const SPARE_WARMUP_KEY = '\u0000spare'
+type ThinkingEffortInput = 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | undefined
+
+async function prewarmChatSession(input: {
+  key: string
+  workId: string | null
+  zcf: { zcf_role?: string | null }
+  messages: store.Message[]
+  thinkingEffort: ThinkingEffortInput
+  dedicatedAgentOptions?: ReturnType<typeof buildDesktopAgentTurnOptions>
+}): Promise<void> {
+  if (chatWarmupsInFlight.has(input.key)) return
+  chatWarmupsInFlight.add(input.key)
+  try {
+    const settings = getSettings()
+    const styleId = resolveStyleId(input.zcf, settings)
+    for await (const event of streamChat(input.messages, settings, undefined, {
+      ...(input.workId ? { workId: input.workId } : {}),
+      styleId,
+      thinkingEffort: resolveThinkingEffort(settings.active_provider, settings.model, input.thinkingEffort),
+      reuseSession: true,
+      warmupOnly: true,
+      ...(input.dedicatedAgentOptions ?? {}),
+    })) {
+      if (event.type === 'error') chatLog.warn('chat warm-up skipped', event.content)
+    }
+  } catch (error) {
+    chatLog.warn('chat warm-up failed', error instanceof Error ? error.message : String(error))
+  } finally {
+    chatWarmupsInFlight.delete(input.key)
+  }
+}
+
+// Existing work (including dedicated-agent conversations): warm its own session.
+app.post('/works/:id/warmup', (req, res) => {
+  const workId = req.params.id
+  const { thinkingEffort } = (req.body ?? {}) as { thinkingEffort?: ThinkingEffortInput }
+  const work = store.getWorkWithMessages(workId)
+  if (!work) {
+    res.status(404).json({ detail: 'Work not found' })
+    return
+  }
+  if (hasChatSession(workId) || chatWarmupsInFlight.has(workId)) {
+    res.json({ status: 'ready' })
+    return
+  }
+  let dedicatedAgentOptions: ReturnType<typeof buildDesktopAgentTurnOptions> | undefined
+  const dedicatedAgent = findAgentByWorkId(workId)
+  if (dedicatedAgent) {
+    try {
+      dedicatedAgentOptions = buildDesktopAgentTurnOptions(dedicatedAgent)
+    } catch {
+      res.json({ status: 'skipped' })
+      return
+    }
+  }
+  res.json({ status: 'starting' })
+  void prewarmChatSession({ key: workId, workId, zcf: work, messages: work.messages, thinkingEffort, dedicatedAgentOptions })
+})
+
+// Welcome screen: no work exists until the first send; keep one spare session.
+app.post('/chat/warmup', (req, res) => {
+  const { thinkingEffort, zcfRole } = (req.body ?? {}) as {
+    thinkingEffort?: ThinkingEffortInput
+    zcfRole?: string | null
+  }
+  if (hasSpareChatSession() || chatWarmupsInFlight.has(SPARE_WARMUP_KEY)) {
+    res.json({ status: 'ready' })
+    return
+  }
+  res.json({ status: 'starting' })
+  void prewarmChatSession({
+    key: SPARE_WARMUP_KEY,
+    workId: null,
+    zcf: { zcf_role: zcfRole ?? null },
+    messages: [],
+    thinkingEffort,
+  })
+})
+
 app.post('/works/:id/chat', async (req, res) => {
   const workId = req.params.id
-  const { message, modelMessage, attachments, retryCompaction } = req.body as {
+  const { message, modelMessage, attachments, retryCompaction, thinkingEffort } = req.body as {
     message: string;
     modelMessage?: string;
     attachments?: Array<{ path?: string; name?: string }>;
     retryCompaction?: boolean;
+    thinkingEffort?: 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   }
 
   if (!message?.trim() && (!Array.isArray(attachments) || attachments.length === 0)) {
@@ -2445,6 +2904,17 @@ app.post('/works/:id/chat', async (req, res) => {
   if (!work) {
     res.status(404).json({ detail: 'Work not found' })
     return
+  }
+  // Conversations owned by a dedicated agent run as that agent (its skills and tool limits).
+  const dedicatedAgent = findAgentByWorkId(workId)
+  let dedicatedAgentOptions: ReturnType<typeof buildDesktopAgentTurnOptions> | undefined
+  if (dedicatedAgent) {
+    try {
+      dedicatedAgentOptions = buildDesktopAgentTurnOptions(dedicatedAgent)
+    } catch (e) {
+      res.status(500).json({ detail: `专属 Agent 运行环境准备失败：${e instanceof Error ? e.message : String(e)}` })
+      return
+    }
   }
 
   let userContent: store.ContentBlock[] = []
@@ -2501,7 +2971,7 @@ app.post('/works/:id/chat', async (req, res) => {
           : msg
       ))
   const settings = getSettings()
-  const zcfPrefs = resolveZcfPrefs(work, settings)
+  const styleId = resolveStyleId(work, settings)
 
   // SSE headers
   res.setHeader('Content-Type', 'text/event-stream')
@@ -2565,23 +3035,54 @@ app.post('/works/:id/chat', async (req, res) => {
   const chatStartTime = Date.now()
   const turnId = Math.random().toString(36).slice(2, 8)
   let stepIndex = 0
-  let lastToolStartTime = 0
   let lastToolName = ''
-  let lastStepEndTime = chatStartTime
-  // Per-turn timing accumulators: llmMsTotal = all LLM generation segments, execMsTotal = all tool execution
-  let llmMsTotal = 0
-  let execMsTotal = 0
+  // Per-turn timing accumulators. `llmMs` (all LLM generation segments) and
+  // `execMs` (tool execution) are disjoint by construction, so
+  // llmMs + execMs === totalMs — including tools that never emit a
+  // `tool_call_result` event (see turn-timing.ts).
+  const turnTiming = createTurnTimingLedger({ startedAt: chatStartTime })
+  /** 回合结束时的冻结快照（turn_end 与持久化 timing 共用同一口径）。 */
+  let turnTimingResult: ReturnType<typeof turnTiming.finish> | null = null
 
   const tag = `[${workId}][${turnId}]`
 
   // Optional product profiles may answer a query before the normal LLM route.
   // The public profile has no registered route and always falls through.
-  if (await tryBackendProfileQueryRoute({ message, workId, turnId, chatStartTime, send, log: (m: string) => chatLog.info(`${tag} ${m}`), llmRouteSettings: getSettings() })) {
+  // Dedicated agents skip profile routes: those may answer with other websites.
+  if (!dedicatedAgent && await tryBackendProfileQueryRoute({ message, workId, turnId, chatStartTime, send, log: (m: string) => chatLog.info(`${tag} ${m}`), llmRouteSettings: getSettings() })) {
     finished = true
     res.off('close', onClose)
     broadcastSSE({ type: 'works_changed', workId })
     res.end()
     return
+  }
+
+  // Deterministic routing layers (weworker/router-config, see
+  // docs/intelligent_routing_design.md). Every layer answers "not mine" when
+  // unsure and `tryIntelligentQueryRoute` returns false, so a message that no
+  // layer claims continues into the normal LLM pipeline below — exactly the
+  // pre-routing behaviour. `WEWORKER_API_QUERY_ROUTE=0` turns the whole layer
+  // off. Skipped on retry-with-compaction, which must re-run the turn through
+  // the model rather than replay the same routed answer.
+  if (retryCompaction !== true && message?.trim()) {
+    const routed = await tryIntelligentQueryRoute({
+      message,
+      workId,
+      turnId,
+      chatStartTime,
+      send,
+      log: (m: string) => chatLog.info(`${tag} ${m}`),
+      // Messages *before* the current turn: the follow-up gate needs them to
+      // tell "那第二个呢" apart from a fresh query.
+      history: workWithMessages.messages.filter((msg) => msg.id !== savedUserMessage?.id),
+    })
+    if (routed) {
+      finished = true
+      res.off('close', onClose)
+      broadcastSSE({ type: 'works_changed', workId })
+      res.end()
+      return
+    }
   }
 
   const unsubscribeTerminalEvents = onTerminalEvent((event) => {
@@ -2617,13 +3118,64 @@ app.post('/works/:id/chat', async (req, res) => {
       adapters: memoryAdapters,
       toolCalls: [],
     }).scope as { user: string }
-    for await (const ev of streamChat(modelMessages, settings, abortController, {
+    // siteGate（第3层聚焦，第14行）：确定性快路未命中后，按保守站点信号预注入该 adapter 工具清单，
+    // 省「激活 Skill」一整轮推理；未命中维持现状（漏判免费）。已毕业 toolkit skill 并入候选：
+    // 已毕业站点同样回第3层并预注入 toolkit 工具清单，不再被第4层重复探索。
+    const toolkitSkills = listToolkitSkills()
+    const toolkitById = new Map(toolkitSkills.map((skill) => [skill.id, skill]))
+    const siteGate = matchSiteAdapter(
+      message,
+      [...allAdapters.values(), ...toolkitGateCandidates(toolkitSkills)],
+      // toolkit skill 不在站点设置里，恒视为启用；不动 enabledAdapterIds 本体。
+      new Set([...enabledAdapterIds, ...toolkitById.keys()]),
+    )
+    const toolkitHit = siteGate.adapterId ? toolkitById.get(siteGate.adapterId) : undefined
+    const siteToolkit = siteGate.adapterId
+      ? (toolkitHit ? resolveToolkitSkillPrompt(toolkitHit) : resolveSiteToolkitPrompt(siteGate.adapterId))
+      : null
+    if (siteGate.reason !== 'miss') {
+      chatLog.info(
+        `${tag} sitegate: ${siteGate.reason}` +
+          (siteGate.adapterId ? ` adapter=${siteGate.adapterId}` : '') +
+          (siteGate.signals.length ? ` signals=${siteGate.signals.join(',')}` : '') +
+          (siteToolkit ? ` tools=${siteToolkit.toolCount}/${siteToolkit.total}` : ''),
+      )
+    }
+    // 第4层即时执行（第15行）：siteGate miss + 消息含未注册站点 URL 信号 + 网站探索agent健康 +
+    // 建任务成功 → 该轮转交网站探索agent，事件源换成第4层流；任一条件不过 → 第3层 streamChat
+    // （今天的行为，漏判免费）。急停 WEWORKER_TIER4=0 时 decideTier4 直接返回不转发。
+    let tier4Task: { taskId: string; startUrl: string; startedAt: number } | null = null
+    let tier4Source: AsyncGenerator<SSEEvent> | null = null
+    const tier4 = decideTier4(message, siteGate, allAdapters)
+    if (tier4.dispatch) {
+      const health = await checkWebwrightHealth()
+      if (!health.ok) {
+        chatLog.info(`${tag} tier4: unavailable reason=health(${health.reason || 'down'})`)
+      } else {
+        const opened = await openTier4Turn({ message, startUrl: tier4.startUrl!, abortSignal: abortController.signal })
+        if (opened.ok) {
+          tier4Task = { taskId: opened.taskId, startUrl: tier4.startUrl!, startedAt: Date.now() }
+          tier4Source = opened.run
+          chatLog.info(`${tag} tier4: task=${opened.taskId} url=${tier4.startUrl}`)
+        } else {
+          chatLog.info(`${tag} tier4: unavailable reason=create-${opened.code}${opened.message ? ` (${opened.message})` : ''}`)
+        }
+      }
+    } else if (siteGate.reason === 'miss') {
+      // miss 时 siteGate 无日志行，这里补观测：为什么没走第4层。
+      chatLog.info(`${tag} tier4: skip reason=${tier4.reason}`)
+    }
+    for await (const ev of tier4Source ?? streamChat(modelMessages, settings, abortController, {
       enabledAdapterIds,
       workId,
-      zcfRole: zcfPrefs.zcfRole,
-      zcfMode: zcfPrefs.zcfMode,
+      styleId,
+      thinkingEffort: resolveThinkingEffort(settings.active_provider, settings.model, thinkingEffort),
       memoryScope: initialMemoryScope,
+      ...(siteToolkit ? { siteToolkitPrompt: siteToolkit.prompt } : {}),
       onAskUser: (event) => send(event),
+      // Keep this work's Claude Code process between turns (skips the CLI cold start).
+      reuseSession: true,
+      ...(dedicatedAgentOptions ?? {}),
     })) {
       if (ev.type === 'skill_context' && ev.skillContext) {
         assistantContent.push(ev.skillContext)
@@ -2642,9 +3194,7 @@ app.post('/works/:id/chat', async (req, res) => {
         let thinkMs: number | undefined
         if (!isUpdate) {
           stepIndex++
-          lastToolStartTime = Date.now()
-          thinkMs = lastToolStartTime - lastStepEndTime
-          llmMsTotal += thinkMs
+          thinkMs = turnTiming.toolStarted(ev.id)
         }
         // Resolve SDK tool name back to original adapter name
         const cleanName = resolveToolDisplayName(ev.name ?? '')
@@ -2671,10 +3221,8 @@ app.post('/works/:id/chat', async (req, res) => {
           assistantContent.push({ type: 'tool_use', id: ev.id, name: cleanName, args: ev.args, status: 'running', ...(thinkMs !== undefined ? { thinkMs } : {}) })
         }
       } else if (ev.type === 'tool_call_result' && ev.id) {
-        const toolDuration = lastToolStartTime ? Date.now() - lastToolStartTime : 0
-        execMsTotal += toolDuration
+        const toolDuration = turnTiming.toolSettled(ev.id) ?? 0
         chatLog.info(`${tag} ✅ step ${stepIndex}: ${lastToolName} done (exec=${(toolDuration / 1000).toFixed(2)}s)`)
-        lastStepEndTime = Date.now()
         send({ ...ev, execMs: toolDuration })
         const idx = assistantContent.findIndex(b => b.type === 'tool_use' && (b as { id: string }).id === ev.id)
         if (idx >= 0) {
@@ -2683,17 +3231,49 @@ app.post('/works/:id/chat', async (req, res) => {
           assistantContent.push({ type: 'tool_use', id: ev.id, name: '', args: {}, result: ev.result, status: ev.isError ? 'failed' : 'done', execMs: toolDuration })
         }
       } else if (ev.type === 'tool_call_image' && ev.id) {
+        // 只回图片的工具（例如读图片的 Read）没有 tool_call_result 事件：
+        // 按同一口径在这里结算它的执行时间，避免这段时间被算进 llmMs。
+        const imageToolDuration = turnTiming.toolObserved(ev.id)
         send(ev)
         const idx = assistantContent.findIndex(b => b.type === 'tool_use' && (b as { id: string }).id === ev.id)
         if (idx >= 0) {
           const currentStatus = (assistantContent[idx] as Extract<store.ContentBlock, { type: 'tool_use' }>).status
-          assistantContent[idx] = { ...(assistantContent[idx] as object), image: ev.data, status: currentStatus === 'failed' ? 'failed' : 'done' } as store.ContentBlock
+          assistantContent[idx] = {
+            ...(assistantContent[idx] as object),
+            image: ev.data,
+            status: currentStatus === 'failed' ? 'failed' : 'done',
+            ...(imageToolDuration !== undefined ? { execMs: imageToolDuration } : {}),
+          } as store.ContentBlock
         } else {
-          assistantContent.push({ type: 'tool_use', id: ev.id, name: 'capture_screenshot', args: {}, image: ev.data, status: 'done' })
+          assistantContent.push({ type: 'tool_use', id: ev.id, name: 'capture_screenshot', args: {}, image: ev.data, status: 'done', ...(imageToolDuration !== undefined ? { execMs: imageToolDuration } : {}) })
         }
       } else {
         if (ev.type === 'error') streamFailed = true
         send(ev)
+      }
+    }
+    // 第4层回合收尾（第16行）：只观测 + 毕业提示，不改写本轮结果。
+    if (tier4Task) {
+      const tier4View = await fetchWebwrightTask(tier4Task.taskId)
+      chatLog.info(
+        `${tag} tier4: done task=${tier4Task.taskId} status=${tier4View?.status ?? 'unknown'}` +
+          ` steps=${tier4View?.current_step ?? 0} ms=${Date.now() - tier4Task.startedAt}` +
+          ` final_chars=${(tier4View?.final_response ?? '').length}`,
+      )
+      // 毕业引导：同 host 第 N 次成功探索后提示可固化为本地 Toolkit（只提示，不自动生成）。
+      if (tier4View?.status === 'succeeded') {
+        try {
+          const host = new URL(tier4Task.startUrl).hostname.toLowerCase()
+          const count = recordTier4HostUsage(host)
+          if (shouldSuggestGraduation(count)) {
+            const hint = graduationHint(host, count)
+            send({ type: 'text_delta', content: hint })
+            currentText += hint
+            chatLog.info(`${tag} tier4: graduation host=${host} count=${count}`)
+          }
+        } catch {
+          // 计数落盘失败不影响本轮结果——毕业提示只是锦上添花。
+        }
       }
     }
     turnSucceeded = !streamFailed && !abortController.signal.aborted
@@ -2712,14 +3292,18 @@ app.post('/works/:id/chat', async (req, res) => {
     }
   } finally {
     unsubscribeTerminalEvents()
-    // Account for trailing LLM text generation after the last tool
-    // (or the entire turn when no tools ran — lastStepEndTime stays at chatStartTime)
-    const trailingLlmMs = Date.now() - lastStepEndTime
-    llmMsTotal += trailingLlmMs
+    // Close the turn: trailing LLM text generation is whatever is left after
+    // every tool interval; tools without a result event are settled here so
+    // their time is never charged to llmMs.
+    turnTimingResult = turnTiming.finish()
     // Mark as finished so that the subsequent res.end() → close event
     // does not trigger abort on the already-completed query.
-    chatLog.info(`${tag} ◼ turn end — total=${((Date.now() - chatStartTime) / 1000).toFixed(2)}s, steps=${stepIndex}`)
-    send({ type: 'turn_end', turnId, workId, totalMs: Date.now() - chatStartTime, llmMs: llmMsTotal, execMs: execMsTotal, steps: stepIndex })
+    chatLog.info(
+      `${tag} ◼ turn end — total=${(turnTimingResult.totalMs / 1000).toFixed(2)}s` +
+        `, llm=${(turnTimingResult.llmMs / 1000).toFixed(2)}s` +
+        `, exec=${(turnTimingResult.execMs / 1000).toFixed(2)}s, steps=${stepIndex}`,
+    )
+    send({ type: 'turn_end', turnId, workId, totalMs: turnTimingResult.totalMs, llmMs: turnTimingResult.llmMs, execMs: turnTimingResult.execMs, steps: stepIndex })
     finished = true
     res.off('close', onClose)
   }
@@ -2727,48 +3311,19 @@ app.post('/works/:id/chat', async (req, res) => {
   // Finalize text
   if (currentText) assistantContent.push({ type: 'text', text: currentText })
 
-  let assistantText = assistantContent
-    .filter((block) => block.type === 'text')
-    .map((block) => block.text)
-    .join('')
-
-  const finalizedAssistantText = await finalizeAssistantTextWithStatus({
-    text: assistantText,
-    hasAssistantContent: assistantContent.length > 0,
-    generateStatusLine: () => generateAssistantStatusLine(assistantText, settings),
-    fallbackStatusLine: '当前状态：已完成当前回复，等待下一步指令',
-  })
-
-  if (finalizedAssistantText && finalizedAssistantText !== assistantText) {
-    const existingStatus = extractAssistantStatusLine(assistantText)
-    if (!existingStatus) {
-      const statusSuffix = finalizedAssistantText.slice(assistantText.length)
-      for (let i = assistantContent.length - 1; i >= 0; i -= 1) {
-        const block = assistantContent[i]
-        if (block.type === 'text') {
-          assistantContent[i] = { ...block, text: block.text + statusSuffix }
-          break
-        }
-      }
-      if (!assistantContent.some((block) => block.type === 'text')) {
-        assistantContent.push({ type: 'text', text: finalizedAssistantText })
-      }
-      if (statusSuffix) {
-        send({ type: 'text_delta', content: statusSuffix })
-      } else if (!assistantText) {
-        const fallbackText = appendAssistantStatusLine('', finalizedAssistantText)
-        if (fallbackText) {
-          assistantContent.push({ type: 'text', text: fallbackText })
-          send({ type: 'text_delta', content: fallbackText })
-        }
-      }
-    }
-  }
-
   // Persist assistant message
   if (assistantContent.length > 0) {
-    assistantContent.push({ type: 'timing', totalMs: Date.now() - chatStartTime, llmMs: llmMsTotal, execMs: execMsTotal, steps: stepIndex })
+    const timing = turnTimingResult ?? turnTiming.finish()
+    assistantContent.push({ type: 'timing', totalMs: timing.totalMs, llmMs: timing.llmMs, execMs: timing.execMs, steps: stepIndex })
     store.appendMessage(workId, 'assistant', assistantContent)
+  }
+
+  // Dedicated agent turns run with long-term memory off: nothing to plan or report.
+  if (dedicatedAgent) {
+    store.markExternalWrite()
+    broadcastSSE({ type: 'works_changed', workId })
+    res.end()
+    return
   }
 
   const toolCallsForMemory = assistantContent
@@ -2783,6 +3338,8 @@ app.post('/works/:id/chat', async (req, res) => {
           ? 'present_ignore'
           : 'missing'
     : 'missing' as MemoryParseOutcome
+  // 准入被拒时也必须给出状态：否则模型会照旧对用户宣称「已写入」，而界面什么都不显示。
+  const memoryAdmitReasons: string[] = []
   const plannedMemoryEvents = memoryCandidates.flatMap((candidate, index) => {
     const planned = planCompletedChatMemoryEvents({
       baseEventId: `${savedUserMessage.id}:model-${index + 1}`,
@@ -2801,6 +3358,7 @@ app.post('/works/:id/chat', async (req, res) => {
       admit_reason: planned.admitReason,
       event_count: planned.events.length,
     })
+    if (planned.events.length === 0 && planned.admitReason) memoryAdmitReasons.push(planned.admitReason)
     return planned.events.map((event) => ({ event, candidate }))
   })
 
@@ -2878,6 +3436,9 @@ app.post('/works/:id/chat', async (req, res) => {
             status: memoryResult.status,
             ...(memoryResult.status === 'failed' ? { error: memoryResult.error } : {}),
           })
+          if (memoryResult.status === 'saved') {
+            enforceMemoryBudgetAfterWrite(memoryStore, event.expectedMemoryType, tag)
+          }
         }).catch(() => {
           broadcastSSE({ type: 'memory_status', workId, eventId: event.eventId, status: 'failed' })
         })
@@ -2886,9 +3447,133 @@ app.post('/works/:id/chat', async (req, res) => {
     return
   }
 
+  // 候选被准入层拒绝时也要如实告知：模型已经回答过用户，界面若不显示状态，
+  // 用户会以为记忆已保存（"写入了却查不到"的真实成因）。
+  if (memoryCandidates.length > 0
+    && plannedMemoryEvents.length === 0
+    && memoryAdmitReasons.some((reason) => reason !== 'ignore')) {
+    const rejectionText: Record<string, string> = {
+      execution_evidence_insufficient: '本轮没有实际执行动作，不构成任务记忆',
+      task_assessment_insufficient: '任务结果信息不完整',
+      declarative_invalid: '缺少可核验的执行证据',
+      unknown_site: '目标站点不在当前支持范围内',
+      disabled_site: '目标站点的 Adapter 已停用',
+      missing_site: '缺少站点信息',
+      turn_failed: '本轮未成功完成',
+      no_candidate: '内容不满足长期记忆的保存条件',
+    }
+    const reason = memoryAdmitReasons.find((item) => item !== 'ignore') || 'no_candidate'
+    const error = `${rejectionText[reason] || '内容不满足长期记忆的保存条件'}，本次未写入长期记忆`
+    const rejectionEventId = `${savedUserMessage.id}:admission-rejected`
+    send({ type: 'memory_status', status: 'failed', workId, eventId: rejectionEventId, error })
+    broadcastSSE({ type: 'memory_status', status: 'failed', workId, eventId: rejectionEventId, error })
+  }
+
   chatLog.info(` sending res.end() for workId=${workId}`)
   broadcastSSE({ type: 'works_changed', workId })
   res.end()
+})
+
+// ── Long-term memory management (Renderer) ─────────────────────────────────
+
+/** /memory/records 单次返回上限。 */
+const MEMORY_RECORDS_LIMIT = 200
+const MEMORY_TYPE_FILTERS: MemoryBudgetKey[] = ['user_usage', 'task_execution', 'other', 'extension']
+
+function buildMemorySettingsResponse(): {
+  budgets: MemoryBudgets
+  defaults: MemoryBudgets
+  usage: Record<MemoryBudgetKey, MemoryBudgetUsage>
+} {
+  return {
+    budgets: normalizeMemoryBudgets(getSettings().memory_budgets),
+    defaults: { ...DEFAULT_MEMORY_BUDGETS },
+    usage: summarizeMemoryBudgetUsage(getMemoryStore()),
+  }
+}
+
+/**
+ * 记忆写入成功后的容量执行：① 融合近重复 → ② 按价值淘汰，全部用 supersede 保留审计。
+ * 任何异常都被吞掉并记日志，绝不能让记忆写入或聊天响应失败；
+ * 日志只记录数量与用量，不记录记忆正文。
+ */
+function enforceMemoryBudgetAfterWrite(
+  memoryStore: MemoryStore,
+  memoryType: string | undefined,
+  tag: string,
+): void {
+  enforceConfiguredMemoryBudget(memoryStore, memoryType, getSettings().memory_budgets, (payload) => {
+    chatLog.info(`${tag} memory_budget_enforced`, payload)
+  })
+}
+
+app.get('/memory/settings', (_req, res) => {
+  try {
+    res.json(buildMemorySettingsResponse())
+  } catch (error) {
+    res.status(500).json({ detail: error instanceof Error ? error.message : String(error) })
+  }
+})
+
+app.post('/memory/settings', (req, res) => {
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body)
+    ? req.body as Record<string, unknown>
+    : null
+  const raw = body?.memory_budgets
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    res.status(400).json({ detail: 'memory_budgets must be an object' })
+    return
+  }
+  try {
+    updateSettings({ memory_budgets: normalizeMemoryBudgets(raw) })
+    res.json(buildMemorySettingsResponse())
+  } catch (error) {
+    res.status(500).json({ detail: error instanceof Error ? error.message : String(error) })
+  }
+})
+
+app.get('/memory/records', (req, res) => {
+  const requested = typeof req.query.type === 'string' ? req.query.type.trim() : ''
+  if (requested && !MEMORY_TYPE_FILTERS.includes(requested as MemoryBudgetKey)) {
+    res.status(400).json({ detail: 'unsupported memory type' })
+    return
+  }
+  const filter = (requested || undefined) as MemoryBudgetKey | undefined
+  try {
+    const records = getMemoryStore().listActiveAll()
+      .filter((memory) => !filter || resolveMemoryBudgetKey(memory.type) === filter)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, MEMORY_RECORDS_LIMIT)
+      // 只返回公开字段：绝不暴露 facts 或任何内部字段。
+      .map((memory) => ({
+        id: memory.id,
+        type: memory.type,
+        key: memory.key,
+        content: memory.content,
+        confidence: memory.confidence,
+        status: memory.status,
+        createdAt: memory.createdAt,
+        updatedAt: memory.updatedAt,
+      }))
+    res.json({ records })
+  } catch (error) {
+    res.status(500).json({ detail: error instanceof Error ? error.message : String(error) })
+  }
+})
+
+app.delete('/memory/records/:id', (req, res) => {
+  const id = String(req.params.id || '').trim()
+  try {
+    const memoryStore = getMemoryStore()
+    if (!id || !memoryStore.get(id)) {
+      res.status(404).json({ detail: 'memory not found' })
+      return
+    }
+    memoryStore.setStatus(id, 'superseded')
+    res.json({ ok: true })
+  } catch (error) {
+    res.status(500).json({ detail: error instanceof Error ? error.message : String(error) })
+  }
 })
 
 // 鈹€鈹€ Logs 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -2951,15 +3636,22 @@ async function startConfiguredChannels(): Promise<void> {
     channelManager.register('wecom', wecomChannel)
     wecomChannel.start().catch(e => channelLog.error('start error:', e))
   }
+
+  if (s0.channels.feishu.enabled && s0.channels.feishu.app_id && s0.channels.feishu.app_secret) {
+    const feishuChannel = new FeishuChannel({
+      enabled: true,
+      app_id: s0.channels.feishu.app_id,
+      app_secret: s0.channels.feishu.app_secret,
+    })
+    channelManager.register('feishu', feishuChannel)
+    feishuChannel.start().catch(e => channelLog.error('start error:', e))
+  }
+
+  await startAllDedicatedAgents()
 }
 
 async function bootstrap(): Promise<void> {
   await initSettings()
-  try {
-    ensureBundledZcfInstalled(getSettings().zcf_lang)
-  } catch (e) {
-    log.warn('ZCF template sync skipped on startup:', e instanceof Error ? e.message : String(e))
-  }
   await startConfiguredChannels()
   app.listen(PORT, '127.0.0.1', () => {
     log.info(`WeWorker backend running on http://127.0.0.1:${PORT}`)

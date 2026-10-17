@@ -129,7 +129,7 @@ export default function MainWorkspaceShell({ children }) {
   }, [rightPanelWidth])
 
   return (
-    <div style={{
+    <div className="workspace-frame" style={{
       flex: 1,
       display: 'flex',
       flexDirection: 'row',
@@ -137,7 +137,7 @@ export default function MainWorkspaceShell({ children }) {
       minWidth: 0,
       minHeight: 0,
     }}>
-      <div style={{
+      <div className="workspace-canvas" style={{
         flex: terminalMaximized && mountedPanel === 'terminal' ? '0 0 0' : 1,
         display: 'flex',
         flexDirection: 'column',

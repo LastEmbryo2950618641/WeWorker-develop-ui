@@ -14,7 +14,7 @@
   --warn-soft: #ffedd5;
   --bad: #b91c1c;
   --bad-soft: #fee2e2;
-  --shadow: 0 12px 32px rgba(19, 33, 39, 0.08);
+  --shadow: none;
   --radius: 18px;
   --mono: "IBM Plex Mono", ui-monospace, monospace;
   --sans: "Public Sans", "Segoe UI", sans-serif;
@@ -46,7 +46,6 @@ body {
   justify-content: center;
   padding: 24px;
   background: rgba(237, 242, 244, 0.92);
-  backdrop-filter: blur(10px);
 }
 
 #app[v-cloak] + .boot-overlay {
@@ -59,7 +58,7 @@ body {
   border: 1px solid rgba(183, 198, 204, 0.8);
   border-radius: 20px;
   background: rgba(255, 255, 255, 0.92);
-  box-shadow: var(--shadow);
+  box-shadow: none;
 }
 
 .boot-spinner {
@@ -111,7 +110,6 @@ select {
   position: sticky;
   top: 0;
   z-index: 20;
-  backdrop-filter: blur(16px);
   background: rgba(248, 251, 251, 0.9);
   border-bottom: 1px solid rgba(183, 198, 204, 0.7);
 }
@@ -227,7 +225,7 @@ select {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  box-shadow: var(--shadow);
+  box-shadow: none;
 }
 
 .upload-card {

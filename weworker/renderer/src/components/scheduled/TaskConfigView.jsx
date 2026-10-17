@@ -1,8 +1,11 @@
+import AppSwitch from '../common/AppSwitch.jsx'
+import AppDropdownSelect from '../common/AppDropdownSelect.jsx'
 import React, { useState, useEffect, useMemo } from 'react'
 import { useScheduledTasksStore } from '../../store/scheduled-tasks.js'
 import { useWorksStore } from '../../store/works.js'
 import { useSettingsStore } from '../../store/settings.js'
 import { backendFetch } from '../../api/http.js'
+import { showConfirm } from '../../store/dialog.js'
 
 // ---------------------------------------------------------------------------
 // Schedule helpers — convert between user-friendly fields and cron expression
@@ -159,6 +162,7 @@ function getEnabledChannels(channels) {
   if (channels?.qq?.enabled) result.push({ id: 'qq', label: 'QQ' })
   if (channels?.weixin?.enabled) result.push({ id: 'weixin', label: '微信' })
   if (channels?.wecom?.enabled) result.push({ id: 'wecom', label: '企业微信' })
+  if (channels?.feishu?.enabled) result.push({ id: 'feishu', label: '飞书' })
   return result
 }
 
@@ -166,17 +170,8 @@ function getEnabledChannels(channels) {
 // Hour / Minute selector helpers
 // ---------------------------------------------------------------------------
 
-function HourOptions() {
-  const opts = []
-  for (let i = 0; i < 24; i++) opts.push(<option key={i} value={i}>{String(i).padStart(2, '0')} 时</option>)
-  return opts
-}
-
-function MinuteOptions() {
-  const opts = []
-  for (let i = 0; i < 60; i += 5) opts.push(<option key={i} value={i}>{String(i).padStart(2, '0')} 分</option>)
-  return opts
-}
+const HOUR_OPTIONS = Array.from({ length: 24 }, (_, value) => ({ value, label: String(value).padStart(2, '0') + ' 时' }))
+const MINUTE_OPTIONS = Array.from({ length: 12 }, (_, i) => ({ value: i * 5, label: String(i * 5).padStart(2, '0') + ' 分' }))
 
 // ---------------------------------------------------------------------------
 // TaskConfigView
@@ -250,8 +245,9 @@ export default function TaskConfigView({ taskId }) {
   }
 
   const handleDelete = async () => {
-    const confirmed = window.confirm(
-      `确定要删除任务「${task.title || '未命名任务'}」吗？\n\n⚠️ 这将同时删除该任务的所有执行记录，此操作不可撤销。`
+    const confirmed = await showConfirm(
+      `确定要删除任务「${task.title || '未命名任务'}」吗？\n\n这将同时删除该任务的所有执行记录，此操作不可撤销。`,
+      '删除定时任务',
     )
     if (confirmed) await deleteTask(taskId)
   }
@@ -284,7 +280,7 @@ export default function TaskConfigView({ taskId }) {
           <h2 style={titleStyle}>任务配置</h2>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <label style={toggleLabelStyle}>
-              <input type="checkbox" checked={task.enabled} onChange={handleToggleEnabled} style={checkboxStyle} />
+              <AppSwitch checked={task.enabled} onChange={handleToggleEnabled} />
               {task.enabled ? '已启用' : '已禁用'}
             </label>
             <button onClick={handleDelete} style={deleteBtnStyle}>删除</button>
@@ -323,35 +319,23 @@ export default function TaskConfigView({ taskId }) {
               {schedule.frequency === 'every_n_minutes' && (
                 <label style={inlineLabel}>
                   间隔
-                  <select value={schedule.minuteInterval} onChange={(e) => updateSchedule({ minuteInterval: parseInt(e.target.value, 10) })} style={selectStyle}>
-                    {MINUTE_INTERVAL_OPTIONS.map((n) => (
-                      <option key={n} value={n}>{n} 分钟</option>
-                    ))}
-                  </select>
+                  <AppDropdownSelect ariaLabel="间隔分钟" value={schedule.minuteInterval} options={MINUTE_INTERVAL_OPTIONS.map(value => ({ value, label: value + " 分钟" }))} onChange={value => updateSchedule({ minuteInterval: value })} />
                 </label>
               )}
 
               {schedule.frequency === 'weekly' && (
                 <label style={inlineLabel}>
-                  <select value={schedule.weekday} onChange={(e) => updateSchedule({ weekday: e.target.value })} style={selectStyle}>
-                    {WEEKDAY_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </select>
+                  <AppDropdownSelect ariaLabel="执行星期" value={schedule.weekday} options={WEEKDAY_OPTIONS} onChange={value => updateSchedule({ weekday: value })} />
                 </label>
               )}
 
               {(schedule.frequency === 'daily' || schedule.frequency === 'weekly') && (
                 <>
                   <label style={inlineLabel}>
-                    <select value={schedule.hour} onChange={(e) => updateSchedule({ hour: parseInt(e.target.value, 10) })} style={selectStyle}>
-                      <HourOptions />
-                    </select>
+                    <AppDropdownSelect ariaLabel="执行小时" value={schedule.hour} options={HOUR_OPTIONS} onChange={value => updateSchedule({ hour: value })} />
                   </label>
                   <label style={inlineLabel}>
-                    <select value={schedule.minute} onChange={(e) => updateSchedule({ minute: parseInt(e.target.value, 10) })} style={selectStyle}>
-                      <MinuteOptions />
-                    </select>
+                    <AppDropdownSelect ariaLabel="执行分钟" value={schedule.minute} options={MINUTE_OPTIONS} onChange={value => updateSchedule({ minute: value })} />
                   </label>
                 </>
               )}
@@ -359,9 +343,7 @@ export default function TaskConfigView({ taskId }) {
               {schedule.frequency === 'hourly' && (
                 <label style={inlineLabel}>
                   每小时的第
-                  <select value={schedule.minute} onChange={(e) => updateSchedule({ minute: parseInt(e.target.value, 10) })} style={selectStyle}>
-                    <MinuteOptions />
-                  </select>
+                  <AppDropdownSelect ariaLabel="执行分钟" value={schedule.minute} options={MINUTE_OPTIONS} onChange={value => updateSchedule({ minute: value })} />
                   分钟
                 </label>
               )}
@@ -397,7 +379,7 @@ export default function TaskConfigView({ taskId }) {
               </div>
             ) : (
               <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                暂无可用通道，请在设置 → 通道中启用微信、QQ 或企业微信
+                暂无可用通道，请在设置 → 通道中启用微信、QQ、企业微信或飞书
               </div>
             )}
           </div>
@@ -474,7 +456,6 @@ const fieldStyle = { marginBottom: 14 }
 const labelStyle = { display: 'block', fontSize: 12, color: 'var(--text-secondary)', marginBottom: 5, fontWeight: 600 }
 const inputStyle = { width: '100%', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 7, color: 'var(--text-primary)', fontSize: 13, padding: '7px 10px', outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box' }
 const textareaStyle = { ...inputStyle, resize: 'vertical', minHeight: 80, lineHeight: 1.5 }
-const selectStyle = { background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text-primary)', fontSize: 13, padding: '6px 8px', outline: 'none', fontFamily: 'inherit', cursor: 'pointer' }
 const presetBtnStyle = { border: '1px solid var(--border)', borderRadius: 6, padding: '4px 12px', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.15s' }
 const inlineLabel = { display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--text-secondary)' }
 const toggleLabelStyle = { display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 12, color: 'var(--text-secondary)' }

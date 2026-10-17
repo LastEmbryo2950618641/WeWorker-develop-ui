@@ -33,7 +33,9 @@ describe('channel permissions', () => {
 
   it('normalizes owner permission levels', () => {
     expect(normalizeOwnerPermissionLevel('no_bash')).toBe('no_bash')
-    expect(normalizeOwnerPermissionLevel('invalid')).toBe('full')
+    expect(normalizeOwnerPermissionLevel('invalid')).toBe('qa_only')
+    expect(normalizeOwnerPermissionLevel(undefined)).toBe('qa_only')
+    expect(normalizeOwnerPermissionLevel('full')).toBe('full')
   })
 
   it('resolves channel names from channel types', () => {

@@ -52,45 +52,48 @@ export const DropdownMenuPortal = forwardRef(function DropdownMenuPortal({
         return
       }
       const rect = anchor.getBoundingClientRect()
+      const width = Math.min(matchAnchorWidth ? rect.width : Math.max(rect.width, minWidth), window.innerWidth - 16)
+      const left = Math.max(8, Math.min(align === 'end' ? rect.right - width : rect.left, window.innerWidth - width - 8))
       const menuHeight = menuRef.current?.offsetHeight ?? 0
-      const width = matchAnchorWidth ? rect.width : Math.max(rect.width, minWidth)
-      const left = align === 'end' ? rect.right - width : rect.left
-      const top = placement === 'top'
-        ? rect.top - menuHeight - offsetY
-        : rect.bottom + offsetY
+      const above = Math.max(0, rect.top - offsetY - 8)
+      const below = Math.max(0, window.innerHeight - rect.bottom - offsetY - 8)
+      const showAbove = placement === 'top' ? above >= Math.min(menuHeight, below) : below < menuHeight && above > below
+      const maxHeight = showAbove ? above : below
+      const top = showAbove ? rect.top - Math.min(menuHeight, maxHeight) - offsetY : rect.bottom + offsetY
       setPosition({
         top,
         left,
         width,
-        minWidth: matchAnchorWidth ? width : (minWidth || width),
-        maxWidth: matchAnchorWidth ? width : undefined,
+        minWidth: width,
+        maxWidth: width,
+        maxHeight,
       })
     }
 
     sync()
     const raf = requestAnimationFrame(sync)
+    const observer = new ResizeObserver(sync)
+    if (menuRef.current) observer.observe(menuRef.current)
     window.addEventListener('resize', sync)
     window.addEventListener('scroll', sync, true)
     return () => {
       cancelAnimationFrame(raf)
+      observer.disconnect()
       window.removeEventListener('resize', sync)
       window.removeEventListener('scroll', sync, true)
     }
   }, [rendered, anchorRef, align, matchAnchorWidth, minWidth, offsetY, placement, children])
 
-  if (!rendered || !position || typeof document === 'undefined') return null
+  if (!rendered || typeof document === 'undefined') return null
 
   return createPortal(
     <div
       ref={menuRef}
-      className={`${className}${closing ? ' app-dropdown-menu--closing' : ''}`}
+      className={`${DROPDOWN_MENU_CLASS} ${className}${closing ? ' app-dropdown-menu--closing' : ''}`}
       style={{
         position: 'fixed',
-        top: position.top,
-        left: position.left,
-        width: position.width,
-        minWidth: position.minWidth,
-        maxWidth: position.maxWidth,
+        ...position,
+        visibility: position ? undefined : 'hidden',
         zIndex,
         pointerEvents: closing ? 'none' : undefined,
         ...style,

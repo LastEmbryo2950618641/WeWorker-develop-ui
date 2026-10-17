@@ -10,7 +10,6 @@
 .exploration-model-body label { display: grid; gap: 6px; font-size: 13px; }
 .exploration-model-body input:not([type=checkbox]), .exploration-model-body select { width: 100%; box-sizing: border-box; padding: 9px 12px; color: inherit; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 6px; font: inherit; }
 .exploration-model-body .exploration-model-checkbox { display: flex; flex-direction: row; align-items: center; gap: 8px; }
-.exploration-model-body input[type=checkbox] { width: auto; }
 .exploration-model-body pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow: auto; }
 .exploration-model-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .exploration-model-actions button { padding: 8px 12px; cursor: pointer; color: var(--text-primary); background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 6px; }

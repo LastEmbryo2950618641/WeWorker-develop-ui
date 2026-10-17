@@ -93,6 +93,19 @@ export async function fetchSites() {
   return enrichSitesWithIcons(sites)
 }
 
+/**
+ * 当前生效的 `!别名` 清单（后端从 router 配置算出来，含 `!` 前缀）。
+ *
+ * 输入框用它判断 `!xxx` 该走聊天还是走 shell。取不到时返回空数组——调用方回退到随包
+ * 静态清单，绝不会因为后端暂时不可用而让 `!` 命令整体失灵。
+ */
+export async function fetchRouterAliases() {
+  const res = await backendFetch(`${API}/router/aliases`)
+  if (!res.ok) throw new Error(`failed to load router aliases (${res.status})`)
+  const body = await res.json()
+  return Array.isArray(body?.aliases) ? body.aliases.filter((alias) => typeof alias === 'string') : []
+}
+
 /** Bulk welcome visibility; falls back to per-site calls on older backends. */
 export async function setWelcomeVisibility(visible, enabledSiteIds) {
   const targetVisible = visible === true
@@ -339,6 +352,25 @@ export async function fetchPublicSkillDirectory(skillName) {
   const data = await readJsonResponse(res)
   if (!res.ok) throw new Error(data.detail || '获取 skill 文件夹路径失败')
   return data
+}
+
+export async function importPublicSkillZipPath(filePath) {
+  if (typeof filePath !== 'string' || !filePath.trim()) throw new Error('请选择 ZIP 文件')
+  try {
+    const res = await backendFetch(`${API}/skills/import-zip-path`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: filePath }),
+    })
+    const data = await readJsonResponse(res)
+    if (!res.ok) throw new Error(data.detail || '导入 Skill ZIP 失败')
+    return data
+  } catch (error) {
+    if (error instanceof TypeError || error?.message === 'Failed to fetch') {
+      throw new Error('后端服务未重启，请重启 WeWorker 后再导入')
+    }
+    throw error
+  }
 }
 
 export async function fetchCustomSkillDirectory(siteId, skillId) {

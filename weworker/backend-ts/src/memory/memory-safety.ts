@@ -1,7 +1,6 @@
 import { redactSensitive } from '../http-security.js'
 import type { MemoryUpdateCandidate } from './memory-types.js'
 
-const LOCAL_PATH_PATTERN = /(?:[a-z]:\\(?:users|documents and settings)\\|\/(?:users|home)\/)[^\s"']+/iu
 const REDACTION_MARKER_PATTERN = /\[REDACTED(?:_API_KEY)?\]/u
 const SENSITIVE_KEY_PATTERN = /^(?:api[_-]?key|authorization|token|secret|bot[_-]?token|client[_-]?secret)$/iu
 const COMMON_CREDENTIAL_PATTERNS = [
@@ -10,9 +9,10 @@ const COMMON_CREDENTIAL_PATTERNS = [
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/gu,
 ]
 
+// 本地文件路径不属于敏感信息：允许原样写入长期记忆，不做替换也不拒收。
+// 这里只清理真正的凭据（密钥、Token 等）。
 export function redactMemoryText(value: string): string {
   let redacted = redactSensitive(String(value || ''))
-    .replace(/(?:[a-z]:\\(?:users|documents and settings)\\|\/(?:users|home)\/)[^\s"']+/giu, '[REDACTED_PATH]')
   for (const pattern of COMMON_CREDENTIAL_PATTERNS) {
     redacted = redacted.replace(pattern, '[REDACTED_CREDENTIAL]')
   }
@@ -32,7 +32,6 @@ function containsSensitiveValue(value: unknown, key = ''): boolean {
     return (
       (SENSITIVE_KEY_PATTERN.test(key) && value.trim().length > 0)
       || redactMemoryText(value) !== value
-      || LOCAL_PATH_PATTERN.test(value)
       || REDACTION_MARKER_PATTERN.test(value)
     )
   }
@@ -51,7 +50,6 @@ export function assertSafeMemoryCandidate(candidate: MemoryUpdateCandidate): voi
     || containsSensitiveValue(candidate.content)
     || containsSensitiveValue(candidate.facts ?? {})
     || redactMemoryText(serialized) !== serialized
-    || LOCAL_PATH_PATTERN.test(serialized)
     || REDACTION_MARKER_PATTERN.test(serialized)
   ) {
     throw new Error('memory candidate contains sensitive data')

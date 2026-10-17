@@ -1,4 +1,6 @@
 import type { ProviderEntry } from './llm-egress.js'
+import { resolveAnthropicEndpoint, resolveOpenAiEndpoint } from './llm-egress.js'
+import { resolveModelCatalogEndpoint, type ModelCatalogAuthType } from './model-catalog-config.js'
 import { buildAnthropicAuthHeaders } from './anthropic-auth.js'
 import type { AnthropicAuthType } from './anthropic-auth.js'
 import { findProviderByWeWorkerBaseUrl } from './provider-registry.js'
@@ -19,13 +21,23 @@ export type ProbeErrorCode =
 export interface ProviderAccessInput {
   provider: ProviderEntry
   apiKey: string
+  openaiApiKey?: string
+  target?: ProbeTarget
   anthropicBaseUrl?: string
+  anthropicFullUrl?: boolean
   openaiBaseUrl?: string
+  openaiFullUrl?: boolean
   anthropicAuthType?: AnthropicAuthType
+  modelsUrl?: string
+  modelsUrlIsFull?: boolean
+  modelsAuthType?: ModelCatalogAuthType
+  openaiModelsUrl?: string
+  openaiModelsUrlIsFull?: boolean
 }
 
 export interface ProviderConnectionInput extends ProviderAccessInput {
   model: string
+  openaiModel?: string
 }
 
 export interface ModelCatalogResult {
@@ -101,30 +113,69 @@ async function fetchOpenAiModels(baseUrl: string, apiKey: string, fetchImpl: Fet
   return parseModelList(remote.body, remote.detail)
 }
 
+async function fetchExplicitModels(url: string, apiKey: string, authType: AnthropicAuthType, fetchImpl: FetchLike, fullUrl = true): Promise<string[]> {
+  const response = await fetchImpl(resolveModelCatalogEndpoint(url, fullUrl), {
+    headers: {
+      ...buildAnthropicAuthHeaders(apiKey, 'custom', authType),
+      ...(authType === 'api_key' ? { 'anthropic-version': '2023-06-01' } : {}),
+    },
+    signal: AbortSignal.timeout(15000),
+    redirect: 'error',
+  })
+  const remote = await readRemoteResponse(response)
+  if (!response.ok) throw new Error(remote.detail.split(apiKey).join('[已隐藏]'))
+  return parseModelList(remote.body, remote.detail)
+}
+
 export async function listProviderModels(
   input: ProviderAccessInput,
   fetchImpl: FetchLike = fetch,
 ): Promise<ModelCatalogResult> {
-  if (!input.apiKey) {
+  const targetedCustom = input.provider.id === 'custom' && Boolean(input.target)
+  const fallbackModels = targetedCustom ? [] : [...input.provider.models]
+  if (targetedCustom) {
+    const openai = input.target === 'webwright'
+    const explicitUrl = openai ? input.openaiModelsUrl : input.modelsUrl
+    const address = explicitUrl || (openai ? input.openaiBaseUrl : input.anthropicBaseUrl)
+    const key = openai ? input.openaiApiKey : input.apiKey
+    const fullUrl = openai ? input.openaiFullUrl : input.anthropicFullUrl
+    if (!address?.trim() || !key?.trim()) return { models: [], source: 'fallback', warning: '请先填写此接口的地址和 API Key' }
+    if (fullUrl && !explicitUrl) return { models: [], source: 'fallback', warning: '完整 URL 模式请单独填写模型列表地址' }
+  }
+  if (!input.apiKey && !input.openaiApiKey) {
     return { models: [...input.provider.models], source: 'fallback', warning: '未配置 API Key，显示内置模型列表' }
   }
 
   const requests: Array<{ label: string; promise: Promise<string[]> }> = []
   if (input.provider.id === 'custom') {
-    const knownProvider = findProviderByWeWorkerBaseUrl(input.anthropicBaseUrl)
-    if (knownProvider) {
-      return listProviderModels({ ...input, provider: knownProvider }, fetchImpl)
+    if ((!input.target || input.target === 'weworker') && input.apiKey) {
+      if (input.modelsUrl) requests.push({ label: 'Claude Code 模型列表', promise: fetchExplicitModels(input.modelsUrl, input.apiKey, input.modelsAuthType === 'inherit' || !input.modelsAuthType ? input.anthropicAuthType || 'auth_token' : input.modelsAuthType, fetchImpl, input.modelsUrlIsFull) })
+      else if (input.anthropicBaseUrl && !input.anthropicFullUrl && findProviderByWeWorkerBaseUrl(input.anthropicBaseUrl)) {
+        const knownProvider = findProviderByWeWorkerBaseUrl(input.anthropicBaseUrl)!
+        requests.push({
+          label: 'Claude Code 模型列表',
+          promise: knownProvider.webwright.protocol === 'openai_chat_completions'
+            ? fetchOpenAiModels(knownProvider.webwright.baseUrl, input.apiKey, fetchImpl)
+            : fetchAnthropicModels(knownProvider.weworker.baseUrl, input.apiKey, knownProvider.id, input.anthropicAuthType, fetchImpl),
+        })
+      }
+      else if (input.anthropicBaseUrl && !input.anthropicFullUrl) requests.push({ label: 'Claude Code 接口', promise: fetchAnthropicModels(input.anthropicBaseUrl, input.apiKey, input.provider.id, input.anthropicAuthType, fetchImpl) })
     }
-    if (input.anthropicBaseUrl) requests.push({ label: 'Anthropic 接口', promise: fetchAnthropicModels(input.anthropicBaseUrl, input.apiKey, input.provider.id, input.anthropicAuthType, fetchImpl) })
-    if (input.openaiBaseUrl) requests.push({ label: 'OpenAI 接口', promise: fetchOpenAiModels(input.openaiBaseUrl, input.apiKey, fetchImpl) })
+    const openaiCatalogKey = input.openaiApiKey || (!input.target ? input.apiKey : '')
+    if ((!input.target || input.target === 'webwright') && openaiCatalogKey) {
+      if (input.openaiModelsUrl) requests.push({ label: 'OpenAI 模型列表', promise: fetchExplicitModels(input.openaiModelsUrl, openaiCatalogKey, 'auth_token', fetchImpl, input.openaiModelsUrlIsFull) })
+      else if (input.openaiBaseUrl && !input.openaiFullUrl) requests.push({ label: 'OpenAI 接口', promise: fetchOpenAiModels(input.openaiBaseUrl, openaiCatalogKey, fetchImpl) })
+    }
   } else if (input.provider.webwright.protocol === 'openai_chat_completions') {
-    requests.push({ label: 'OpenAI 接口', promise: fetchOpenAiModels(input.provider.webwright.baseUrl, input.apiKey, fetchImpl) })
+    requests.push({ label: 'OpenAI 接口', promise: fetchOpenAiModels(input.provider.webwright.baseUrl, input.openaiApiKey || input.apiKey, fetchImpl) })
   } else {
-    requests.push({ label: 'Anthropic 接口', promise: fetchAnthropicModels(input.provider.weworker.baseUrl, input.apiKey, input.provider.id, input.anthropicAuthType, fetchImpl) })
+    requests.push({ label: 'Claude Code 接口', promise: fetchAnthropicModels(input.provider.weworker.baseUrl, input.apiKey, input.provider.id, input.anthropicAuthType, fetchImpl) })
   }
 
   if (requests.length === 0) {
-    return { models: [...input.provider.models], source: 'fallback', warning: '模型列表接口未配置，显示内置模型列表' }
+    return { models: fallbackModels, source: 'fallback', warning: input.anthropicFullUrl || input.openaiFullUrl
+      ? '完整 URL 模式不推断模型列表地址，请手动填写模型名称，或为任一协议配置基础 URL'
+      : '模型列表接口未配置，显示内置模型列表' }
   }
 
   const results = await Promise.allSettled(requests.map(request => request.promise))
@@ -140,7 +191,7 @@ export async function listProviderModels(
     }
   }
 
-  return { models: [...input.provider.models], source: 'fallback', warning: failures.join('\n\n') || '远程模型列表获取失败' }
+  return { models: fallbackModels, source: 'fallback', warning: failures.join('\n\n') || '远程模型列表获取失败' }
 }
 
 function classifyProbeFailure(status: number, detail: string): ProbeErrorCode {
@@ -185,40 +236,46 @@ export async function probeProviderProtocol(
   const baseUrl = input.provider.id === 'custom'
     ? (protocol === 'anthropic_messages' ? input.anthropicBaseUrl : input.openaiBaseUrl)
     : config.baseUrl
-  if (!input.apiKey || !input.model || !baseUrl) {
-    return { ok: false, target: input.target, protocol, model: input.model, error: 'not_configured', detail: 'API Key、模型或 Base URL 未配置完整' }
+  const apiKey = input.target === 'webwright' ? (input.openaiApiKey || input.apiKey) : input.apiKey
+  const model = input.target === 'webwright' ? (input.openaiModel || input.model) : input.model
+  if (!apiKey || !model || !baseUrl) {
+    return { ok: false, target: input.target, protocol, model, error: 'not_configured', detail: 'API Key、模型或 Base URL 未配置完整' }
   }
 
   const isAnthropic = protocol === 'anthropic_messages'
-  const endpoint = `${baseUrl}${isAnthropic ? '/v1/messages' : '/chat/completions'}`
+  const endpoint = isAnthropic
+    ? resolveAnthropicEndpoint({ base_url: baseUrl, base_url_is_full: input.provider.id === 'custom' && input.anthropicFullUrl === true })
+    : resolveOpenAiEndpoint(baseUrl, input.provider.id === 'custom' && input.openaiFullUrl === true)
   const headers: Record<string, string> = isAnthropic
-    ? { ...buildAnthropicAuthHeaders(input.apiKey, effectiveAnthropicProviderId(input, baseUrl), input.anthropicAuthType), 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }
-    : { authorization: `Bearer ${input.apiKey}`, 'content-type': 'application/json' }
+    ? { ...buildAnthropicAuthHeaders(apiKey, effectiveAnthropicProviderId(input, baseUrl), input.anthropicAuthType), 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }
+    : { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' }
   const schema = { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'], additionalProperties: false }
-  const useAnthropicToolProbe = isAnthropic && !input.forceAnthropicTextProbe && shouldProbeWithAnthropicToolChoice(input)
-  const body = isAnthropic
+  const requiresToolCall = isAnthropic && !input.forceAnthropicTextProbe && shouldProbeWithAnthropicToolChoice(input)
+  const body = (useToolCall: boolean) => isAnthropic
     ? {
-        model: input.model,
+        model,
         max_tokens: input.verifyResponse ? 256 : 20,
         messages: [{ role: 'user', content: 'Return {"ok":true}.' }],
-        ...(useAnthropicToolProbe ? {
+        ...(useToolCall ? {
           tools: [{ name: 'connection_check', description: 'Confirm the connection without performing any action.', input_schema: schema }],
           tool_choice: { type: 'tool', name: 'connection_check' },
         } : {}),
         ...(input.target === 'webwright' ? { output_config: { format: { type: 'json_schema', schema } } } : {}),
       }
     : {
-        model: input.model,
+        model,
         max_tokens: input.verifyResponse ? 256 : 20,
         messages: [{ role: 'user', content: 'Return JSON: {"ok":true}.' }],
         response_format: { type: 'json_object' },
       }
+  const isThinkingToolChoiceConflict = (status: number, detail: string) => status === 400
+    && /tool_choice/i.test(detail) && /thinking/i.test(detail)
 
-  try {
+  const execute = async (useToolCall: boolean): Promise<ProtocolProbeResult> => {
     const response = await fetchImpl(endpoint, {
       method: 'POST',
       headers,
-      body: JSON.stringify(body),
+      body: JSON.stringify(body(useToolCall)),
       signal: AbortSignal.timeout(15000),
       redirect: 'error',
     })
@@ -226,7 +283,7 @@ export async function probeProviderProtocol(
       if (input.verifyResponse) {
         try {
           const data = await response.json() as any
-          if (useAnthropicToolProbe) {
+          if (useToolCall) {
             if (!data.content?.some((block: any) => block.type === 'tool_use' && block.name === 'connection_check' && block.input?.ok === true)) throw new Error()
           } else {
             const content = isAnthropic
@@ -239,28 +296,32 @@ export async function probeProviderProtocol(
             ok: false,
             target: input.target,
             protocol,
-            model: input.model,
+            model,
             error: 'protocol_mismatch',
-            detail: useAnthropicToolProbe ? '服务未返回有效的工具调用，请确认此模型支持 Claude Code' : '服务未返回有效的结构化 JSON，请检查接口地址和模型能力',
+            detail: useToolCall ? '服务未返回有效的工具调用，请确认此模型支持 Claude Code' : '服务未返回有效的结构化 JSON，请检查接口地址和模型能力',
           }
         }
       }
-      return { ok: true, target: input.target, protocol, model: input.model }
+      return { ok: true, target: input.target, protocol, model }
     }
-    const detail = (await readRemoteResponse(response)).detail.split(input.apiKey).join('[已隐藏]')
-    if (isAnthropic && shouldRetryAnthropicTextProbe(input, detail)) {
-      return probeProviderProtocol({ ...input, forceAnthropicTextProbe: true }, fetchImpl)
+    const detail = (await readRemoteResponse(response)).detail.split(apiKey).join('[已隐藏]')
+    if (requiresToolCall && useToolCall && (isThinkingToolChoiceConflict(response.status, detail) || shouldRetryAnthropicTextProbe(input, detail))) {
+      return execute(false)
     }
-    return { ok: false, target: input.target, protocol, model: input.model, error: classifyProbeFailure(response.status, detail), detail }
+    return { ok: false, target: input.target, protocol, model, error: classifyProbeFailure(response.status, detail), detail }
+  }
+
+  try {
+    return await execute(requiresToolCall)
   } catch (error) {
     const timedOut = error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')
     return {
       ok: false,
       target: input.target,
       protocol,
-      model: input.model,
+      model,
       error: timedOut ? 'timeout' : 'network_error',
-      detail: timedOut ? '连接超时' : (error instanceof Error ? error.message : '连接失败').split(input.apiKey).join('[已隐藏]'),
+      detail: timedOut ? '连接超时' : (error instanceof Error ? error.message : '连接失败').split(apiKey).join('[已隐藏]'),
     }
   }
 }
@@ -276,4 +337,16 @@ export async function probeMainConnection(input: ProviderConnectionInput & { aut
   const alternate = authType === 'auth_token' ? 'api_key' : 'auth_token'
   const retried = await probeProviderProtocol({ ...input, anthropicAuthType: alternate, target: 'weworker', verifyResponse: true }, fetchImpl)
   return retried.ok ? { ...retried, auth_type: alternate } : retried
+}
+
+// Measures the complete verified conversation request, including any protocol
+// compatibility retry. This is not a first-token or network-only measurement.
+export async function probeTimedMainConnection(
+  input: ProviderConnectionInput & { autoAuth?: boolean },
+  fetchImpl: FetchLike = fetch,
+  now: () => number = () => performance.now(),
+) {
+  const started = now()
+  const result = await probeMainConnection(input, fetchImpl)
+  return { ...result, elapsed_ms: Math.max(1, Math.round(now() - started)), checked_at: Date.now() }
 }

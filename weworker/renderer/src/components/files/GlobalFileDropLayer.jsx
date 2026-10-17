@@ -171,7 +171,6 @@ export default function GlobalFileDropLayer() {
             zIndex: 1200,
             pointerEvents: 'none',
             background: 'color-mix(in srgb, var(--accent) 7%, rgba(18, 22, 28, 0.24))',
-            backdropFilter: 'saturate(0.72) brightness(0.94)',
           }} />
           <div style={{
             position: 'fixed',
@@ -189,7 +188,7 @@ export default function GlobalFileDropLayer() {
             border: '1px solid color-mix(in srgb, var(--accent) 32%, var(--border))',
             background: 'color-mix(in srgb, var(--bg-secondary) 94%, var(--accent))',
             color: 'var(--text-primary)',
-            boxShadow: '0 14px 36px rgba(0,0,0,0.20)',
+            boxShadow: 'none',
           }}>
             <span style={{
               width: 28,
@@ -246,7 +245,7 @@ function ImportProgressDialog({ progress, onClose, bottom = 18 }) {
       borderRadius: 8,
       background: 'var(--bg-secondary)',
       color: 'var(--text-primary)',
-      boxShadow: '0 18px 46px rgba(0,0,0,0.28)',
+      boxShadow: 'none',
       padding: 14,
       boxSizing: 'border-box',
       pointerEvents: 'none',
@@ -327,7 +326,7 @@ function DeleteProgressDialog({ progress, onClose }) {
       borderRadius: 8,
       background: 'var(--bg-secondary)',
       color: 'var(--text-primary)',
-      boxShadow: '0 18px 46px rgba(0,0,0,0.28)',
+      boxShadow: 'none',
       padding: 14,
       boxSizing: 'border-box',
       pointerEvents: 'none',

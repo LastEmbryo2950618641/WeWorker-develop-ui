@@ -10,6 +10,7 @@ function makeAdapter(overrides: Partial<ParsedAdapter> = {}): ParsedAdapter {
     name: '京东',
     description: '京东：导航主页、查看购物车、查看订单、购买商品、支付',
     match: ['jd.com'],
+    gateAliases: [],
     homepageUrl: 'https://www.jd.com/',
     tools: [
       {
@@ -269,7 +270,7 @@ describe('System Prompt - behavioral rules retained (Req 4.3)', () => {
     expect(prompt).toMatch(/禁止调用内置工具/)
   })
 
-  it('requires every assistant reply to include 当前状态', async () => {
+  it('does not require assistant replies to append a current-status line', async () => {
     const jdAdapter = makeAdapter()
     mockAdapterMap.set(jdAdapter.id, jdAdapter)
     enabledSites.add(jdAdapter.id)
@@ -277,8 +278,9 @@ describe('System Prompt - behavioral rules retained (Req 4.3)', () => {
     const { buildSystemPrompt } = await import('../agent.js')
     const prompt = buildSystemPrompt()
 
-    expect(prompt).toContain('当前状态')
-    expect(prompt).toContain('每次回复都要写')
+    expect(prompt).not.toContain('当前状态回复规则')
+    expect(prompt).not.toContain('每次回复都要写')
+    expect(prompt).not.toContain('当前状态：<简短状态>')
   })
 
   it('requires TodoWrite when todo state changes', async () => {

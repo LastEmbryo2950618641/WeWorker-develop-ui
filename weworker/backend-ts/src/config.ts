@@ -1,3 +1,6 @@
+import { migrateChannelConfigurations, type ChannelConfigurations, type ChannelType } from './channels/channel-configurations.js'
+import { resolveBuiltinSettings } from './builtin-provider.js'
+import { PROVIDERS } from './provider-registry.js'
 import fs from 'node:fs'
 
 import path from 'node:path'
@@ -54,15 +57,15 @@ import {
   type UserDirectoryBlacklistEntry,
 } from './user-directory-blacklist.js'
 import {
-  CORE_STYLE_ID,
   DEFAULT_STYLE_ID,
-  migrateLegacyDefaultRole,
-  normalizeZcfCustomRoles,
-  normalizeZcfEnabledRoles,
-  normalizeZcfMode,
-  type ZcfCustomRole,
-} from './zcf-role-settings.js'
+  normalizeCustomStyles,
+  normalizeDefaultStyleId,
+  normalizeEnabledStyles,
+  stripObsoleteZcfSettings,
+  type CustomStyle,
+} from './style-settings.js'
 import { DEFAULT_CONTEXT_LIMIT, normalizeContextLimit } from './context-window.js'
+import { normalizeAddedProviders } from './provider-visibility.js'
 
 
 
@@ -140,6 +143,20 @@ export interface WecomChannelConfig {
 
 }
 
+export interface FeishuChannelConfig {
+
+  enabled: boolean
+
+  app_id: string
+
+  app_secret: string
+
+  owner_user_id: string
+
+  owner_permission_level: OwnerPermissionLevel
+
+}
+
 
 
 export interface ChannelsConfig {
@@ -150,11 +167,61 @@ export interface ChannelsConfig {
 
   wecom: WecomChannelConfig
 
+  feishu: FeishuChannelConfig
+
 }
 
 
 
+/** 长期记忆按档位的 token 预算；`extension` 覆盖所有 `extension:*` 记录。 */
+export interface MemoryBudgets {
+  user_usage: number
+  task_execution: number
+  other: number
+  extension: number
+}
+
+export const DEFAULT_MEMORY_BUDGETS: MemoryBudgets = {
+  user_usage: 800,
+  task_execution: 1600,
+  other: 1200,
+  extension: 800,
+}
+
+/** 单档位预算上限；超过上限的输入回退默认值而不是截断。 */
+export const MAX_MEMORY_BUDGET = 20_000
+
+/**
+ * 规范化记忆预算：缺失、非数字、负数或超过上限的档位回退默认值。
+ * 0 是合法值（表示该档位压缩到最少保留 1 条）。
+ */
+export function normalizeMemoryBudgets(value: unknown): MemoryBudgets {
+  const record = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {}
+  const normalize = (raw: unknown, fallback: number): number => {
+    const numeric = typeof raw === 'number'
+      ? raw
+      : typeof raw === 'string' && raw.trim()
+        ? Number(raw)
+        : Number.NaN
+    if (!Number.isFinite(numeric)) return fallback
+    const budget = Math.floor(numeric)
+    if (budget < 0 || budget > MAX_MEMORY_BUDGET) return fallback
+    return budget
+  }
+  return {
+    user_usage: normalize(record.user_usage, DEFAULT_MEMORY_BUDGETS.user_usage),
+    task_execution: normalize(record.task_execution, DEFAULT_MEMORY_BUDGETS.task_execution),
+    other: normalize(record.other, DEFAULT_MEMORY_BUDGETS.other),
+    extension: normalize(record.extension, DEFAULT_MEMORY_BUDGETS.extension),
+  }
+}
+
 export interface Settings {
+
+  // Whether the first-run model/API key setup has been completed.
+  onboarding_completed: boolean
 
   // Active provider (which one is currently in use)
 
@@ -165,6 +232,7 @@ export interface Settings {
   api_key: string
 
   base_url: string
+  base_url_is_full?: boolean
 
   model: string
 
@@ -191,22 +259,43 @@ export interface Settings {
   context_limit_deepseek: number
 
   api_key_custom: string
+  openai_api_key_custom: string
 
   model_custom: string
+  openai_model_custom: string
 
   context_limit_custom: number
 
   base_url_custom: string
+  models_url_custom?: string
+  models_url_is_full_custom?: boolean
+  models_auth_type_custom?: import('./model-catalog-config.js').ModelCatalogAuthType
+  openai_models_url_custom?: string
+  openai_models_url_is_full_custom?: boolean
+  base_url_is_full_custom?: boolean
 
   openai_base_url_custom: string
+  openai_base_url_is_full_custom?: boolean
 
   exploration_base_url: string
+  exploration_base_url_is_full?: boolean
   exploration_api_key: string
   exploration_model: string
   exploration_use_main_key: boolean
 
   custom_auth_type: import('./anthropic-auth.js').AnthropicAuthType
 
+  // Provider ids (non-builtin) explicitly added by the user through settings.
+  // Providers absent from this list stay hidden unless legacy config exists.
+  added_providers: string[]
+
+  model_configurations?: Record<string, import('./model-configurations.js').ModelConfiguration>
+  model_configuration_names?: Record<string, string>
+  active_model_configuration?: string
+  active_auth_type?: import('./anthropic-auth.js').AnthropicAuthType
+
+  channel_configurations?: ChannelConfigurations
+  active_channel_configurations?: Partial<Record<ChannelType, string>>
   channels: ChannelsConfig
 
   // Per-site tool enable/disable toggles (adapter id → state)
@@ -242,20 +331,20 @@ export interface Settings {
   /** P2 API 查询路由的 LLM 分类层开关（默认开；env WEWORKER_LLM_ROUTE=1|0 可覆盖）。 */
   api_query_llm_route: boolean
 
-  /** ZCF output style id synced from zcf templates; empty = no extra role prompt */
+  /**
+   * 当前生效的风格 id（默认 / 预定义内置风格 / 自定义风格）。
+   * 键名沿用历史字段以避免数据迁移；与 ZCF 已无关系。
+   */
   zcf_default_role: string
 
-  /** ZCF workflow mode id: direct (默认) | auto-plan (自动规划) */
-  zcf_default_mode: string
-
-  /** Language used when syncing ZCF templates */
-  zcf_lang: 'zh-CN' | 'en'
-
-  /** Built-in + custom role ids shown in chat picker */
+  /** 生效的风格 id 列表（风格互斥，恒为 1 项）；随 zcf_default_role 一起维护 */
   zcf_enabled_roles: string[]
 
-  /** User-defined ZCF roles (id, label, prompt) */
-  zcf_custom_roles: ZcfCustomRole[]
+  /** User-defined styles (id, label, prompt)；键名沿用历史字段以避免数据迁移 */
+  zcf_custom_roles: CustomStyle[]
+
+  /** 长期记忆按档位的估算 token 预算（extension 覆盖所有 extension:*）。 */
+  memory_budgets: MemoryBudgets
 }
 
 
@@ -284,60 +373,76 @@ const _defaultProvider = typeof __BUILD_DEFAULT_PROVIDER__ !== 'undefined'
 
 const DEFAULTS: Settings = {
 
+  onboarding_completed: false,
+
   active_provider: _defaultProvider,
 
   api_key: '',
 
   base_url: 'https://api.anthropic.com',
 
-  model: 'claude-sonnet-4-6',
+  // 模型名是供应商侧的数据（随时会改名或上下架），构建期不写死默认值；
+  // 激活供应商时以模型列表接口返回为准，取不到则由用户在模型下拉中手填。
+  model: '',
 
   context_limit: DEFAULT_CONTEXT_LIMIT,
 
   api_key_anthropic: '',
 
-  model_anthropic: 'claude-sonnet-4-6',
+  model_anthropic: '',
 
   context_limit_anthropic: DEFAULT_CONTEXT_LIMIT,
 
   api_key_glm: '',
 
-  model_glm: 'glm-5.2',
+  model_glm: '',
 
   context_limit_glm: DEFAULT_CONTEXT_LIMIT,
 
   api_key_deepseek: '',
 
-  model_deepseek: 'deepseek-v4-flash',
+  model_deepseek: '',
 
   context_limit_deepseek: DEFAULT_CONTEXT_LIMIT,
 
   api_key_custom: '',
+  openai_api_key_custom: '',
 
   model_custom: '',
+  openai_model_custom: '',
 
   context_limit_custom: DEFAULT_CONTEXT_LIMIT,
 
   base_url_custom: '',
+  models_url_custom: '',
+  models_auth_type_custom: 'inherit',
+  openai_models_url_custom: '',
+  base_url_is_full_custom: false,
 
   api_query_llm_route: true,
 
   openai_base_url_custom: '',
+  openai_base_url_is_full_custom: false,
 
   exploration_base_url: '',
+  exploration_base_url_is_full: false,
   exploration_api_key: '',
   exploration_model: '',
   exploration_use_main_key: true,
 
   custom_auth_type: 'auth_token',
 
+  added_providers: [] as string[],
+
   channels: {
 
-    qq: { enabled: false, app_id: '', app_secret: '', owner_user_id: '', owner_permission_level: 'full' },
+    qq: { enabled: false, app_id: '', app_secret: '', owner_user_id: '', owner_permission_level: 'qa_only' },
 
-    weixin: { enabled: false, token: '', base_url: '', owner_user_id: '', owner_permission_level: 'full' },
+    weixin: { enabled: false, token: '', base_url: '', owner_user_id: '', owner_permission_level: 'qa_only' },
 
-    wecom: { enabled: false, bot_id: '', secret: '', owner_user_id: '', owner_permission_level: 'full' },
+    wecom: { enabled: false, bot_id: '', secret: '', owner_user_id: '', owner_permission_level: 'qa_only' },
+
+    feishu: { enabled: false, app_id: '', app_secret: '', owner_user_id: '', owner_permission_level: 'qa_only' },
 
   },
 
@@ -358,15 +463,12 @@ const DEFAULTS: Settings = {
   user_directory_blacklist: [],
   open_browser_allowed_origins: [],
 
-  zcf_default_role: CORE_STYLE_ID,
+  zcf_default_role: DEFAULT_STYLE_ID,
 
-  zcf_default_mode: 'auto-plan',
-
-  zcf_lang: 'zh-CN',
-
-  zcf_enabled_roles: [CORE_STYLE_ID],
+  zcf_enabled_roles: [DEFAULT_STYLE_ID],
 
   zcf_custom_roles: [],
+  memory_budgets: { ...DEFAULT_MEMORY_BUDGETS },
 }
 
 
@@ -391,6 +493,8 @@ function cloneDefaults(): Settings {
 
       wecom: { ...DEFAULTS.channels.wecom },
 
+      feishu: { ...DEFAULTS.channels.feishu },
+
     },
 
     site_toggles: { ...DEFAULTS.site_toggles },
@@ -399,6 +503,8 @@ function cloneDefaults(): Settings {
 
     label_names: { ...DEFAULTS.label_names },
     open_browser_allowed_origins: [...DEFAULTS.open_browser_allowed_origins],
+    added_providers: [...DEFAULTS.added_providers],
+    memory_budgets: { ...DEFAULTS.memory_budgets },
 
   }
 
@@ -430,49 +536,45 @@ function readRawSettingsFile(): Record<string, unknown> | null {
 
 
 
-function normalizeOwnerPermissionLevel(value: unknown): OwnerPermissionLevel {
+function normalizeOwnerPermissionLevel(value: unknown, ownerId: string): OwnerPermissionLevel {
+  if (!ownerId?.trim()) return 'qa_only'
   const next = String(value ?? '').trim()
   if (next === 'qa_only' || next === 'no_bash' || next === 'full') return next
-  return 'full'
+  return 'qa_only'
 }
 
 function normalizeChannelsConfig(channels: ChannelsConfig): ChannelsConfig {
   return {
     qq: {
       ...channels.qq,
-      owner_permission_level: normalizeOwnerPermissionLevel(channels.qq.owner_permission_level),
+      owner_permission_level: normalizeOwnerPermissionLevel(channels.qq.owner_permission_level, channels.qq.owner_user_id),
     },
     weixin: {
       ...channels.weixin,
-      owner_permission_level: normalizeOwnerPermissionLevel(channels.weixin.owner_permission_level),
+      owner_permission_level: normalizeOwnerPermissionLevel(channels.weixin.owner_permission_level, channels.weixin.owner_user_id),
     },
     wecom: {
       ...channels.wecom,
-      owner_permission_level: normalizeOwnerPermissionLevel(channels.wecom.owner_permission_level),
+      owner_permission_level: normalizeOwnerPermissionLevel(channels.wecom.owner_permission_level, channels.wecom.owner_user_id),
+    },
+    feishu: {
+      ...channels.feishu,
+      owner_permission_level: normalizeOwnerPermissionLevel(channels.feishu.owner_permission_level, channels.feishu.owner_user_id),
     },
   }
-}
-
-function listInstalledStyleIds(): string[] {
-  const stylesDir = path.join(CONFIG_DIR, 'claude-config', 'output-styles')
-  const ids = new Set<string>([DEFAULT_STYLE_ID, CORE_STYLE_ID])
-  if (fs.existsSync(path.join(stylesDir, `${CORE_STYLE_ID}.md`))) {
-    ids.add(CORE_STYLE_ID)
-  }
-  const extensionsDir = path.join(stylesDir, 'extensions')
-  if (fs.existsSync(extensionsDir)) {
-    for (const file of fs.readdirSync(extensionsDir).filter((f) => f.endsWith('.md'))) {
-      ids.add(file.replace(/\.md$/, ''))
-    }
-  }
-  return [...ids]
 }
 
 function loadSettingsFromRaw(raw: Record<string, unknown> | null): Settings {
 
   const merged = deepMerge(cloneDefaults(), raw ?? {}) as Settings
 
+  // ZCF 机制已整体移除：老 settings.json 里的纯 ZCF 残留字段不再读取，也不再写回磁盘。
+  // （`zcf_default_role` / `zcf_enabled_roles` / `zcf_custom_roles` 是风格字段，保留。）
+  stripObsoleteZcfSettings(merged as unknown as Record<string, unknown>)
+
   merged.custom_auth_type = raw?.custom_auth_type === 'api_key' ? 'api_key' : 'auth_token'
+
+  merged.added_providers = normalizeAddedProviders(raw?.added_providers)
 
   merged.context_limit_anthropic = normalizeContextLimit(raw?.context_limit_anthropic)
   merged.context_limit_glm = normalizeContextLimit(raw?.context_limit_glm)
@@ -486,6 +588,11 @@ function loadSettingsFromRaw(raw: Record<string, unknown> | null): Settings {
         ? merged.context_limit_custom
         : merged.context_limit_anthropic
 
+  const activeConfiguration = merged.model_configurations?.[merged.active_model_configuration || '']
+  if (activeConfiguration) {
+    merged.context_limit = normalizeContextLimit(activeConfiguration.context_limit)
+  }
+
   merged.max_chat_attachments = normalizeMaxChatAttachments(merged.max_chat_attachments)
   merged.paste_text_attachment_threshold = normalizePasteTextAttachmentThreshold(merged.paste_text_attachment_threshold)
 
@@ -498,16 +605,15 @@ function loadSettingsFromRaw(raw: Record<string, unknown> | null): Settings {
 
   merged.user_directory_blacklist = normalizeUserDirectoryBlacklist(merged.user_directory_blacklist)
   merged.open_browser_allowed_origins = normalizeOpenBrowserAllowedOrigins(merged.open_browser_allowed_origins)
-  merged.zcf_custom_roles = normalizeZcfCustomRoles(merged.zcf_custom_roles)
-  merged.zcf_default_role = migrateLegacyDefaultRole(merged.zcf_default_role)
-  merged.zcf_enabled_roles = normalizeZcfEnabledRoles(
+  merged.zcf_custom_roles = normalizeCustomStyles(merged.zcf_custom_roles)
+  merged.memory_budgets = normalizeMemoryBudgets(merged.memory_budgets)
+  merged.zcf_default_role = normalizeDefaultStyleId(merged.zcf_default_role)
+  merged.zcf_enabled_roles = normalizeEnabledStyles(
     merged.zcf_enabled_roles,
     merged.zcf_custom_roles,
-    listInstalledStyleIds(),
     merged.zcf_default_role,
   )
-  merged.zcf_default_role = merged.zcf_enabled_roles[0] || CORE_STYLE_ID
-  merged.zcf_default_mode = normalizeZcfMode(merged.zcf_default_mode)
+  merged.zcf_default_role = merged.zcf_enabled_roles[0] || DEFAULT_STYLE_ID
 
   const plaintextSecrets = collectPlaintextSecretsFromRaw(raw)
 
@@ -522,8 +628,26 @@ function loadSettingsFromRaw(raw: Record<string, unknown> | null): Settings {
 
 
   const secrets = { ...decryptedSecrets, ...plaintextSecrets }
+  const resolved = applySecrets(merged, secrets)
 
-  return applySecrets(merged, secrets)
+  // Older settings files do not have the onboarding flag. Preserve a user's
+  // existing configured setup while showing the flow for a genuinely new one.
+  if (raw?.onboarding_completed === undefined) {
+    const hasConfiguredModelKey = Boolean(
+      resolved.api_key
+      || resolved.api_key_anthropic
+      || resolved.api_key_glm
+      || resolved.api_key_deepseek
+      || resolved.api_key_custom
+      || Object.values(resolved.model_configurations || {}).some(configuration => Boolean(configuration.api_key?.trim())),
+    )
+    const legacyActiveProvider = typeof raw?.active_provider === 'string' ? raw.active_provider : ''
+    resolved.onboarding_completed = hasConfiguredModelKey
+      || legacyActiveProvider === 'builtin'
+      || legacyActiveProvider === 'builtin_dev'
+  }
+
+  return migrateChannelConfigurations(resolved)
 
 }
 
@@ -621,22 +745,42 @@ export function resetSettingsStateForTests(): void {
 
 
 export function getSettings(): Settings {
-
-  if (_settings) return _settings
-
-  _settings = loadSettingsFromRaw(readRawSettingsFile())
-
-  return _settings
-
+  if (!_settings) _settings = loadSettingsFromRaw(readRawSettingsFile())
+  return resolveBuiltinSettings(_settings, PROVIDERS)
 }
 
 
 
 export function updateSettings(updates: Partial<Settings>): Settings {
 
-  const current = getSettings()
+  getSettings() // Ensure the persisted settings have been loaded.
+  // Merge the stored state, not the runtime projection containing deployment credentials.
+  _settings = deepMerge(_settings!, updates) as Settings
+  // Model configuration operations supply the complete collection. Deep merging
+  // it would resurrect removed IDs, including when the last entry is deleted.
+  if (updates.model_configurations !== undefined) {
+    _settings.model_configurations = structuredClone(updates.model_configurations)
+  }
 
-  _settings = deepMerge(current, updates) as Settings
+  if (updates.channel_configurations !== undefined) {
+    _settings.channel_configurations = structuredClone(updates.channel_configurations)
+    _settings.active_channel_configurations = { ...updates.active_channel_configurations }
+  } else if (updates.channels) {
+    // Legacy API callers still update the selected instance, never other robots.
+    for (const type of Object.keys(updates.channels) as ChannelType[]) {
+      const id = _settings.active_channel_configurations?.[type]
+      const entry = id ? _settings.channel_configurations?.[id] : undefined
+      if (entry) entry.config = { ..._settings.channels[type] }
+      else {
+        const migrated = migrateChannelConfigurations({ ..._settings, channel_configurations: undefined })
+        const legacyId = migrated.active_channel_configurations?.[type]
+        if (legacyId) {
+          _settings.channel_configurations = { ..._settings.channel_configurations, [legacyId]: migrated.channel_configurations![legacyId] }
+          _settings.active_channel_configurations = { ..._settings.active_channel_configurations, [type]: legacyId }
+        }
+      }
+    }
+  }
 
   _settings.max_chat_attachments = normalizeMaxChatAttachments(_settings.max_chat_attachments)
   _settings.context_limit = normalizeContextLimit(_settings.context_limit)
@@ -648,24 +792,25 @@ export function updateSettings(updates: Partial<Settings>): Settings {
   _settings.welcome_featured_site_limit = normalizeWelcomeFeaturedSiteLimit(_settings.welcome_featured_site_limit)
   _settings.user_directory_blacklist = normalizeUserDirectoryBlacklist(_settings.user_directory_blacklist)
   _settings.open_browser_allowed_origins = normalizeOpenBrowserAllowedOrigins(_settings.open_browser_allowed_origins)
-  _settings.zcf_custom_roles = normalizeZcfCustomRoles(_settings.zcf_custom_roles)
+  _settings.zcf_custom_roles = normalizeCustomStyles(_settings.zcf_custom_roles)
+  _settings.memory_budgets = normalizeMemoryBudgets(_settings.memory_budgets)
   if (updates.zcf_default_role !== undefined) {
-    _settings.zcf_default_role = migrateLegacyDefaultRole(_settings.zcf_default_role)
+    _settings.zcf_default_role = normalizeDefaultStyleId(_settings.zcf_default_role)
   }
-  _settings.zcf_enabled_roles = normalizeZcfEnabledRoles(
+  _settings.zcf_enabled_roles = normalizeEnabledStyles(
     _settings.zcf_enabled_roles,
     _settings.zcf_custom_roles,
-    listInstalledStyleIds(),
     _settings.zcf_default_role,
   )
-  _settings.zcf_default_role = _settings.zcf_enabled_roles[0] || CORE_STYLE_ID
-  _settings.zcf_default_mode = normalizeZcfMode(_settings.zcf_default_mode)
+  _settings.zcf_default_role = _settings.zcf_enabled_roles[0] || DEFAULT_STYLE_ID
+
+  _settings.added_providers = normalizeAddedProviders(_settings.added_providers)
 
   persistSettingsToDisk(_settings)
 
   _settingsInitialized = true
 
-  return _settings
+  return getSettings()
 
 }
 

@@ -110,7 +110,7 @@
       background: #f0f9ff;
       border-color: #bae6fd;
       transform: translateY(-1px);
-      box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+      box-shadow: none;
     }
     .tool-name {
       font-family: "SF Mono", "JetBrains Mono", "Fira Code", Menlo, monospace;
@@ -238,7 +238,7 @@
       width: 320px;
       max-height: 400px;
       overflow-y: auto;
-      box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+      box-shadow: none;
     }
     .modal-header {
       padding: 12px 14px;
@@ -606,8 +606,8 @@
       --warning-soft: #fff7ed;
       --danger: #dc2626;
       --danger-soft: #fef2f2;
-      --shadow-card: 0 10px 30px rgba(31, 45, 61, 0.08);
-      --shadow-float: 0 24px 60px rgba(15, 23, 42, 0.18);
+      --shadow-card: none;
+      --shadow-float: none;
       --radius-sm: 8px;
       --radius-md: 12px;
       --radius-lg: 18px;
@@ -624,13 +624,12 @@
       padding: 13px 16px 11px;
       background: rgba(255, 255, 255, 0.86);
       border-bottom-color: var(--line-soft);
-      backdrop-filter: blur(16px);
     }
     .header-logo {
       width: 22px;
       height: 22px;
       border-radius: 7px;
-      box-shadow: 0 4px 12px rgba(31, 111, 235, 0.16);
+      box-shadow: none;
     }
     .header-title {
       color: var(--text-main);
@@ -669,12 +668,12 @@
       border-radius: var(--radius-md);
       background: var(--surface-panel);
       border-color: var(--line-soft);
-      box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
+      box-shadow: none;
     }
     .tool-item:hover {
       background: #ffffff;
       border-color: #c7dcff;
-      box-shadow: var(--shadow-card);
+      box-shadow: none;
       transform: translateY(-1px);
     }
     .tool-name {
@@ -691,7 +690,7 @@
       border: 1px solid var(--line-soft);
       border-radius: var(--radius-lg);
       background: var(--surface-panel);
-      box-shadow: var(--shadow-card);
+      box-shadow: none;
     }
     .none-title {
       color: var(--text-main);
@@ -734,13 +733,13 @@
       background: linear-gradient(135deg, var(--brand), #3b82f6);
       color: #ffffff;
       border: 1px solid rgba(21, 87, 192, 0.2);
-      box-shadow: 0 8px 18px rgba(31, 111, 235, 0.18);
+      box-shadow: none;
     }
     .explore-btn:hover,
     .explore-btn-primary:hover,
     .btn-primary:hover {
       background: linear-gradient(135deg, var(--brand-strong), var(--brand));
-      box-shadow: 0 10px 22px rgba(31, 111, 235, 0.22);
+      box-shadow: none;
     }
     .explore-section {
       padding: 0 16px 16px;
@@ -754,7 +753,7 @@
       background: var(--surface-panel);
       border-color: var(--line-soft);
       border-radius: var(--radius-lg);
-      box-shadow: var(--shadow-card);
+      box-shadow: none;
       padding: 14px;
     }
     .explore-badge {
@@ -871,7 +870,6 @@
     }
     .modal-overlay {
       background: rgba(15, 23, 42, 0.28);
-      backdrop-filter: blur(10px);
     }
     .modal {
       width: min(420px, calc(100vw - 28px));
@@ -879,7 +877,7 @@
       background: #ffffff;
       border: 1px solid var(--line-soft);
       border-radius: var(--radius-lg);
-      box-shadow: var(--shadow-float);
+      box-shadow: none;
     }
     .modal-header,
     .modal-footer {
@@ -901,7 +899,6 @@
     .footer {
       background: rgba(255, 255, 255, 0.86);
       border-top-color: var(--line-soft);
-      backdrop-filter: blur(14px);
     }
     .ws-status { color: var(--text-muted); }
     .ws-dot-on { background: #22c55e; }

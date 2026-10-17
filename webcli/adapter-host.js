@@ -24,7 +24,8 @@ export function resolveAdapterCall(toolName, options = {}) {
 
 /** Host messages expose package metadata, never local filesystem locations. */
 export function describeAdapterCatalog(options = {}) {
-  const catalog = buildAdapterCatalog(options);
+  // Hosts may pass a catalog they already built for the same read (resolveCatalogTool does the same).
+  const catalog = options.catalog || buildAdapterCatalog(options);
   const managedNames = new Set(catalog.candidates.filter((entry) => entry.source !== 'unmanaged').map((entry) => entry.name));
   for (const diagnostic of catalog.diagnostics) {
     if (diagnostic.name && diagnostic.source !== 'unmanaged') managedNames.add(diagnostic.name);
