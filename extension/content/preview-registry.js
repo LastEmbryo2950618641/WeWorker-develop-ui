@@ -10,14 +10,14 @@
   };
   const requireSession = token => {
     const session = sessions.get(token);
-    if (!session || session.url !== window.location.href) throw new Error('Preview session expired or document changed');
+    if (!session || (session.allowQueryChanges ? session.route !== window.location.href.split(/[?#]/)[0] : session.url !== window.location.href)) throw new Error('Preview session expired or document changed');
     return session;
   };
-  const begin = ({ token, siteKey, previewAdapterId = null, packageDigest = null }) => {
+  const begin = ({ token, siteKey, previewAdapterId = null, packageDigest = null, allowQueryChanges = false }) => {
     if (!/^[a-f0-9-]{36}$/.test(token || '') || !siteKey || window.location.hostname !== siteKey) throw new Error('Invalid preview target');
     if (packageDigest !== null && !/^[a-f0-9]{64}$/.test(packageDigest)) throw new Error('Invalid preview package digest');
     if (sessions.size) throw new Error('Another preview is active on this document');
-    const session = { previewAdapterId, packageDigest, url: window.location.href, tools: [], handlers: new Map(), timer: setTimeout(() => finish(token), 300000) };
+    const session = { previewAdapterId, packageDigest, allowQueryChanges, route: window.location.href.split(/[?#]/)[0], url: window.location.href, tools: [], handlers: new Map(), timer: setTimeout(() => finish(token), 300000) };
     const globals = Object.create(null);
     let scope;
     globals.__webmcpRegister = adapter => {

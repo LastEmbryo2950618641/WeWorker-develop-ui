@@ -177,6 +177,7 @@ export function validateV2Manifest(manifest, directoryName = "?") {
         fail(adapterName, `Command "${id}" pageRoute must be an exact declared HTTP(S) origin and pathname for a foreground read command.`);
       }
     }
+    if (command.pageStrategy !== undefined && (!command.pageRoute || !['UI_SELECTOR', 'DOM_STATE', 'INTERCEPT'].includes(command.pageStrategy))) fail(adapterName, 'pageStrategy must name a supported strategy with pageRoute.');
     runtimesPresent.add(command.runtime);
     const ext = command.runtime === "extension" ? "js" : "py";
     const expectedModule = `${command.runtime}/commands/${id}.${ext}`;

@@ -91,12 +91,46 @@ try {
   const apiRequests = [];
   const postRequests = [];
   const detailRequests = [];
+  const signedRequests = [];
+  const queryProofs = new Set();
   let failApi = false;
   let renamedItemField = false;
   let renamedPageField = false;
   server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
-    if (/^\/api\/groups\/[^/]+\/items\/[^/]+(?:\/query)?$/.test(url.pathname)) {
+    if (url.pathname === '/intercept-only') {
+      const seed = crypto.randomUUID();
+      for (let i = 1; i <= 100; i++) queryProofs.add(seed + ':' + i);
+      const apiOrigin = `http://localhost:${server.address().port}`;
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end(`<!doctype html><title>Example signed query</title>
+        <form id="signed-get"><input id="signed-query" type="search" aria-label="Search example items"><button id="signed-submit">Search</button></form>
+        <form id="signed-post"><input id="signed-post-query" type="search" aria-label="Search example POST items"><button id="signed-post-submit">Search</button></form><pre id="result"></pre>
+        <script>(()=>{let n=0;const seed=${JSON.stringify(seed)};
+          async function query(method,keyword){
+            if(keyword==='example-navigation'){location.href='/intercept-only?reload=1';return;}
+            if(keyword==='example-timeout')return;
+            const run=async(q)=>fetch(${JSON.stringify(apiOrigin)}+'/api/signed-search'+(method==='GET'?'?q='+encodeURIComponent(q):''),{method,
+              headers:{'x-example-proof':seed+':'+(++n),...(method==='POST'?{'content-type':'application/json'}:{})},...(method==='POST'?{body:JSON.stringify({keyword:q})}:{})}).then(r=>r.json());
+            const response=await run(keyword); document.querySelector('#result').textContent=JSON.stringify(response);
+            if(keyword==='example-duplicate')await run(keyword);
+            history.replaceState(null,'','?q='+encodeURIComponent(keyword));
+          }
+          document.querySelector('#signed-get').onsubmit=e=>{e.preventDefault();query('GET',document.querySelector('#signed-query').value)};
+          document.querySelector('#signed-post').onsubmit=e=>{e.preventDefault();query('POST',document.querySelector('#signed-post-query').value)};
+          query('GET','Example initial');query('POST','Example initial POST');
+        })();</script>`);
+    } else if (url.pathname === '/api/signed-search') {
+      const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'x-example-proof,content-type', 'access-control-allow-methods': 'GET,POST,OPTIONS' };
+      if (req.method === 'OPTIONS') { res.writeHead(204, cors); res.end(); return; }
+      let body = ''; req.on('data', chunk => body += chunk); req.on('end', () => {
+        const valid = queryProofs.delete(req.headers['x-example-proof']);
+        const keyword = req.method === 'POST' ? JSON.parse(body || '{}').keyword : url.searchParams.get('q');
+        signedRequests.push({ valid, keyword, method: req.method });
+        res.writeHead(!valid ? 403 : keyword === 'example-http-error' ? 503 : 200, { ...cors, 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(JSON.stringify(valid ? { data: { keyword, method: req.method, items: [{ title: keyword }] } } : { error: 'Example page proof required' }));
+      });
+    } else if (/^\/api\/groups\/[^/]+\/items\/[^/]+(?:\/query)?$/.test(url.pathname)) {
       let body = ''; req.on('data', chunk => body += chunk); req.on('end', () => {
         const parts = url.pathname.split('/').map(decodeURIComponent);
         const payload = body ? JSON.parse(body) : {};
@@ -531,6 +565,59 @@ try {
   await cli('browser.close', { session: 'page-only' });
   assert.equal((await cli(pageDraft.toolNames[0], {}, false)).error.code, 'PAGE_SOURCE_ROUTE_MISSING');
 
+  const interceptTab = (await cli('browser.open', { session: 'intercept-only', url: origin + '/intercept-only' })).data.tabId;
+  const signedOrigin = `http://localhost:${server.address().port}`;
+  const interceptTask = (await cli('exploration.start', { tabId: interceptTab, allowedOrigins: [signedOrigin], goal: 'Read a query using page-generated request proof', requestId: 'example-intercept' })).data.taskId;
+  assert.equal((await settle(interceptTask)).status, 'evidence_ready');
+  const signedCandidates = (await cli('exploration.evidence', { taskId: interceptTask })).data.candidates;
+  assert.equal((await fetch(signedOrigin + '/api/signed-search?q=Example')).status, 403);
+  for (const method of ['GET', 'POST']) {
+    const sourceApiIndex = signedCandidates.findIndex(item => new URL(item.url).pathname === '/api/signed-search' && item.method === method && item.status === 200);
+    assert.ok(sourceApiIndex >= 0, JSON.stringify(signedCandidates));
+    await cli('exploration.intercept', { taskId: interceptTask, source: { sourceApiIndex,
+      trigger: { kind: 'search', selector: method === 'GET' ? '#signed-query' : '#signed-post-query', submitSelector: method === 'GET' ? '#signed-submit' : '#signed-post-submit', parameter: 'keyword', description: 'Public search term' },
+      ...(method === 'GET' ? { matchQuery: { q: 'keyword' } } : { matchBody: { keyword: 'keyword' } }), timeoutMs: 2000 },
+      values: { keyword: 'Example observation ' + method }, reason: 'Public search only; the page generates an ephemeral request proof.' });
+    assert.equal((await settle(interceptTask)).status, 'evidence_ready');
+  }
+  const interceptEvidence = (await cli('exploration.evidence', { taskId: interceptTask })).data;
+  assert.equal(interceptEvidence.pageSources.length, 2);
+  assert.ok(!JSON.stringify(interceptEvidence).includes('Example observation'));
+  const interceptDraft = (await cli('exploration.generate', { taskId: interceptTask, plan: { tools: interceptEvidence.pageSources.map((item, i) => ({ name: ['signed_get', 'signed_post'][i], strategy: 'INTERCEPT', sourcePageId: item.id, risk: 'read', purpose: 'Read signed search through UI', readReason: 'Observed search controls only.' })) } })).data;
+  for (const tool of interceptDraft.toolNames) {
+    const current = (await cli('exploration.verification-read', { taskId: interceptTask, tool })).data;
+    await cli('exploration.verification-write', { taskId: interceptTask, tool, expectedHash: current.hash, cases: ['Example first query', 'Example second query'].map((keyword, i) => ({ id: 'query-' + i, args: { keyword }, expect: { equals: { 'data.data.keyword': keyword }, rowCount: { path: 'data.data.items', min: 1, max: 1 } } })) });
+  }
+  await cli('exploration.validate', { taskId: interceptTask });
+  const interceptValidation = await settle(interceptTask);
+  assert.equal(interceptValidation.status, 'review_ready', JSON.stringify(interceptValidation));
+  assert.deepEqual(interceptValidation.runtimeValidation.executionSummary, { attempted: 4, passed: 4, failed: 0, skipped: 0 });
+  const interceptReview = (await cli('exploration.review', { taskId: interceptTask })).data;
+  await cli('exploration.install', { taskId: interceptTask, reviewId: interceptReview.reviewId, confirmed: true });
+  assert.equal((await settle(interceptTask)).status, 'installed');
+  for (const tool of interceptDraft.toolNames) {
+    const result = await cli(tool, { keyword: 'Example installed query' });
+    assert.equal(result.ok, true, JSON.stringify(result)); assert.equal(result.data.data.keyword, 'Example installed query');
+  }
+  for (const [keyword, code] of [['example-timeout', 'INTERCEPT_TIMEOUT'], ['example-duplicate', 'INTERCEPT_AMBIGUOUS'], ['example-http-error', 'INTERCEPT_HTTP_ERROR']]) {
+    const result = await cli(interceptDraft.toolNames[0], { keyword }, false);
+    assert.equal(result.ok, false); assert.equal(result.error.code, code, JSON.stringify(result));
+  }
+  const beforeInvalidQuery = signedRequests.length;
+  assert.equal((await cli(interceptDraft.toolNames[0], { keyword: '' }, false)).ok, false);
+  assert.equal(signedRequests.length, beforeInvalidQuery);
+  const interceptKnowledge = (await cli('exploration.knowledge-read', { site: interceptReview.name })).data;
+  await cli('exploration.knowledge-save', { taskId: interceptTask, expectedHash: interceptKnowledge.hash });
+  // Navigation invalidates a single-document query, even with unchanged pathname.
+  const navigationTask = (await cli('exploration.start', { tabId: interceptTab, allowedOrigins: [signedOrigin], goal: 'Verify navigation failure', requestId: 'example-intercept-navigation' })).data.taskId;
+  await settle(navigationTask);
+  const navigationCandidates = (await cli('exploration.evidence', { taskId: navigationTask })).data.candidates;
+  await cli('exploration.intercept', { taskId: navigationTask, source: { sourceApiIndex: navigationCandidates.findIndex(item => item.method === 'GET' && new URL(item.url).pathname === '/api/signed-search'),
+    trigger: { kind: 'search', selector: '#signed-query', submitSelector: '#signed-submit', parameter: 'keyword', description: 'Public query term' }, matchQuery: { q: 'keyword' }, timeoutMs: 2000 }, values: { keyword: 'example-navigation' }, reason: 'Verify a full page navigation is not accepted as query evidence.' });
+  assert.equal((await settle(navigationTask)).error.code, 'INTERCEPT_DOCUMENT_CHANGED');
+  await record('intercept-validation', interceptValidation);
+  passed('cross-origin page-signed GET/POST INTERCEPT: direct replay fails, two changing queries each pass preview and installed calls, timeout/duplicate/HTTP errors are explicit');
+
   const cancelledId = (await cli('exploration.start', { ...args, requestId: 'example-cancel' })).data.taskId;
   await cli('exploration.cancel', { taskId: cancelledId });
   await delay(5000);
@@ -548,7 +635,7 @@ try {
   const restoredKnowledge = (await cli('exploration.knowledge-read', { site: review.name })).data;
   assert.equal(restoredKnowledge.knowledge.commands[verificationTool].cases.length, 6);
   assert.equal(restoredKnowledge.stale, false);
-  assert.equal(restoredKnowledge.knowledge.pages.length, 4);
+  assert.equal(restoredKnowledge.knowledge.pages.length, 6);
   // Allow the extension's already-dispatched capture to finish before explicit resumption.
   await delay(5000);
   await cli('exploration.collect', { taskId: interruptedId });

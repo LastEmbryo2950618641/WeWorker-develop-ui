@@ -318,3 +318,23 @@ npm run test:exploration:browser --prefix webcli -- \
 - CLI/Bridge 构建、公开配置通过；npm pack dry-run 584 文件，包含新的 generation-harness/path-parameters.js 和更新 Skill。构建/pack 与依赖生成资产的测试顺序执行；已有可选列映射资源警告不变，无依赖/lockfile 变化。
 - 真实用户 Chrome 的 B 站 API/DOM 验收仍以上一阶段为证据；本轮动态路径使用隔离 loopback 公开占位站点，没有在 B 站虚构不存在的动态详情接口。用户 source Bridge 仍运行上一阶段已确认进程，新能力在隔离实例和构建产物验证；下一次需要新功能时先核实进程身份再更新。扩展代码本轮无变化，不需用户重装。
 - Python 相对 `af8e082` 差异为零，未碰其环境/生命周期/测试/数据；未推送、未创建 PR。下一步仍包括 INTERCEPT、CSRF/签名、写命令、动态页面路由/多步 UI、知识修订、多连接/复杂浏览器能力、UI 共用服务及独立 Agent 验收；完整目标继续 active。
+
+
+### 2026-10-17：INTERCEPT 与真实 Chrome 原生输入修复
+
+- 从 `a75fec3` 接续未提交实现；分支仍 `codex/api-exploration-cli`，develop `4c3d5bd` / dev-1.1.0 `dae8932` 集成基线未变。本轮没有同步上游，不重复合并 #106/#91。完整 OpenCLI 对齐目标保持 active。
+- 新增 exploration.intercept：选取实际观察到的成功只读 JSON GET/POST，声明搜索、原生 select 筛选或下一页 CSS 控件；搜索/筛选声明一个字符串参数，通过已观察 query/body 字段关联。后台监听在操作前注册，只接受本次开始的新 Fetch/XHR，准确 origin/pathname/method/参数；旧请求、不相关响应不能充当成功。单次最多两个匹配请求后报歧义，响应 JSON 有大小/复杂度上限，凭据字段脱敏，业务行不静默截断。借用 CDP 后只清理自己的 listener，支持超时/HTTP/非 JSON/路由/文档变化等明确错误。
+- 观察不保存 values；页面证据、计划、草稿、知识共用已有流程。生成命令 pageStrategy=INTERCEPT，pageRoute 精确匹配现有页面；有参数时至少两组不同参数的作者 cases。插件能力不满足时拒绝调用，避免旧版本忽略 helper。
+- 解决草稿跨域权限：预览 scoped chrome.runtime.sendMessage 添加临时 token，SW 只为 intercept_read 解析此 token 的草稿 manifest 授权；绑定 tab、主 frame、origin/pathname、5 分钟有效期，finally 清理。预览仅在明确 INTERCEPT manifest 下容许同一 document 更新查询串，完整文档替换不受支持。普通调用按声明的 match 找唯一已安装包，支持包名与页面子域名不同，多个包不合并权限。
+- 自动化新增源归一化/禁止写候选与凭据关联、参数不落观察记录、不同 cases 必填、旧插件拒绝、临时授权隔离与过期、旧响应忽略/多响应/错误/清理测试。共享 Extension 测试 loader 缺少早前 browser observation/body evidence 导入，本次补齐真实函数后原网络捕获测试恢复通过；未屏蔽断言。
+- WebCLI 全量 103 文件/1094 项通过；Extension 聚焦共 63 项通过。CLI/Bridge 构建、公开配置、npm pack dry-run 586 文件通过，包含两个 intercept 模块。首次测试命令错误重复 --run，修正后执行成功；服务单测 mock 原仅报告 1 项，新增 2 组 cases 后按真实期望改为 2 项。无新增依赖，构建与依赖资产的测试顺序执行。
+- 隔离真实 Chromium 24 项：页面闭包生成一次性示例请求头，直接重放 403；跨源（127.0.0.1 页面→localhost API）GET/JSON POST 四组不同参数预览成功，增量安装后两命令普通调用成功；超时/重复/503/非法空参数明确失败。既有 API、路径参数、DOM、修复、知识、取消和 Bridge 重启流程保持通过。真实请求、插件、CLI 和验证器均参与，未替换为 mock。整页导航守卫追加验证结果见本节最后记录。
+- 用户 Chrome：先核实既有自建 source Bridge 命令后重启为本分支，重载用户已安装的工作区 extension-dist，能力 intercept_read_v1 就绪。重选并重新绑定 B 站搜索页，没有关闭用户标签。浏览器技能按工作区开发目标使用源码，未安装 npm 替代源码。
+- 真实问题：后台标签页 `Input.dispatchMouseEvent` 返回成功但事件未到按钮；增加 Page.bringToFront 到原生 click/dblclick/hover/drag/keys 与 INTERCEPT，真实页确认事件开始执行。聚焦测试断言先激活再发原生输入，激活失败不继续；隔离完整验收重新通过。
+- B 站现场确认首页综合查询用 search/all/v2、翻页用 search/type。第一次错误选择首页端点导致 INTERCEPT_TIMEOUT，未复用旧响应；重新选择实际翻页端点后成功。关键词搜索会整页导航，所以本轮只生成当前页面“下一页”命令，未宣称已支持整页导航搜索。
+- 新本地命令 `bilibili.com.explored-next-videos`：结构观察→Agent 编写普通视频过滤/BV格式/业务错误判断→作者 case→真实预览页 3→4→审阅无新增权限→本地增量安装→普通调用页 4→5。最后返回 35 视频、排除 7 非视频，返回页码与 URL 一致。该命令不接受任意页码，语义依赖当前关键词和页码；历史验证 case 重跑前需恢复约定页码。页面恢复为 excel 第一页。
+- 已有 API 三组回归通过：excel 第 1 页 17 视频，第 2 页 20，spreadsheet 第 1 页 20；已有 DOM 命令读取当时 25 张已渲染卡片。新来源/作者 cases/字段说明/导航限制写入本地站点知识，stale=false。首次 knowledge-save 的 notes 误传数组被正常拒绝，改为文档规定字符串后成功。真实响应、生成包与用户会话标识均未加入仓库。
+- 当前 source Bridge/用户插件具备 INTERCEPT；下次仍先 doctor/tabs/list 检查，不使用历史 PID/tabId。完整导航错误守卫最终已重载到用户插件。Python 相对 `af8e082` 差异为零，未运行其测试或触及环境/生命周期/数据；未推送或开 PR。
+- 下一步：策略选择/回退与支持整页导航的 UI 查询，多步 UI、动态页面路径、写命令、知识冲突修订、复杂 frame/Shadow、多连接/下载、UI 共用服务、独立 Agent 对话和 OpenCLI 最新版本对照。当前只完成单步 INTERCEPT，不应将这批测试通过标为完整目标完成。
+
+- 最终验证：新增整页导航（pathname 相同）真实 fixture，任务必须返回 INTERCEPT_DOCUMENT_CHANGED；最终隔离 Chromium 24 项全部通过，报告位于系统临时目录 `webcli-browser-acceptance-mDwIZ7/report.json`（不提交）。最终 Extension 核心 13 项再次通过；完整聚焦集合此前 63 项通过。用户插件重载最新代码后，普通下一页调用再次验证第 1→2 页，返回 38 视频/排除 4 非视频，随后恢复 excel 第一页。WebCLI 全量 1094 项结果仍对应当前 WebCLI 逻辑；最终变更仅扩展导航守卫及文档/测试，相关测试已覆盖。19 个修改/新增 JS 文件语法、git diff --check 通过；最终 npm pack dry-run 586 文件。此阶段将提交为一个本地检查点，未推送、未开 PR。

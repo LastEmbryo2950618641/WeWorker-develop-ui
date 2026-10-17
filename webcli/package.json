@@ -17,6 +17,7 @@
     "exploration-knowledge.js",
     "exploration-repair.js",
     "exploration-page.js",
+    "exploration-intercept.js",
     "browser-commands.js",
     "browser-service.js",
     "tab-operation-locks.js",

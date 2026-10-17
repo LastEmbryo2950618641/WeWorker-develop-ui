@@ -21,6 +21,7 @@ import { repairTarget, writeRepairDraft } from './exploration-repair.js';
 import { normalizePageSource, pageObservation, buildPageTool } from './exploration-page.js';
 import { writePackageDraft } from './generation-harness/package-draft.js';
 import { normalizePathParameters } from './generation-harness/path-parameters.js';
+import { normalizeInterceptSource, interceptValues } from './exploration-intercept.js';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const active = new Set(['collecting', 'validating', 'installing']);
@@ -71,7 +72,7 @@ export class ExplorationService {
   }
 
   summary(run) {
-    const next = { collecting: ['get', 'cancel'], evidence_ready: ['evidence', 'actions', 'probe', 'observe', 'generate', 'repair-info', 'repair', 'collect'], draft: ['draft-read', 'draft-write', 'verification-read', 'verification-write', 'validate'],
+    const next = { collecting: ['get', 'cancel'], evidence_ready: ['evidence', 'actions', 'probe', 'observe', 'intercept', 'generate', 'repair-info', 'repair', 'collect'], draft: ['draft-read', 'draft-write', 'verification-read', 'verification-write', 'validate'],
       validating: ['get', 'cancel'], installing: ['get'], review_ready: ['review', 'install'], failed: ['evidence', 'collect', 'draft-read', 'validate'], interrupted: ['get', 'collect', 'validate'] };
     return { taskId: run.taskId, status: run.status, goal: run.goal, tabId: run.tabId, site: run.origin, adapter: run.siteKey,
       createdAt: run.createdAt, updatedAt: run.updatedAt, candidateCount: run.candidates.length,
@@ -207,18 +208,21 @@ export class ExplorationService {
     if (command === 'install' && run.status === 'installed') return this.summary(run);
     if (active.has(run.status)) throw fail('TASK_BUSY', 'Wait for the current operation or cancel the task.');
     if (terminal.has(run.status) && !['draft-read', 'verification-read'].includes(command)) throw fail('INVALID_STATE', 'This task is terminal. Start a new task.');
-    if (['collect', 'actions', 'probe', 'observe'].includes(command)) {
+    if (['collect', 'actions', 'probe', 'observe', 'intercept'].includes(command)) {
       if (run.draft) throw fail('INVALID_STATE', 'Start a new task to change source evidence after drafting.');
     }
-    if (command === 'observe') {
+    if (command === 'observe' || command === 'intercept') {
       if (!this.capabilities().capabilities.includes('page_sources_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension to observe page sources.');
-      const source = normalizePageSource(args.source), reason = textArg(args.reason, 'reason');
+      const intercept = command === 'intercept';
+      if (intercept && !this.capabilities().capabilities.includes('intercept_read_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension to observe intercepted page queries.');
+      const source = intercept ? normalizeInterceptSource(args.source, run.candidates) : normalizePageSource(args.source), reason = textArg(args.reason, 'reason');
+      const values = intercept ? interceptValues(source, args.values) : undefined;
       return this.launch(run, 'collecting', async signal => {
         const tab = await this.checkTab(run);
         if (signal.aborted) return;
         const page = new URL(tab.url);
-        const result = await this.request({ type: 'exploration_observe_page', tabId: run.tabId,
-          payload: { source, expectedOrigin: page.origin, expectedPath: page.pathname } }, 30000);
+        const result = await this.request({ type: intercept ? 'exploration_intercept_read' : 'exploration_observe_page', tabId: run.tabId,
+          payload: { source, expectedOrigin: page.origin, expectedPath: page.pathname, ...(intercept ? { values } : {}) } }, 30000);
         if (signal.aborted) return;
         if (!result?.ok) throw fail(result?.error?.code || 'PAGE_SOURCE_MISSING', result?.error?.message || 'Unable to observe the page source.');
         const current = await this.checkTab(run);
@@ -440,6 +444,14 @@ export class ExplorationService {
 
   validate(run) {
     for (const tool of run.plan?.tools || []) {
+      const source = run.pageSources?.find(item => item.id === tool.sourcePageId)?.source;
+      if (source?.strategy === 'INTERCEPT' && source.trigger.parameter) {
+        const cases = run.verification?.[`${run.siteKey}.${tool.name.replace(/_/g, '-')}`] || [];
+        const values = cases.map(item => item.args[source.trigger.parameter]);
+        if (values.some(value => typeof value !== 'string' || !value.trim()) || new Set(values).size < 2) {
+          throw fail('VERIFICATION_REQUIRED', 'Parameterized intercept queries require at least two authored cases with distinct trigger values.');
+        }
+      }
       if (!tool.pathParameters?.length) continue;
       const cases = run.verification?.[`${run.siteKey}.${tool.name.replace(/_/g, '-')}`] || [];
       const pathValues = cases.map(item => tool.pathParameters.map(binding => item.args[binding.name]));
@@ -449,6 +461,7 @@ export class ExplorationService {
       }
     }
     const pageTools = (run.plan?.tools || []).filter(tool => tool.sourcePageId).map(tool => `${run.siteKey}.${tool.name.replace(/_/g, '-')}`);
+    if (run.plan?.tools?.some(tool => tool.strategy === 'INTERCEPT') && !this.capabilities().capabilities.includes('intercept_read_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating intercepted queries.');
     if (pageTools.length && !this.capabilities().capabilities.includes('page_sources_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating page sources.');
     if ((run.repairScope ? run.draft.toolNames : pageTools).some(tool => !run.verification?.[tool]?.length)) throw fail('VERIFICATION_REQUIRED', 'Every repaired or page-based command needs authored verification cases; read or write cases before validation.');
     if (Object.keys(run.verification || {}).length && !this.capabilities().capabilities.includes('strict_output_contract_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating authored assertions.');

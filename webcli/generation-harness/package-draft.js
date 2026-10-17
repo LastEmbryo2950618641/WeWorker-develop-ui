@@ -54,6 +54,7 @@ export function writePackageDraft({ memory, adapterDir, supportBundle, paths }) 
     return { id, ...(local !== id ? { aliases: [local] } : {}), runtime: 'extension', module,
       description: tool.description, schema: tool.parameters, safety: tool.access === 'write' ? 'write' : 'read',
       ...(tool.pageRoute ? { pageRoute: tool.pageRoute } : {}),
+      ...(tool.pageStrategy ? { pageStrategy: tool.pageStrategy } : {}),
       ...(retained ? { routeDomain: memory.siteHost || name, tabDomain: memory.siteHost || name } : {}),
     };
   });

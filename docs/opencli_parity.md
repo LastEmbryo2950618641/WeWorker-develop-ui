@@ -10,8 +10,8 @@
 | 浏览器会话 | open/bind/unbind/close/tab、profile、多连接管理、doctor；用户页不误关闭、跨 CLI/重启恢复 | 命名会话、owned/bound 关闭规则、doctor、持久绑定、Chrome 会话身份守卫已实现；真实 owned/bound 验收通过；多 profile/连接待做 |
 | 页面操作 | state/find/get/extract、click/dblclick/fill/type/select/check/uncheck/focus/hover/scroll/keys/drag/upload/dialog；过期引用和模糊定位报错 | 主 frame 原生指针、拖拽、文件输入、弹窗及表单命令已实现并真实验收；子 frame 指针仍为 DOM 事件，Shadow DOM/复杂控件待补 |
 | 页面观察 | frames/screenshot/console/eval/wait、网络摘要/detail/filter/follow、有界响应读取、失效错误 | 主 frame eval、frames 列表、完整截图、console 游标、网络摘要/JSON 详情/子串/失败/时间筛选已真实验收；复杂 frame、下载等待和网络流待做 |
-| 探索策略 | PUBLIC/COOKIE/PAGE_FETCH/INTERCEPT/DOM_STATE/UI_SELECTOR；接口/页面状态/脚本发现与策略理由 | GET/POST 查询及声明式 UI_SELECTOR/DOM_STATE 已实现；页面列表、公开状态、JSON 脚本可单独或与 API 混合生成，精确路由、作者 cases、安装后调用及页面命令修复已真实验收；INTERCEPT、自动选择/回退、多步 UI 工作流待做 |
-| 请求和鉴权 | POST 只读查询、GraphQL、动态路径、跨源、Cookie/CSRF/runtime 签名、写操作语义与确认 | 显式 API origin 授权、Agent 计划的 JSON/form POST 与 GraphQL query、API 路径参数已实现；动态 GET/POST 四组真实用例及安装后调用通过，固定域名/路径其余段，ID 不转数字；真实 B 站 PAGE_FETCH 关键词/分页完整闭环通过；CSRF/签名通用策略、动态页面路由和写命令待补 |
+| 探索策略 | PUBLIC/COOKIE/PAGE_FETCH/INTERCEPT/DOM_STATE/UI_SELECTOR；接口/页面状态/脚本发现与策略理由 | GET/POST 查询及声明式 UI_SELECTOR/DOM_STATE 已实现；页面列表、公开状态、JSON 脚本可单独或与 API 混合生成，精确路由、作者 cases、安装后调用及页面命令修复已真实验收；单步 INTERCEPT 已实现并通过本地跨域签名查询及真实翻页验收；自动选择/回退、多步 UI 工作流待做 |
+| 请求和鉴权 | POST 只读查询、GraphQL、动态路径、跨源、Cookie/CSRF/runtime 签名、写操作语义与确认 | 显式 API origin 授权、Agent 计划的 JSON/form POST 与 GraphQL query、API 路径参数已实现；动态 GET/POST 四组真实用例及安装后调用通过，固定域名/路径其余段，ID 不转数字；真实 B 站 PAGE_FETCH 关键词/分页完整闭环通过；INTERCEPT 可由页面生成临时请求头/签名；通用 CSRF/签名算法、动态页面路由和写命令待补 |
 | 生成与验证 | 任意目标数量、草稿文件编辑、字段映射、语义/样例验证、同站增量保留、审阅安装 | Agent 计划支持 1–50 工具，draft-add 支持新文件；每工具 1–10 组作者参数和精确路径/类型/非空/格式/值/数量断言，超过五组分批执行；六组真实用例含最后一组故意失败与修复已验收；更大计划需分任务 |
 | 维护与知识 | 站点 endpoints/field-map/notes/fixtures、有效期、trace、安装后自动修复、重试界限 | 已有任务历史、结构 trace、站点知识/过期标记；repair-info/repair 支持 Agent 定向修复已安装的只读命令，带入历史 cases 并重新验证、审阅安装；真实字段漂移后六组失败→修复通过已验收。知识冲突修订、共享文件/写命令修复待做；Agent 依 Skill 最多三轮修复 |
 | 分发与工具生态 | 对应 plugin / adapter 管理能力、输出格式、补全、现有 Adapter 能力对照 | 复用已有 v2/AdapterHub；逐项差异和覆盖率待核对 |
@@ -31,3 +31,7 @@
 页面策略增量：`exploration-page.js` 与扩展 `page-source.js` 提供声明式 DOM/状态读取，page-source-v1 不伪造 API 证据。真实无 JSON API 示例页验证三个来源、安装后普通调用、空态与选择器漂移修复。普通调用增加精确 origin/pathname 路由，缺失/多页歧义报错；页面命令必须有作者 cases，知识逐条记录过期。WebCLI 101 文件/1086 项、扩展聚焦 40 项、隔离真实浏览器 22 项通过，npm pack dry-run 583 文件含新模块和 Skill。用户 Chrome 的新增 DOM 命令安装后读取 27 张已渲染视频卡片，标题/链接逐项匹配当前页面；已有 API 三组查询再次通过。该命令读取当前页面已有卡片，未实现参数驱动的多步 UI 工作流或完整列表采集。
 
 API 动态路径增量：`generation-harness/path-parameters.js`、plan binding 和 scaffold 将 Agent 指定的路径段映射为必填字符串参数，保持固定域名/路径其余段，query/body 分开处理；至少两组不同路径组合实际验证。WebCLI 102 文件/1090 项、隔离真实浏览器 23 项通过，动态 GET/JSON POST 四组精确 ID/query/body 断言与安装后普通调用成功，非法路径没有发请求。CLI/Bridge 构建与 npm pack dry-run（584 文件）通过。该项验收使用 loopback 公共示例；动态页面路由、运行时 CSRF/签名仍待做。
+
+INTERCEPT 增量：`exploration-intercept.js`、扩展 `intercept-read.js` 与临时 preview grants 支持已观察查询控件触发新响应；GET query / POST body 必须关联输入参数，参数命令至少两组不同值 cases。跨域授权来自草稿/已安装 manifest，观察仅存结构，预览 token 绑定 tab/route/有效期并清理。WebCLI 103 文件/1094 项、Extension 聚焦 63 项通过；隔离 Chromium 24 项检查覆盖页面一次性请求头、无请求头重放 403、跨域 GET/POST 两组参数、预览/安装/普通调用和超时/多响应/HTTP 错误。最终 24 项还包含同 pathname 整页导航失败断言，返回 INTERCEPT_DOCUMENT_CHANGED；最新插件实机复验第 1→2 页成功，38 视频/排除 4 非视频，已恢复第一页。
+
+真实 Chrome 的后台标签页暴露原生点击未送达问题，已在原生鼠标/按键和 INTERCEPT 执行前调用 Page.bringToFront。B 站新增 `bilibili.com.explored-next-videos` 本地生成→严格预览（页 3→4）→增量安装→普通调用（页 4→5）通过，后者返回 35 视频/排除 7 非视频，页码与 URL 一致；旧 API 三组回归 17/20/20 视频，DOM 当前卡片 25 张。关键词搜索发生整页导航，不作为当前单步 INTERCEPT 成功证据；页面驱动翻页返回本次页，不是任意页查询。用户页已回到 excel 第一页，来源/断言与限制记录在本地站点知识。

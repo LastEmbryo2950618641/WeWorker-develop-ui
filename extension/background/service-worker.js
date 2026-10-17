@@ -7,6 +7,7 @@ import { createManagedBackgroundRuntime, MANAGED_RUNNER_PATH } from './managed-b
 import { executeBrowserCommand } from './browser-commands.js';
 import { browserResponseEvidence } from './browser-network.js';
 import { executePageSource } from './page-source.js';
+import { executeInterceptRead } from './intercept-read.js';
 import { recordBrowserObservation, clearBrowserObservations } from './browser-observations.js';
 
 /**
@@ -40,6 +41,7 @@ const EXTENSION_CAPABILITIES = [
   'browser_commands_v1',
   'strict_output_contract_v1',
   'page_sources_v1',
+  'intercept_read_v1',
 ];
 
 function buildExtensionHello(extra = {}) {
@@ -2844,6 +2846,9 @@ async function handleNativeMessage(msg) {
       sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
     }
 
+  } else if (msg.type === 'exploration_intercept_read') {
+    const result = await executeInterceptRead({ chrome, ensureCdpAttached, tabId: Number(msg.tabId), payload: { ...msg.payload, metadataOnly: true } });
+    sendToNative({ type: 'call_tool_result', id: msg.id, result });
   } else if (msg.type === 'exploration_observe_page') {
     try {
       const result = await executePageSource(chrome, Number(msg.tabId), { ...msg.payload, metadataOnly: true });
@@ -7726,6 +7731,8 @@ async function callGenerationPreviewTool(tabId, token, toolName, args, timeoutMs
   return result;
 }
 
+const generationPreviewGrants = new Map();
+
 async function validateGenerationPreview({ previewAdapterId, previewBundle = null, siteKey, tabId, expectedToolNames = [], testCases = [] } = {}) {
   if (!SAFE_ADAPTER_ID_RE.test(String(previewAdapterId || '')) || !String(previewAdapterId).startsWith('generation_preview_')) {
     throw new Error('invalid generation preview adapter id');
@@ -7754,9 +7761,10 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
   let began = false;
   try {
     await chrome.scripting.executeScript({ target: { tabId: targetTab.id }, world: 'ISOLATED', files: ['content/preview-registry.js'] });
-    const opened = await chrome.tabs.sendMessage(targetTab.id, { type: 'begin_generation_preview', token, siteKey, previewAdapterId, packageDigest: inlinePreview?.packageDigest || null });
+    const opened = await chrome.tabs.sendMessage(targetTab.id, { type: 'begin_generation_preview', token, siteKey, previewAdapterId, packageDigest: inlinePreview?.packageDigest || null, allowQueryChanges: manifest.commands?.some(command => command.pageStrategy === 'INTERCEPT') === true });
     if (!opened?.ok) throw new Error(opened?.error || 'Unable to begin preview');
     began = true;
+    generationPreviewGrants.set(token, { tabId: targetTab.id, url: targetTab.url, allowedHosts: normalizeRouteHosts(manifest.runtime_allowed_hosts), expiresAt: Date.now() + 300000 });
     const scripts = inlinePreview?.scripts || await Promise.all([...supportFiles, `adapters/${previewAdapterId}/index.js`].map(async file => {
       const response = await fetch(chrome.runtime.getURL(file));
       if (!response.ok) throw new Error('Missing preview script');
@@ -7881,6 +7889,7 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
       errors,
     };
   } finally {
+    generationPreviewGrants.delete(token);
     if (began) await sendTabMessage(targetTab.id, { type: 'end_generation_preview', token });
   }
 }
@@ -8137,9 +8146,14 @@ async function handleWecliRuntimeRequest(msg, sender) {
   const action = String(msg.action || '');
   const payload = msg.payload || {};
   const traceID = msg.traceID || null;
-  const allowedHosts = await loadRuntimeAllowedHostsForTab(tab);
+  const allowedHosts = action === 'intercept_read' && msg.previewToken
+    ? previewRuntimeAllowedHosts(msg.previewToken, sender)
+    : await loadRuntimeAllowedHostsForTab(tab);
 
   switch (action) {
+    case 'intercept_read':
+      assertRuntimeUrlAllowed(tab, payload.source?.endpoint, allowedHosts);
+      return executeInterceptRead({ chrome, ensureCdpAttached, tabId: tab.id, payload: { ...payload, metadataOnly: false } });
     case 'page_read':
       return executePageSource(chrome, tab.id, { ...payload, metadataOnly: false });
     case 'cookies_get':
@@ -8648,16 +8662,29 @@ async function runRuntimeDownload(tab, payload, allowedHosts = directRuntimeCont
   return { downloadId, ...(filename ? { filename } : {}) };
 }
 
+function previewRuntimeAllowedHosts(token, sender) {
+  const grant = generationPreviewGrants.get(token);
+  const current = new URL(sender.tab.url);
+  const original = grant && new URL(grant.url);
+  if (!grant || grant.tabId !== sender.tab.id || (sender.frameId ?? 0) !== 0 || grant.expiresAt <= Date.now()
+    || current.origin !== original.origin || current.pathname !== original.pathname) {
+    throw createRuntimeHelperError('PREVIEW_SESSION_EXPIRED', 'This preview query grant is unavailable or belongs to another page.');
+  }
+  return grant.allowedHosts;
+}
+
 async function loadRuntimeAllowedHostsForTab(tab) {
   let tabHost;
-  try {
-    tabHost = new URL(tab.url).hostname;
-  } catch {
-    return [];
-  }
-  // Page helpers only trust host-managed/bundled manifests. A web page cannot
-  // expand its own cross-host authority through a runtime message payload.
-  const selected = await getHostAdapterClient().manifest(tabHost);
+  try { tabHost = new URL(tab.url).hostname; } catch { return []; }
+  // Resolve a unique managed package by its declared page hosts, including
+  // subdomains. Never merge grants from unrelated or ambiguous packages.
+  const client = getHostAdapterClient();
+  const catalog = await client.catalog();
+  if (catalog?.available === false) return [];
+  const matches = (catalog?.adapters || []).filter(manifest => (manifest.match || []).some(host =>
+    host === tabHost || (host.startsWith('*.') && tabHost.endsWith(host.slice(1)))));
+  if (matches.length) return matches.length === 1 ? normalizeRouteHosts(matches[0].runtime_allowed_hosts) : [];
+  const selected = await client.manifest(tabHost);
   const manifest = selected.managed ? selected.manifest : await loadAdapterManifest(tabHost);
   return normalizeRouteHosts(manifest?.runtime_allowed_hosts);
 }

@@ -51,6 +51,7 @@ export async function executeBrowserCommand({ command, tabId, args = {}, identit
     if (command === 'bind') data = { identity: await bind(tabId) };
     else if (['click', 'dblclick', 'hover', 'drag'].includes(command) && !Number(args.frameId)) {
       await ensureCdpAttached(tabId);
+      await chrome.debugger.sendCommand({ tabId }, 'Page.bringToFront');
       const from = await page('bounds', args);
       const mouse = params => chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', params);
       await mouse({ type: 'mouseMoved', ...from });
@@ -94,6 +95,7 @@ export async function executeBrowserCommand({ command, tabId, args = {}, identit
       data = { frames: frames.map(item => ({ frameId: item.frameId, ...item.result })) };
     } else if (command === 'keys') {
       await ensureCdpAttached(tabId);
+      await chrome.debugger.sendCommand({ tabId }, 'Page.bringToFront');
       const parts = String(args.key || '').split('+'); const key = parts.pop();
       const modifiers = parts.reduce((bits, part) => bits | ({ Alt: 1, Control: 2, Ctrl: 2, Meta: 4, Shift: 8 }[part] || 0), 0);
       const keyCode = { Enter: 13, Tab: 9, Escape: 27, Backspace: 8, Delete: 46, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Home: 36, End: 35, PageUp: 33, PageDown: 34, Space: 32 }[key] || (key.length === 1 ? key.toUpperCase().charCodeAt(0) : 0);
