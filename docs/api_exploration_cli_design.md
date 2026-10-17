@@ -119,7 +119,11 @@ manifest 增加可选 pageRoute `{origin, pathname}`，仅允许已声明页面�
 
 `webcli call browser.help` 列出 34 个命令，覆盖命名会话、页面定位/输入、原生主 frame 指针/拖拽、文件输入、网络、eval、截图、控制台和弹窗。session 的 tabId 与 Chrome storage.session 身份共同校验，浏览器重启后必须重新绑定，避免 ID 复用。用户绑定页面 close 只释放绑定；独立 open 页面才会被关闭。
 
-browser 命令返回任务需要的页面数据，不保存到探索记录；网络详情只返回有界 JSON 并按凭据字段脱敏，非 JSON/截断正文省略。Bridge 不记录浏览器参数、脚本或输入值。完整页面截图上限 4000 万像素。子 frame 指针目前仍使用 DOM 事件，嵌套跨源 frame、Shadow DOM、多连接/profile、下载等待、持续网络流待补。
+browser 命令返回任务需要的页面数据，不保存到探索记录；网络详情只返回有界 JSON 并按凭据字段脱敏，非 JSON/截断正文省略。Bridge 不记录浏览器参数、脚本或输入值。完整页面截图上限 4000 万像素。子 frame 原生指针、Shadow DOM、多连接/profile、下载等待、持续网络流待补。
+
+frames 返回可访问页面的 frameId/documentId。eval 支持显式 frame/document，在 MAIN world 执行并等待 Promise；定位、读取、填写和等待也可绑定 documentId。需要 browser_frames_v1，旧插件会被 Bridge 拒绝，避免忽略参数后执行到主页面。frameId 是 Chrome ID，不是 frame 数组索引；同 URL 页面不被合并。指定 documentId 时先校验它与 frameId 配对，再向该文档注入，导航或移除后明确失败。
+
+跨源独立渲染 frame 使用递归 iframe 调试子会话，上下文按 session 分开存储，已有主页面网络/预览缓存不接收子会话的同名 ID。临时文档标记只放在扩展隔离环境；匹配后用 Chrome 的 frame 身份定位唯一 MAIN 上下文，不执行页面定义的 getter 或重写函数。标记在执行前清除，finally 仅按原 documentId 清理；用户表达式只派发一次，并绑定 uniqueContextId，不能落入导航后复用的 contextId。脚本异常、文档失效与中断分开报告；30 秒截止同时覆盖同步运行和不结束的 Promise，不终止共享渲染器，不自动重放。超时不证明副作用没有发生，Agent 应先检查状态。此能力没有把子 frame click/hover 升级为原生指针，生成的 exploration 页面来源仍限主 frame。
 
 验证复用现有 static validator、preview runtime validator 和 publisher。所有目标工具必须真实执行且通过，不能跳过。独立探索开启 `restrictToExpectedTools`，仅生成目标进入执行计数；脚手架登录检查和保留的已有工具不计入目标跳过数。共享验证器默认行为不变。任务仅保存验证计数/错误码，不保存预览结果值。安装是本地行为，不上架市场，也不等于授权执行业务写操作。
 
@@ -139,7 +143,7 @@ Agent 可以为最终命令输出声明 requiredPaths、types、notEmpty、patte
 
 ## 验证与未完成范围
 
-具体命令和数量见交接日志。当前 WebCLI 全量 105 文件、1116 项通过。真实 Chromium + 未打包插件 + 独立 CLI/Bridge + loopback 示例站点 26 项通过，包含浏览器操作、POST/GraphQL 工具、六组精确断言、知识持久化、API/DOM 定向修复、三个页面来源、动态 GET/POST 路径参数、跨域 INTERCEPT、跨文档页面查询，以及 API 503 后保留历史并切换 DOM 的闭环。用户指定的真实公共视频搜索页已完成采集、生成、修复、验证、增量安装和普通 CLI 搜索/分页，DOM 命令也与当前页面逐项核对；原始页面/响应未进入仓库。动态路径本轮使用公开占位 loopback 示例站点验收，不代表已在该外部搜索站点验证动态详情接口。
+具体命令和数量见交接日志。当前 WebCLI 全量 105 文件、1117 项通过。真实 Chromium + 未打包插件 + 独立 CLI/Bridge + loopback 示例站点 27 项通过，包含浏览器操作、同 URL/嵌套跨源 frame、POST/GraphQL 工具、六组精确断言、知识持久化、API/DOM 定向修复、三个页面来源、动态 GET/POST 路径参数、跨域 INTERCEPT、跨文档页面查询，以及 API 503 后保留历史并切换 DOM 的闭环。最终版本完整复验包含 frame 的 Promise 超时、输出身份及页面重写内置函数时的隔离匹配。用户指定的真实公共视频搜索页已完成采集、生成、修复、验证、增量安装和普通 CLI 搜索/分页，DOM 命令也与当前页面逐项核对；原始页面/响应未进入仓库。动态路径本轮使用公开占位 loopback 示例站点验收，不代表已在该外部搜索站点验证动态详情接口。
 
 验收脚本为 `webcli/scripts/verify-exploration-browser.mjs`；使用临时副本改变连接端口及 CLI 配置目录，生产协议和默认端口未改。只启动/停止脚本自己创建的服务和浏览器，Adapter 安装、任务和浏览器配置均隔离。Playwright 只用于测试浏览器启动与示例页面导航，探索/生成/验证/安装和业务调用均经过真实 CLI 与插件，不 mock 扩展传输、fetch 或验证器。
 

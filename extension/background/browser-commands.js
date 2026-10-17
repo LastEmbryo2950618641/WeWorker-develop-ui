@@ -1,6 +1,7 @@
 import { runBrowserPageCommand } from './browser-page.js';
 import { browserNetworkUrl, browserNetworkBody } from './browser-network.js';
 import { beginBrowserObservations, readBrowserObservations, clearBrowserObservations } from './browser-observations.js';
+import { executeFrameScript, evaluateBrowserFrame } from './browser-frames.js';
 
 const pageCommands = new Set(['state', 'find', 'get', 'extract', 'click', 'dblclick', 'fill', 'type', 'select', 'check', 'uncheck', 'focus', 'hover', 'scroll']);
 const fail = (code, message) => Object.assign(new Error(message), { code });
@@ -24,12 +25,10 @@ export async function executeBrowserCommand({ command, tabId, args = {}, identit
       if (!identity || token !== identity) throw fail('SESSION_EXPIRED', 'Browser session identity expired. Unbind and bind the intended tab again.');
     }
     const page = async (operation, input) => {
-      const frameId = input.frameId === undefined ? 0 : Number(input.frameId);
-      if (!Number.isSafeInteger(frameId) || frameId < 0) throw fail('INVALID_ARGUMENT', 'frameId must be a non-negative integer.');
-      const results = await chrome.scripting.executeScript({ target: { tabId, frameIds: [frameId] }, world: 'ISOLATED', func: runBrowserPageCommand, args: [operation, input] });
-      const result = results[0]?.result;
+      const frame = await executeFrameScript(chrome, tabId, input, runBrowserPageCommand, [operation, input]);
+      const result = frame.result;
       if (!result?.ok) throw fail(result?.error?.code || 'PAGE_UNAVAILABLE', result?.error?.message || 'The selected frame is unavailable.');
-      return result.data;
+      return { ...result.data, frameId: frame.frameId, documentId: frame.documentId };
     };
     let data;
     if (command === 'open') {
@@ -52,11 +51,13 @@ export async function executeBrowserCommand({ command, tabId, args = {}, identit
     else if (['click', 'dblclick', 'hover', 'drag'].includes(command) && !Number(args.frameId)) {
       await ensureCdpAttached(tabId);
       await chrome.debugger.sendCommand({ tabId }, 'Page.bringToFront');
-      const from = await page('bounds', args);
+      const { x, y } = await page('bounds', args);
+      const from = { x, y };
       const mouse = params => chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', params);
       await mouse({ type: 'mouseMoved', ...from });
       if (command === 'drag') {
-        const to = await page('bounds', { selector: args.toSelector, scrollIntoView: false });
+        const { x: toX, y: toY } = await page('bounds', { selector: args.toSelector, scrollIntoView: false });
+        const to = { x: toX, y: toY };
         const start = from;
         await mouse({ type: 'mousePressed', ...start, button: 'left', buttons: 1, clickCount: 1 });
         try { for (let i = 1; i <= 10; i++) await mouse({ type: 'mouseMoved', x: start.x + (to.x - start.x) * i / 10, y: start.y + (to.y - start.y) * i / 10, button: 'left', buttons: 1 }); }
@@ -89,10 +90,12 @@ export async function executeBrowserCommand({ command, tabId, args = {}, identit
     else if (command === 'back') { await chrome.tabs.goBack(tabId); data = { navigating: true }; }
     else if (command === 'eval') {
       if (typeof args.expression !== 'string' || args.expression.length > 100000) throw fail('INVALID_ARGUMENT', 'expression must be a string of at most 100000 characters.');
-      data = { value: await cdpEvaluate(tabId, args.expression) };
+      data = args.frameId !== undefined || args.documentId !== undefined
+        ? await evaluateBrowserFrame(chrome, tabId, args, ensureCdpAttached)
+        : { value: await cdpEvaluate(tabId, args.expression) };
     } else if (command === 'frames') {
       const frames = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: () => ({ url: location.href, title: document.title }) });
-      data = { frames: frames.map(item => ({ frameId: item.frameId, ...item.result })) };
+      data = { frames: frames.map(item => ({ frameId: item.frameId, documentId: item.documentId, ...item.result })) };
     } else if (command === 'keys') {
       await ensureCdpAttached(tabId);
       await chrome.debugger.sendCommand({ tabId }, 'Page.bringToFront');
@@ -173,7 +176,8 @@ export async function executeBrowserCommand({ command, tabId, args = {}, identit
             const network = await getCdpNetworkSnapshot(tabId, { limit: 200 });
             if (network.entries.some(entry => entry.url.includes(value) && entry.status)) { data = { matched: true }; break; }
           } else {
-            const result = args.kind === 'selector' ? await page('find', { selector: value, frameId: args.frameId }) : await page('extract', { maxChars: 200000, frameId: args.frameId });
+            const frame = { frameId: args.frameId, documentId: args.documentId };
+            const result = args.kind === 'selector' ? await page('find', { selector: value, ...frame }) : await page('extract', { maxChars: 200000, ...frame });
             if (args.kind === 'selector' ? result.matches > 0 : result.text.includes(value)) { data = { matched: true }; break; }
           }
           await new Promise(resolve => setTimeout(resolve, 100));

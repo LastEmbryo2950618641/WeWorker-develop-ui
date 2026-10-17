@@ -49,6 +49,7 @@ export class BrowserService {
   }
   async send(command, args, tabId, identity) {
     if (!this.capabilities().capabilities.includes('browser_commands_v1')) throw fail('EXTENSION_UPGRADE_REQUIRED', 'Reload the extension built from this branch to enable browser commands.');
+    if ((args.documentId !== undefined || (command === 'eval' && args.frameId !== undefined)) && !this.capabilities().capabilities.includes('browser_frames_v1')) throw fail('EXTENSION_UPGRADE_REQUIRED', 'Reload the extension to select a frame/document; an older extension may evaluate in the main page.');
     const release = command === 'dialog' ? () => {} : this.tabLocks.acquire(tabId);
     try {
       const result = await this.request({ type: 'browser_execute', command, args, tabId, identity }, 45000);

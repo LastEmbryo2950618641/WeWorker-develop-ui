@@ -100,3 +100,13 @@ it('validates upload files locally and preserves expired browser session identit
   expect((await service.execute('state', { session: 'work' })).error.code).toBe('SESSION_EXPIRED');
   expect(requestExtension.mock.calls.at(-1)[0].identity).toBe('example-tab-identity');
 });
+
+it('guards frame eval and document targeting from older extensions and forwards explicit identities', async () => {
+  const { service, options, requestExtension } = setup(); await service.execute('bind', { session: 'work', tabId: 7 });
+  const expression = 'document.title';
+  expect((await service.execute('eval', { session: 'work', frameId: 12, expression })).error.code).toBe('EXTENSION_UPGRADE_REQUIRED');
+  expect((await service.execute('click', { session: 'work', selector: '#example', documentId: 'example-document' })).error.code).toBe('EXTENSION_UPGRADE_REQUIRED');
+  const capable = new BrowserService({ ...options, capabilities: () => ({ connected: true, capabilities: ['browser_commands_v1', 'browser_frames_v1'] }) });
+  expect((await capable.execute('eval', { session: 'work', frameId: '12', documentId: 'example-document', expression })).ok).toBe(true);
+  expect(requestExtension.mock.calls.at(-1)[0]).toMatchObject({ command: 'eval', args: { frameId: '12', documentId: 'example-document', expression }, identity: 'example-tab-identity' });
+});

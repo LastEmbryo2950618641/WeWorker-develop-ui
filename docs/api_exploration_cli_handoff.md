@@ -1,6 +1,6 @@
 # API 自动探索 CLI 改造跟进与交接
 
-> 更新日期：2026-10-17。当前阶段：来源分析与方案历史已实现；WebCLI 1116 项、扩展聚焦 53 项、隔离真实浏览器 26 项通过。真实 Chrome 完成 API 草稿留档→DOM 生成/验证/安装/调用并核对 24 张可见卡片。OpenCLI 1.8.8 静态核查已完成，全能力对齐仍进行中；独立 Agent 对话、UI 统一与平台安装包验收尚未完成。
+> 更新日期：2026-10-17。当前阶段：跨 frame 执行与文档身份已实现；WebCLI 1117 项、扩展聚焦 52 项、隔离真实浏览器最终完整 27 项通过，包含超时与隔离匹配检查。日常 Chrome 五个同 URL/嵌套跨源/严格 CSP frame 实测通过，B 站原命令仍返回 24 张可见卡片。OpenCLI 1.8.8 静态核查已完成，全能力对齐仍进行中；独立 Agent 对话、UI 统一与平台安装包验收尚未完成。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
 
 ## 最新状态
@@ -11,7 +11,7 @@
 - 功能分支在集成提交后创建为 `codex/api-exploration-cli`，最终操作结果见文末。未推送或创建 PR，最终发布目标仍待明确。
 - [开发设计](api_exploration_cli_design.md) 为本次审阅入口。
 - [OpenCLI 能力对齐台账](opencli_parity.md) 为最新范围与缺口清单；用户要求尽力对齐完整能力，不能把当前 34 个 browser 命令或单站点验收视为目标完成。
-- 首版功能实现提交为 `821a7df`，本轮从跨文档查询检查点 `b2b7a32` 继续；后续实现、真实验收与本地检查点见文末和 Git 日志。集成基线仍为 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`。这些是已纳入快照，后续同步前应重新 fetch，不能据此推断远端未变化。
+- 首版功能实现提交为 `821a7df`，本轮从来源分析检查点 `9d5a5f0` 继续；后续实现、真实验收与本地检查点见文末和 Git 日志。集成基线仍为 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`。这些是已纳入快照，后续同步前应重新 fetch，不能据此推断远端未变化。
 > 后续每次建分支、同步上游、解决冲突、实现功能或验证后，都应更新本文和 ROADMAP.md。未验证事项不得标为完成。
 
 ## 1. 目标与范围
@@ -373,3 +373,22 @@ npm run test:exploration:browser --prefix webcli -- \
 - 新增 `docs/opencli_1_8_8_audit.md`，读取官方 npm tarball 的 manifest/help/技能/分析代码，没有全局升级用户 OpenCLI，也没有复制上游业务代码。发布包有 1366 个命令、179 个 site 分组（包含桌面应用），这些静态数量不代表本项目覆盖或上游实机验证。详细差距已更新能力台账。
 - Python 网站探索agent相对功能起点 `af8e082` 差异为零，未触碰其环境、测试、生命周期和数据。未推送、未开 PR；本阶段作为本地检查点提交，提交 SHA 以 Git 日志为准。
 - 接手下一步：优先补浏览器 frame eval/观测、下载与流式输出/profile 等差距；设计符合 Extension/Toolkit 边界的 PUBLIC_API/COOKIE_API 执行及凭据契约。仍需动态页面路由/多步 UI/写命令、知识冲突修订和共享文件修复、UI/内置聊天复用、独立 Codex/Claude 新对话与各平台分发验收。当前明确 replan 不等于自动运行时回退，不应关闭完整对齐目标。
+
+### 2026-10-17：跨 frame 执行、文档身份与超时
+
+- 上轮 `9d5a5f0` 是有效进展，本轮从干净工作区继续；分支仍 `codex/api-exploration-cli`，未 fetch/合并/推送，上游已纳入快照与集成基线不变。完整 OpenCLI 对齐目标继续 active。
+- 核对 OpenCLI 1.8.8 的 browser.frames / eval --frame 契约后补齐相应能力，但保留 WebCLI 的 Chrome frameId，不改为数组索引。新增 browser_frames_v1；frames 返回 documentId，eval 支持 frameId/documentId，state/find/get/输入/等待支持文档校验。旧插件拒绝新参数，不允许静默落到主页面。
+- 新模块 browser-frames.js 维护按 tab+调试子会话区分的执行上下文，递归启用 iframe 子目标，不暂停新页面；主页面既有网络/预览缓存忽略子会话事件，防止数值 context/request ID 冲突。子目标 detach 清理其后代，根 detach 清理全表；不修改扩展 manifest/权限或引入依赖。
+- 选择 frame/document 先执行无副作用身份探测，配对不符时用户脚本/页面操作不会派发。临时标记放在扩展隔离环境，用 Chrome 提供的 frame 身份选择唯一 MAIN 上下文，执行前清除，finally 按原 documentId 清理；用户代码绑定 uniqueContextId，只执行一次，不按 URL 猜测、不使用可能复用的数值 contextId。相同 URL 的多个 frame 能分别返回各自 window.name。收尾审查将初版 MAIN 探测改为隔离探测，最终测试页故意重写 Object.getOwnPropertyDescriptor，确认不会调用该页面钩子来选择目标。
+- 显式错误包括 FRAME_UNAVAILABLE、FRAME_DOCUMENT_CHANGED、FRAME_CONTEXT_UNAVAILABLE、EVALUATION_FAILED、FRAME_EVALUATION_INTERRUPTED 和不可序列化结果。30 秒截止既约束 CDP 同步执行，也覆盖 awaitPromise 永不结束；不终止共享页面，超时表示结果不确定，不能自动重放。旧的不带 frame 参数主页面 eval 保持原路径。页面读取结果附 frameId/documentId，原生输入仅传坐标，避免将身份元数据误送 CDP 指针方法。
+- 自动化：WebCLI 全量 105 文件/1117 项通过，Extension 最终聚焦 52 项通过；额外新增 null/数组等非法 frame 参数断言后，相关 8 项再次通过。覆盖主/子 session 相同 context ID、错误文档配对零用户代码执行、导航中断一次派发、递归子会话清理、超时释放、旧插件拒绝及原生输入。共享 SW 测试 loader 注册新增模块，未降低既有断言。
+- 隔离真实 Chromium 完整 27 项通过，报告为系统临时目录 `webcli-browser-acceptance-3xI6nH/report.json`。新增两个同 URL 的跨源 frame，各有返回另一 origin 的嵌套 frame；严格 CSP 下执行 Promise、分别读取/填写/点击、主页面未误执行、错误配对和导航后旧文档拒绝。原 API/POST/路径参数/DOM/INTERCEPT/页面导航/修复安装/历史/重启流程全通过。
+- 完整通过后补了页面结果身份字段和 Promise 截止分支；最终 `--browser-only` 聚焦复验通过，报告为 `webcli-browser-acceptance-8P8Ep4/report.json`，包含 Promise.reject、真实永不结束 Promise 等待 30 秒后明确错误且后续主页面调用可用。该参数只在通用浏览器验证后提前结束，默认仍执行全部流程。最初测试脚本因局部变量 stale 与后文重复声明未启动，改名后执行；未把语法失败当实测。
+- 日常 Chrome：核实本任务 source Bridge 完整命令后更新并重载工作区 extension-dist；doctor 声明新能力，重新绑定 B 站搜索页。明确 frameId/documentId 的 Promise 执行返回 excel 第一页；已有 current-video-links 普通调用仍返回 24 张卡片。只对用户目标的主文档执行，没有检查无关嵌入页面的数据。
+- 日常 Chrome 另开本任务拥有的 loopback 公开示例页，五个 frame（主页面、两个同 URL 跨源子页面、两个嵌套跨源页面）逐一 eval 返回正确名字，均带当前 documentId，严格 CSP 生效。完成后通过 browser.close 关闭自建标签。临时服务器已停止监听但一个 Chrome 预连接使进程未退出，检查本任务会话与连接后用原 exec 句柄 Ctrl-C 清理；未停止其他服务，用户 B 站标签保留。
+- 当前源码 Bridge/用户插件已加载本轮能力；最后非法参数加固只需扩展重载，已执行。下次仍先 doctor/tabs/sessions 选择页面，不复用历史 PID、tabId 或 documentId。真实运行结果仅在本机临时文件，不进入仓库。
+- 子 frame click/hover 仍使用 DOM 事件；原生子 frame 指针、Shadow DOM、AX/state 比较、截图标注/尺寸、download 等待与流式输出、多 profile/连接仍待补。exploration 的生成页面来源仍只支持主 frame，不能由通用 eval 可用推断已支持 frame 内生成。后续还包括 PUBLIC_API/COOKIE_API runner、动态页面/多步 UI/写命令、UI 共享与独立 Agent 验收。
+- Python 网站探索agent相对 `af8e082` 差异为零，未触碰其源码、环境、测试、生命周期或数据。未推送、未创建 PR，本轮保存本地检查点；最终构建/pack 记录追加如下。
+
+- 最终复验：隔离标记加固后，8 项相关单测、52 项扩展聚焦及 WebCLI 105 文件/1117 项通过；浏览器聚焦通过后再次跑完整 27 项，报告 `webcli-browser-acceptance-pVDWcQ/report.json`，包括全部旧流程、30 秒不结束 Promise、页面重写内置函数和 frame 导航拒绝。日常 Chrome 同样重载最终代码，以五 frame CSP 示例再次确认页面 hook 未被调用，随后 B 站恢复绑定，主文档检查为 excel 第一页，原命令返回 24 卡片。最终临时服务器用 closeAllConnections 正常退出，无遗留测试服务或标签。
+- CLI/Bridge 构建与公开配置通过；最终 npm pack dry-run 591 文件，包含 extension/background/browser-frames.js 和更新 Skill。10 个修改/新增 JS 文件语法、差异格式、增量凭据/私网地址检查通过；打包帮助中 eval 声明 frameId/documentId。原有可选列映射资源警告保留，无新依赖。检查点 SHA 以 Git 日志为准；下一步优先补 download 生命周期等待及浏览器流式观测，同时保留全部能力台账的未完成范围。

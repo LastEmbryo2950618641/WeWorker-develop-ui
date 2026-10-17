@@ -6,8 +6,12 @@ for (const command of ['click', 'keys']) test(`${command} brings the bound tab f
   let failActivation = false;
   const chrome = { storage: { session: { get: async () => ({ 'webcli-browser-tab-7': 'example-identity' }) } },
     tabs: { get: async () => ({ id: 7, url: 'https://example.com/search' }) },
-    scripting: { executeScript: async () => [{ result: { ok: true, data: { x: 20, y: 30 } } }] },
-    debugger: { sendCommand: async (_tab, method) => { calls.push(method); if (failActivation && method === 'Page.bringToFront') throw new Error('Activation unavailable'); } },
+    scripting: { executeScript: async () => [{ frameId: 0, documentId: 'example-document', result: { ok: true, data: { x: 20, y: 30 } } }] },
+    debugger: { sendCommand: async (_tab, method, params) => {
+      calls.push(method);
+      if (method === 'Input.dispatchMouseEvent') { assert.equal(params.frameId, undefined); assert.equal(params.documentId, undefined); }
+      if (failActivation && method === 'Page.bringToFront') throw new Error('Activation unavailable');
+    } },
   };
   const run = () => executeBrowserCommand({ command, tabId: 7, identity: 'example-identity', args: command === 'keys' ? { key: 'Enter' } : { selector: '#search' } }, { chrome, ensureCdpAttached: async () => {} });
   assert.equal((await run()).ok, true);

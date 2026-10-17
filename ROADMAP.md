@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-17（跨 frame 执行）：browser.frames 返回 frameId/documentId，eval 与页面定位支持明确文档身份；递归跨源子会话隔离 context ID，执行一次、不按 URL 猜测，导航/脚本错误/不结束 Promise 明确失败。WebCLI 105 文件/1117 项、Extension 聚焦 52 项通过；隔离 Chromium 最终完整 27 项通过，包含 Promise 超时与页面重写函数的隔离检查；日常 Chrome 五个同 URL/嵌套跨源/严格 CSP frame 实测通过，B 站明确文档执行与旧命令 24 卡片回归通过。构建和配置通过；子 frame 原生指针、Shadow DOM、AX、下载/profile 及完整 OpenCLI 对齐继续进行。Python 网站探索agent零改动，详细打包/交接结果见跟进文档。
+
 - 2026-10-17（来源分析与方案历史）：新增 exploration.analyze/replan/revisions/revision-read，结构分类、策略理由及失败建议；旧草稿/计划/cases/验证结果保留，切换来源后必须重新验证审阅。明确 PAGE_FETCH 执行范围，PUBLIC_API/COOKIE_API 尚无独立 runner。WebCLI 105 文件/1116 项、Extension 聚焦 53 项、隔离 Chromium 26 项通过，含 API 503→DOM→安装调用及重启读取历史。真实 Chrome 完成 API 草稿留档→DOM 生成→预览/安装/普通调用，24 张可见卡片标题/链接逐项一致，重启后历史与调用通过；原 API 正常，页面仍为 excel 第一页。CLI/Bridge 构建、配置及 npm pack dry-run 590 文件通过。OpenCLI 1.8.8 静态审计与缺口已记录，完整对齐继续进行；Python 网站探索agent零改动。
 
 - 2026-10-17（跨文档页面查询）：新增 exploration.query，单次读控件触发后等待同源固定结果路径、URL 参数与稳定 DOM/公开状态；生成命令通过后台续接跨文档返回结果，允许从结果页重复调用，参数命令至少两组不同值验证。修复目录刷新重载打断探索的问题，探索/预览/browser 与普通调用共用页面队列。WebCLI 104 文件/1100 项、Extension 聚焦 58 项、隔离 Chromium 25 项通过；真实 Chrome 两关键词预览、安装与普通调用通过，24/27 张视频卡片与当前 DOM 逐项一致，旧 API/DOM/下一页回归通过。B 站重复同词不触发查询时明确超时，已恢复 excel 第一页并保存知识。构建/配置与 npm pack dry-run 588 文件通过。动态页面路径、跨源查询导航、多步 UI、写命令及完整 OpenCLI 对齐仍未完成；Python 网站探索agent零改动。

@@ -10,6 +10,7 @@ import { executePageSource } from './page-source.js';
 import { executeInterceptRead } from './intercept-read.js';
 import { executePageQuery } from './page-query.js';
 import { recordBrowserObservation, clearBrowserObservations } from './browser-observations.js';
+import { recordBrowserFrameEvent, clearBrowserFrames } from './browser-frames.js';
 
 /**
  * Background Service Worker
@@ -40,6 +41,7 @@ const EXTENSION_CAPABILITIES = [
   'generation_harness_v1',
   'runtime_validation_v1',
   'browser_commands_v1',
+  'browser_frames_v1',
   'strict_output_contract_v1',
   'page_sources_v1',
   'intercept_read_v1',
@@ -2220,6 +2222,10 @@ async function sendExplorationMessage(tabId, payload) {
 chrome.debugger.onEvent.addListener(async (source, method, params) => {
   const tabId = source?.tabId;
   if (!tabId || !cdpAttachedTabs.has(tabId)) return;
+  void recordBrowserFrameEvent(chrome, source, method, params);
+  // Child target context/request IDs are scoped to their debugger session.
+  // Existing preview and network caches belong to the main target only.
+  if (source.sessionId) return;
   recordBrowserObservation(tabId, method, params);
 
   if (method === 'Runtime.executionContextCreated') {
@@ -2406,7 +2412,8 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
 
 chrome.debugger.onDetach.addListener((source, reason) => {
   const tabId = source?.tabId;
-  if (!tabId) return;
+  if (!tabId || source.sessionId) return;
+  clearBrowserFrames(tabId);
   cdpAttachedTabs.delete(tabId);
   clearBrowserObservations(tabId);
   cdpExecutionContexts.delete(tabId);

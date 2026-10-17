@@ -33,6 +33,7 @@ async function record(name, value) {
 function passed(check) { checks.push(check); console.log(`PASS ${check}`); }
 console.log(`Artifacts: ${root}`);
 try {
+  await (async () => {
   const playwrightPath = process.argv.find(arg => arg.startsWith('--playwright='))?.slice(13);
   const executablePath = process.argv.find(arg => arg.startsWith('--chromium='))?.slice(11);
   const { chromium } = await import(playwrightPath ? pathToFileURL(playwrightPath).href : 'playwright');
@@ -100,7 +101,17 @@ try {
   let fallbackUnavailable = false, fallbackRequests = 0;
   server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
-    if (url.pathname === '/fallback-only') {
+    const port = server.address().port;
+    if (url.pathname === '/frame-host') {
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end(`<!doctype html><title>Example frame host</title><button id="frame-button">Main</button><iframe name="example-first" src="http://localhost:${port}/frame-child"></iframe><iframe name="example-second" src="http://localhost:${port}/frame-child"></iframe>`);
+    } else if (url.pathname === '/frame-child' || url.pathname === '/frame-inner') {
+      res.writeHead(200, { 'content-type': 'text/html', 'content-security-policy': "script-src 'self'; object-src 'none'" });
+      res.end(`<!doctype html><title>Example ${url.pathname === '/frame-child' ? 'child' : 'nested'} frame</title><h1>Example frame content</h1><button id="frame-button">Frame button</button><input id="frame-input" aria-label="Frame input"><script src="/frame-script.js"></script>${url.pathname === '/frame-child' ? `<iframe name="example-inner" src="http://127.0.0.1:${port}/frame-inner"></iframe>` : ''}`);
+    } else if (url.pathname === '/frame-script.js') {
+      res.writeHead(200, { 'content-type': 'application/javascript' });
+      res.end('window.exampleFrameCount=0;document.querySelector("#frame-button").onclick=()=>window.exampleFrameCount++;Object.getOwnPropertyDescriptor=()=>{window.exampleProbeHooked=true;throw new Error("Example page hook must not run during frame selection")};');
+    } else if (url.pathname === '/fallback-only') {
       res.writeHead(200, { 'content-type': 'text/html' });
       res.end('<!doctype html><title>Example fallback</title><article class="fallback-row"><h3>Example stable visible item</h3></article><script>fetch("/api/fallback-list").then(r=>r.json());fetch("/api/telemetry/search").then(r=>r.json())</script>');
     } else if (url.pathname === '/api/fallback-list') {
@@ -255,6 +266,46 @@ try {
   assert.equal((await cli('browser.state', { session: 'owned' })).data.title, 'Example inventory');
   assert.equal((await cli('browser.close', { session: 'owned' })).data.tabClosed, true);
   passed('browser sessions, trusted pointer and drag, upload, dialogs, console, locators, forms, keyboard, network, frames, eval and full-page screenshot');
+  await cli('browser.open', { session: 'frame-acceptance', url: origin + '/frame-host' });
+  const frameCall = (command, args = {}, ok = true) => cli(`browser.${command}`, { session: 'frame-acceptance', ...args }, ok);
+  const frameList = (await frameCall('frames')).data.frames;
+  const children = frameList.filter(frame => new URL(frame.url).pathname === '/frame-child');
+  const nested = frameList.filter(frame => new URL(frame.url).pathname === '/frame-inner');
+  assert.equal(children.length, 2); assert.equal(nested.length, 2);
+  const selectFrame = frame => ({ frameId: frame.frameId, documentId: frame.documentId });
+  const names = [];
+  for (const child of children) {
+    const selected = selectFrame(child);
+    const name = (await frameCall('eval', { ...selected, expression: 'Promise.resolve(window.name)' })).data.value; names.push(name); child.name = name;
+    assert.equal((await frameCall('eval', { ...selected, expression: '++window.exampleFrameCount' })).data.value, 1);
+    await frameCall('fill', { ...selected, selector: '#frame-input', value: name });
+    assert.equal((await frameCall('get', { ...selected, selector: '#frame-input', property: 'value' })).data.value, name);
+    await frameCall('click', { ...selected, selector: '#frame-button' });
+    assert.equal((await frameCall('eval', { ...selected, expression: 'window.exampleFrameCount' })).data.value, 2);
+    assert.equal((await frameCall('eval', { ...selected, expression: 'window.exampleProbeHooked === true' })).data.value, false);
+    assert.ok((await frameCall('state', selected)).data.text.includes('Example frame content'));
+  }
+  assert.deepEqual(names.sort(), ['example-first', 'example-second']);
+  for (const inner of nested) assert.equal((await frameCall('eval', { ...selectFrame(inner), expression: 'window.name' })).data.value, 'example-inner');
+  assert.equal((await frameCall('eval', { expression: 'window.exampleFrameCount ?? null' })).data.value, null);
+  assert.equal((await frameCall('eval', { ...selectFrame(children[0]), documentId: children[1].documentId, expression: 'window.exampleWrongTarget=true' }, false)).error.code, 'FRAME_DOCUMENT_CHANGED');
+  const thrown = await frameCall('eval', { ...selectFrame(children[0]), expression: 'throw new Error("Example frame failure")' }, false);
+  assert.equal(thrown.error.code, 'EVALUATION_FAILED');
+  assert.equal((await frameCall('eval', { ...selectFrame(children[0]), expression: 'Promise.reject(new Error("Example async failure"))' }, false)).error.code, 'EVALUATION_FAILED');
+  assert.equal((await frameCall('eval', { ...selectFrame(children[0]), expression: 'new Promise(() => {})' }, false)).error.code, 'FRAME_EVALUATION_INTERRUPTED');
+  assert.equal((await frameCall('eval', { expression: 'document.title' })).data.value, 'Example frame host');
+  await frameCall('eval', { expression: `document.querySelector(${JSON.stringify(`iframe[name="${children[0].name}"]`)}).src="/frame-inner?changed=1";true` });
+  await delay(300);
+  const staleFrame = await frameCall('eval', { ...selectFrame(children[0]), expression: 'window.exampleWrongTarget=true' }, false);
+  assert.equal(staleFrame.error.code, 'FRAME_UNAVAILABLE');
+  const changedFrames = (await frameCall('frames')).data.frames;
+  for (const frame of changedFrames) {
+    const probe = (await frameCall('eval', { ...selectFrame(frame), expression: '({wrong:window.exampleWrongTarget===true,markers:Object.getOwnPropertyNames(window).filter(k=>k.startsWith("__weworkerFrame_")).length})' })).data.value;
+    assert.deepEqual(probe, { markers: 0, wrong: false });
+  }
+  await frameCall('close');
+  passed('duplicate-URL and nested cross-origin frame eval under CSP, document guards, frame forms and stale-navigation rejection');
+  if (process.argv.includes('--browser-only')) return;
   const args = { tabId, goal: '查询示例列表，支持关键词和分页', requestId: 'example-browser-acceptance' };
   const start = await cli('exploration.start', args); const taskId = start.data.taskId;
   assert.equal((await cli('exploration.start', args)).data.taskId, taskId);
@@ -739,6 +790,7 @@ try {
   assert.equal((await settle(interruptedId)).status, 'evidence_ready');
   assert.equal((await cli(generated.data.toolNames[0], { page: 2 })).ok, true);
   passed('Bridge restart restores tasks, marks interruption and permits explicit resumption');
+  })();
 } catch (error) {
   await record('failure', { message: error.message, stack: error.stack, browserEvents });
   console.error(error); process.exitCode = 1;
