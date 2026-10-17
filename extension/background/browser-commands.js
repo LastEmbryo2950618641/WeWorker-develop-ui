@@ -3,6 +3,7 @@ import { browserNetworkUrl, browserNetworkBody } from './browser-network.js';
 import { beginBrowserObservations, readBrowserObservations, clearBrowserObservations } from './browser-observations.js';
 import { beginBrowserFrames, executeFrameScript, evaluateBrowserFrame } from './browser-frames.js';
 import { beginBrowserDownloads, clearBrowserDownloads, markBrowserDownloadAction, readBrowserDownloads, waitBrowserDownload } from './browser-downloads.js';
+import { executeFramePointer } from './browser-pointer.js';
 
 const pageCommands = new Set(['state', 'find', 'get', 'extract', 'click', 'dblclick', 'fill', 'type', 'select', 'check', 'uncheck', 'focus', 'hover', 'scroll']);
 const fail = (code, message) => Object.assign(new Error(message), { code });
@@ -52,6 +53,7 @@ export async function executeBrowserCommand({ command, tabId, args = {}, identit
     const tab = await chrome.tabs.get(tabId);
     if (!/^https?:\/\//.test(tab.url || '')) throw fail('UNSUPPORTED_PAGE', 'Only HTTP(S) pages are supported.');
     if (command === 'bind') data = { identity: await bind(tabId) };
+    else if (['click', 'dblclick', 'hover', 'drag'].includes(command) && Number(args.frameId)) data = await executeFramePointer(chrome, tabId, command, args, ensureCdpAttached);
     else if (['click', 'dblclick', 'hover', 'drag'].includes(command) && !Number(args.frameId)) {
       await ensureCdpAttached(tabId);
       await chrome.debugger.sendCommand({ tabId }, 'Page.bringToFront');

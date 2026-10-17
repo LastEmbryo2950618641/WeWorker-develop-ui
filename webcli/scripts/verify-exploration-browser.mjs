@@ -117,13 +117,13 @@ try {
       else res.end(downloadBody);
     } else if (url.pathname === '/frame-host') {
       res.writeHead(200, { 'content-type': 'text/html' });
-      res.end(`<!doctype html><title>Example frame host</title><button id="frame-button">Main</button><iframe name="example-first" src="http://localhost:${port}/frame-child"></iframe><iframe name="example-second" src="http://localhost:${port}/frame-child"></iframe>`);
+      res.end(`<!doctype html><title>Example frame host</title><style>iframe{width:450px;height:360px;border:12px solid gray;margin:30px;transform:scale(.85) rotate(3deg)}</style><button id="frame-button">Main</button><iframe name="example-first" src="http://localhost:${port}/frame-child"></iframe><iframe name="example-second" src="http://localhost:${port}/frame-child"></iframe>`);
     } else if (url.pathname === '/frame-child' || url.pathname === '/frame-inner') {
       res.writeHead(200, { 'content-type': 'text/html', 'content-security-policy': "script-src 'self'; object-src 'none'" });
-      res.end(`<!doctype html><title>Example ${url.pathname === '/frame-child' ? 'child' : 'nested'} frame</title><h1>Example frame content</h1><button id="frame-button">Frame button</button><input id="frame-input" aria-label="Frame input"><script src="/frame-script.js"></script>${url.pathname === '/frame-child' ? `<iframe name="example-inner" src="http://127.0.0.1:${port}/frame-inner"></iframe>` : ''}`);
+      res.end(`<!doctype html><title>Example ${url.pathname === '/frame-child' ? 'child' : 'nested'} frame</title><h1>Example frame content</h1><button id="frame-button">Frame button</button><input id="frame-input" aria-label="Frame input"><div id="frame-drag" style="display:inline-block;width:80px;height:25px;background:lightblue">Drag</div><div id="frame-drop" style="display:inline-block;width:80px;height:25px;background:lightgreen">Drop</div><script src="/frame-script.js"></script>${url.pathname === '/frame-child' ? `<iframe name="example-inner" style="height:250px;border:8px solid gray;transform:scale(.9)" src="http://127.0.0.1:${port}/frame-inner"></iframe><iframe name="example-same" src="/frame-inner"></iframe>` : ''}`);
     } else if (url.pathname === '/frame-script.js') {
       res.writeHead(200, { 'content-type': 'application/javascript' });
-      res.end('window.exampleFrameCount=0;document.querySelector("#frame-button").onclick=()=>window.exampleFrameCount++;Object.getOwnPropertyDescriptor=()=>{window.exampleProbeHooked=true;throw new Error("Example page hook must not run during frame selection")};');
+      res.end('window.exampleFrameCount=0;document.querySelector("#frame-button").onclick=e=>{window.exampleFrameCount++;window.exampleFrameTrusted=e.isTrusted};document.querySelector("#frame-button").onpointerover=e=>window.exampleHoverTrusted=e.isTrusted;document.querySelector("#frame-button").ondblclick=e=>window.exampleDoubleTrusted=e.isTrusted;document.querySelector("#frame-drag").onpointerdown=e=>window.exampleDragging=e.isTrusted;document.querySelector("#frame-drop").onpointerup=e=>window.exampleDropped=window.exampleDragging&&e.isTrusted;Object.getOwnPropertyDescriptor=()=>{window.exampleProbeHooked=true;throw new Error("Example page hook must not run during frame selection")};');
     } else if (url.pathname === '/fallback-only') {
       res.writeHead(200, { 'content-type': 'text/html' });
       res.end('<!doctype html><title>Example fallback</title><article class="fallback-row"><h3>Example stable visible item</h3></article><script>fetch("/api/fallback-list").then(r=>r.json());fetch("/api/telemetry/search").then(r=>r.json())</script>');
@@ -283,9 +283,10 @@ try {
   await cli('browser.open', { session: 'frame-acceptance', url: origin + '/frame-host' });
   const frameCall = (command, args = {}, ok = true) => cli(`browser.${command}`, { session: 'frame-acceptance', ...args }, ok);
   const frameList = (await frameCall('frames')).data.frames;
+  await record('browser-frames', frameList);
   const children = frameList.filter(frame => new URL(frame.url).pathname === '/frame-child');
   const nested = frameList.filter(frame => new URL(frame.url).pathname === '/frame-inner');
-  assert.equal(children.length, 2); assert.equal(nested.length, 2);
+  assert.equal(children.length, 2); assert.equal(nested.length, 4);
   const selectFrame = frame => ({ frameId: frame.frameId, documentId: frame.documentId });
   const names = [];
   for (const child of children) {
@@ -294,19 +295,45 @@ try {
     assert.equal((await frameCall('eval', { ...selected, expression: '++window.exampleFrameCount' })).data.value, 1);
     await frameCall('fill', { ...selected, selector: '#frame-input', value: name });
     assert.equal((await frameCall('get', { ...selected, selector: '#frame-input', property: 'value' })).data.value, name);
-    await frameCall('click', { ...selected, selector: '#frame-button' });
+    assert.equal((await frameCall('click', { ...selected, selector: '#frame-button' })).data.trusted, true);
     assert.equal((await frameCall('eval', { ...selected, expression: 'window.exampleFrameCount' })).data.value, 2);
+    assert.equal((await frameCall('eval', { ...selected, expression: 'window.exampleFrameTrusted' })).data.value, true);
     assert.equal((await frameCall('eval', { ...selected, expression: 'window.exampleProbeHooked === true' })).data.value, false);
     assert.ok((await frameCall('state', selected)).data.text.includes('Example frame content'));
   }
   assert.deepEqual(names.sort(), ['example-first', 'example-second']);
-  for (const inner of nested) assert.equal((await frameCall('eval', { ...selectFrame(inner), expression: 'window.name' })).data.value, 'example-inner');
-  assert.equal((await frameCall('eval', { expression: 'window.exampleFrameCount ?? null' })).data.value, null);
+  for (const inner of nested) {
+    assert.ok(['example-inner', 'example-same'].includes((await frameCall('eval', { ...selectFrame(inner), expression: 'window.name' })).data.value));
+    await frameCall('click', { ...selectFrame(inner), selector: '#frame-button' });
+    assert.equal((await frameCall('eval', { ...selectFrame(inner), expression: 'window.exampleFrameTrusted' })).data.value, true);
+    await frameCall('hover', { ...selectFrame(inner), selector: '#frame-button' });
+    await frameCall('dblclick', { ...selectFrame(inner), selector: '#frame-button' });
+    await frameCall('drag', { ...selectFrame(inner), selector: '#frame-drag', toSelector: '#frame-drop' });
+    assert.deepEqual((await frameCall('eval', { ...selectFrame(inner), expression: '({hover:window.exampleHoverTrusted,double:window.exampleDoubleTrusted,drag:window.exampleDropped})' })).data.value, {hover:true,double:true,drag:true});
+  }
+  for (const child of children) await frameCall('eval', { ...selectFrame(child), expression: 'const cover=document.createElement("div");cover.id="child-cover";cover.style="position:fixed;inset:0;background:white;z-index:2147483647";document.body.append(cover);true' });
+  assert.equal((await frameCall('click', { ...selectFrame(nested[0]), selector: '#frame-button' }, false)).error.code, 'ELEMENT_OBSCURED');
+  for (const child of children) await frameCall('eval', { ...selectFrame(child), expression: 'document.querySelector("#child-cover").remove();true' });
+  await frameCall('hover', { ...selectFrame(children[1]), selector: '#frame-input' });
+  await frameCall('eval', { ...selectFrame(children[1]), expression: 'document.querySelector("#frame-button").onpointerover=e=>{e.currentTarget.style.marginLeft="80px"};true' });
+  assert.equal((await frameCall('click', { ...selectFrame(children[1]), selector: '#frame-button' }, false)).error.code, 'POINTER_TARGET_CHANGED');
+  assert.equal((await frameCall('eval', { ...selectFrame(children[1]), expression: 'window.exampleFrameCount' })).data.value, 2);
+  await frameCall('eval', { ...selectFrame(children[1]), expression: 'const button=document.querySelector("#frame-button");button.onpointerover=null;button.style.marginLeft="";true' });
+  await frameCall('eval', { expression: 'const cover=document.createElement("div");cover.id="pointer-cover";cover.style="position:fixed;inset:0;background:white;z-index:2147483647";document.body.append(cover);true' });
+  assert.equal((await frameCall('click', { ...selectFrame(children[0]), selector: '#frame-button' }, false)).error.code, 'ELEMENT_OBSCURED');
+  await frameCall('eval', { expression: 'document.querySelector("#pointer-cover").remove();true' });
+  assert.equal((await frameCall('click', { ...selectFrame(children[0]), documentId: children[1].documentId, selector: '#frame-button' }, false)).error.code, 'FRAME_DOCUMENT_CHANGED');
   assert.equal((await frameCall('eval', { ...selectFrame(children[0]), documentId: children[1].documentId, expression: 'window.exampleWrongTarget=true' }, false)).error.code, 'FRAME_DOCUMENT_CHANGED');
-  const thrown = await frameCall('eval', { ...selectFrame(children[0]), expression: 'throw new Error("Example frame failure")' }, false);
+  await frameCall('eval', { ...selectFrame(children[0]), expression: 'document.querySelector("#frame-button").onpointerover=()=>{location.href="/frame-inner?pointer-navigation=1"};true' });
+  const movedOnHover=await frameCall('click', { ...selectFrame(children[0]), selector: '#frame-button' }, false);
+  assert.ok(['FRAME_DOCUMENT_CHANGED','POINTER_OPERATION_INTERRUPTED','POINTER_TARGET_CHANGED'].includes(movedOnHover.error.code),JSON.stringify(movedOnHover));
+  passed('native frame click/hover/double-click/drag across scaled rotated and nested same/cross-origin frames; ancestor overlays and navigation rejected');
+  assert.equal((await frameCall('eval', { expression: 'window.exampleFrameCount ?? null' })).data.value, null);
+  const liveChild = children[1];
+  const thrown = await frameCall('eval', { ...selectFrame(liveChild), expression: 'throw new Error("Example frame failure")' }, false);
   assert.equal(thrown.error.code, 'EVALUATION_FAILED');
-  assert.equal((await frameCall('eval', { ...selectFrame(children[0]), expression: 'Promise.reject(new Error("Example async failure"))' }, false)).error.code, 'EVALUATION_FAILED');
-  assert.equal((await frameCall('eval', { ...selectFrame(children[0]), expression: 'new Promise(() => {})' }, false)).error.code, 'FRAME_EVALUATION_INTERRUPTED');
+  assert.equal((await frameCall('eval', { ...selectFrame(liveChild), expression: 'Promise.reject(new Error("Example async failure"))' }, false)).error.code, 'EVALUATION_FAILED');
+  assert.equal((await frameCall('eval', { ...selectFrame(liveChild), expression: 'new Promise(() => {})' }, false)).error.code, 'FRAME_EVALUATION_INTERRUPTED');
   assert.equal((await frameCall('eval', { expression: 'document.title' })).data.value, 'Example frame host');
   await frameCall('eval', { expression: `document.querySelector(${JSON.stringify(`iframe[name="${children[0].name}"]`)}).src="/frame-inner?changed=1";true` });
   await delay(300);

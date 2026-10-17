@@ -8,8 +8,8 @@
 | --- | --- | --- |
 | 任意 Agent 与发现 | 不依赖桌面或第二模型 Key；结构化帮助、Skill；Codex/Claude 独立对话 | 核心架构已实现；跨 Agent 独立验收待做 |
 | 浏览器会话 | open/bind/unbind/close/tab、profile、多连接管理、doctor；用户页不误关闭、跨 CLI/重启恢复 | 命名会话、owned/bound 关闭规则、doctor、持久绑定、Chrome 会话身份守卫已实现；真实 owned/bound 验收通过；多 profile/连接待做 |
-| 页面操作 | state/find/get/extract、click/dblclick/fill/type/select/check/uncheck/focus/hover/scroll/keys/drag/upload/dialog；过期引用和模糊定位报错 | 主 frame 原生指针、拖拽、文件输入、弹窗及表单命令已实现并真实验收；子 frame 指针仍为 DOM 事件，Shadow DOM/复杂控件待补 |
-| 页面观察 | frames/screenshot/console/eval/wait、网络摘要/detail/filter/follow、有界响应读取、失效错误 | 主 frame 及嵌套跨源 frame eval、frame/document 身份校验、frames 列表、完整截图、console 游标、网络摘要/JSON 详情/子串/失败/时间筛选已真实验收；下载生命周期/游标/续等及跨源 frame 下载已验收；AX、截图标注/尺寸、子 frame 原生指针和网络流待做 |
+| 页面操作 | state/find/get/extract、click/dblclick/fill/type/select/check/uncheck/focus/hover/scroll/keys/drag/upload/dialog；过期引用和模糊定位报错 | 主 frame 原生指针、拖拽、文件输入、弹窗及表单命令已实现并真实验收；嵌套同源/跨源 frame 原生 click/dblclick/hover/同 frame drag 已验收，含缩放/旋转/透视与祖先遮挡拒绝；Shadow DOM/复杂控件和跨 frame/DataTransfer 拖拽待补 |
+| 页面观察 | frames/screenshot/console/eval/wait、网络摘要/detail/filter/follow、有界响应读取、失效错误 | 主 frame 及嵌套跨源 frame eval、frame/document 身份校验、frames 列表、完整截图、console 游标、网络摘要/JSON 详情/子串/失败/时间筛选已真实验收；下载生命周期/游标/续等及跨源 frame 下载已验收；AX、截图标注/尺寸和网络流待做 |
 | 探索策略 | PUBLIC/COOKIE/PAGE_FETCH/INTERCEPT/DOM_STATE/UI_SELECTOR；接口/页面状态/脚本发现与策略理由 | PAGE_FETCH、声明式 UI_SELECTOR/DOM_STATE、单步 INTERCEPT 与跨文档页面查询已真实验收。analyze 提供结构分类/契约/错误建议，strategyNote 保存理由；Agent 可 replan 保留旧方案再换来源，API 失败→DOM 全流程通过。PUBLIC_API/COOKIE_API 独立 host HTTP runner、多步 UI 未实现；无运行时静默回退 |
 | 请求和鉴权 | POST 只读查询、GraphQL、动态路径、跨源、Cookie/CSRF/runtime 签名、写操作语义与确认 | 显式 API origin 授权、Agent 计划的 JSON/form POST 与 GraphQL query、API 路径参数已实现；动态 GET/POST 四组真实用例及安装后调用通过，固定域名/路径其余段，ID 不转数字；真实 B 站 PAGE_FETCH 关键词/分页完整闭环通过；INTERCEPT 可由页面生成临时请求头/签名；通用 CSRF/签名算法、动态页面路由和写命令待补 |
 | 生成与验证 | 任意目标数量、草稿文件编辑、字段映射、语义/样例验证、同站增量保留、审阅安装 | Agent 计划支持 1–50 工具，draft-add 支持新文件；每工具 1–10 组作者参数和精确路径/类型/非空/格式/值/数量断言，超过五组分批执行；六组真实用例含最后一组故意失败与修复已验收；更大计划需分任务 |
@@ -45,3 +45,5 @@ WebCLI 105 文件/1116 项、Extension 聚焦 53 项、隔离 Chromium 26 项通
 跨 frame 增量：新增 `extension/background/browser-frames.js`，frames 提供 Chrome frameId/documentId，eval 可执行嵌套跨源 MAIN 上下文，页面定位/输入也可校验文档。相同 URL、多进程重复 context ID、导航、脚本异常和永不结束 Promise 均有覆盖；旧插件缺 browser_frames_v1 时明确拒绝。WebCLI 105 文件/1117 项、Extension 聚焦 52 项通过，隔离 Chromium 最终完整 27 项通过，包含超时与身份输出、页面重写内置函数时的隔离匹配。日常 Chrome 五 frame 公开临时 fixture 及 B 站主文档/24 卡片回归通过。子 frame click/hover 仍是 DOM 事件，生成的 exploration 页面来源仍限主 frame；本轮不代表 AX、Shadow DOM 或完整浏览器能力完成。
 
 下载生命周期增量：新增 browser-downloads.js / browser_downloads_v1，35 个 browser 命令。Page 事件限定标签归属，递归子会话启用 Page 事件；最多 100 条内存记录，游标/ID、重复歧义、进度超时与取消均明确处理。等待绕过页面操作锁，支持先等待后点击；落盘路径只做限定 URL/时间的唯一匹配。WebCLI 105 文件/1118 项、扩展聚焦 64 项、隔离 Chromium 完整 28 项通过，含传输中重启 Bridge 后同 ID 继续、一次请求和准确文件字节。日常 Chrome 155 的主页面下载、慢速续等、跨源 frame focus + Enter 及落盘内容通过；DOM click 在该环境没有创建下载记录，未改变下载策略绕过。B 站 Excel 第一页原命令 24 卡片标题/规范化链接逐项一致，未混入示例下载。
+
+原生 frame 指针增量：browser-pointer.js 与 browser_frame_pointer_v1 复用隔离文档身份，按调试目标根视口处理同进程逆变换与跨进程投影，逐层命中检查。悬停布局变化/文档导航失败，不回退 DOM click；保留原生 input 副作用的不确定性。WebCLI 1119 项、扩展聚焦 69 项，隔离完整 29 项及最终浏览器聚焦通过；日常 Chrome 六个同/跨源嵌套 frame 在缩放、旋转、透视与边框下 click/hover/dblclick/drag 均 isTrusted=true，祖先遮挡拒绝，原生子 frame click 下载成功并核对文件字节，修复上一阶段必须用 Enter 的限制。B 站 Excel 第一页 24 卡片回归通过。仍不代表 Shadow DOM、自定义 DataTransfer、跨 frame 拖拽或 exploration frame 来源生成已实现。

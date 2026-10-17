@@ -15,3 +15,5 @@
 下一步仍包括多步 UI/写命令、通用鉴权、复杂浏览器能力、知识修订、UI/聊天共用服务和独立 Agent 验收。此核查更新比较基线，不改变用户要求尽力完整对齐的目标。
 
 下载对照增量：核对发布包 cli.js 的 wait download、browser/page.js 与类型声明。本项目使用同一 call 入口，显式区分未见/进行中/中断/歧义；匹配为字面子串，downloadId 为 CDP GUID，Chrome 数字 ID 只是可选元数据。每次等待最长 30 秒，可按同一 ID 续等；不保证总能取得路径，不改浏览器下载策略。子 frame DOM 点击在日常 Chrome 未形成下载，focus + 原生 Enter 的跨源示例完成；这是仍待补原生子 frame 指针的实际边界。
+
+原生 frame 输入增量：通用 click/dblclick/hover/drag 已补齐嵌套同源/跨源 frame 的原生指针，新增能力守卫避免旧插件退回 DOM 事件。日常 Chrome 上一阶段的跨源下载限制已由原生 click 解决。保留 Chrome frameId/documentId 选择契约与同 frame 拖拽范围；不据此声明所有复杂控件或 HTML5 拖放协议已等同。

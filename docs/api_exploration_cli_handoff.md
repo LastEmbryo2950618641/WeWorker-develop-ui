@@ -1,6 +1,6 @@
 # API 自动探索 CLI 改造跟进与交接
 
-> 更新日期：2026-10-17。当前阶段：下载生命周期/游标/续等已实现；WebCLI 1118 项、扩展聚焦 64 项、隔离真实浏览器完整 28 项通过。日常 Chrome 主页面下载、慢速续等、跨源 frame 原生键盘触发与文件内容通过；子 frame DOM 点击仍有限制。B 站 Excel 第一页 24 张卡片回归通过。完整 OpenCLI 对齐继续进行；独立 Agent 对话、UI 统一与平台安装包验收尚未完成。
+> 更新日期：2026-10-17。当前阶段：子 frame 原生 click/dblclick/hover/同 frame drag 已实现；WebCLI 1119 项、扩展聚焦 69 项、隔离真实浏览器完整 29 项及最终浏览器聚焦通过。日常 Chrome 六个同源/跨源嵌套 frame 原生事件、缩放/旋转/透视、父层遮挡和原生点击下载通过，B 站 Excel 第一页 24 卡片回归通过。完整 OpenCLI 对齐继续进行；独立 Agent 对话、UI 统一与平台安装包验收尚未完成。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
 
 ## 最新状态
@@ -11,7 +11,7 @@
 - 功能分支在集成提交后创建为 `codex/api-exploration-cli`，最终操作结果见文末。未推送或创建 PR，最终发布目标仍待明确。
 - [开发设计](api_exploration_cli_design.md) 为本次审阅入口。
 - [OpenCLI 能力对齐台账](opencli_parity.md) 为最新范围与缺口清单；用户要求尽力对齐完整能力，不能把当前 35 个 browser 命令或单站点验收视为目标完成。
-- 首版功能实现提交为 `821a7df`，本轮从跨 frame 检查点 `51e7906` 继续；后续实现、真实验收与本地检查点见文末和 Git 日志。集成基线仍为 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`。这些是已纳入快照，后续同步前应重新 fetch，不能据此推断远端未变化。
+- 首版功能实现提交为 `821a7df`，本轮从下载检查点 `948795b` 继续；后续实现、真实验收与本地检查点见文末和 Git 日志。集成基线仍为 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`。这些是已纳入快照，后续同步前应重新 fetch，不能据此推断远端未变化。
 > 后续每次建分支、同步上游、解决冲突、实现功能或验证后，都应更新本文和 ROADMAP.md。未验证事项不得标为完成。
 
 ## 1. 目标与范围
@@ -410,3 +410,23 @@ npm run test:exploration:browser --prefix webcli -- \
 - 接手下一步：优先原生子 frame 指针（本次日常 Chrome 暴露实际限制）、console/network 持续观察、AX/截图扩展；随后 profile/多连接、PUBLIC_API/COOKIE_API runner 与显式凭据契约。多步 UI/动态页面/写命令、知识修订/共享修复、UI/内置聊天复用、独立 Codex/Claude 对话、平台分发与业务覆盖仍在能力台账内，不关闭全目标。
 
 - 最终分发检查：CLI/Bridge 构建、公开配置、12 个 JS 文件语法、Git 差异格式和新增内容凭据/私网地址检查通过；npm pack dry-run 592 文件，包含 browser-downloads.js 与最新 browser Skill，构建 CLI 帮助声明 downloads/downloadId。原有可选列映射资源缺失警告仍在，无新增依赖。完整 28 项后再为跨源链接补原生 focus + Enter 自动验收，--downloads-only 最终通过，报告 `webcli-browser-acceptance-TN43t5/report.json`；生产代码未再变更。检查点提交 SHA 以 Git 日志为准，完整目标保持进行中。
+
+
+### 2026-10-17：子 frame 原生指针与跨源下载修复
+
+- 从下载检查点 `948795b` 的干净工作区继续；上一轮是已提交并实测的进展。分支、已纳入上游快照、集成基线不变；本轮未 fetch/合并/推送，完整目标保持 active。
+- 新增 browser-pointer.js 与 browser_frame_pointer_v1。子 frame click/dblclick/hover 不再合成 DOM 事件，drag 支持同一指定 frame 的 selector/toSelector；旧插件拒绝新行为。主 frame 既有原生路径保持，普通输入和页面生成策略未扩范围。
+- 抽取 withBrowserFrameContext 供 eval/指针共用隔离文档身份匹配。指针将选中节点暂存扩展隔离环境，绑定远程对象与 unique context，在最终派发前核对文档；不依据 URL 或数组索引找目标。临时标记与远程对象在 finally 清理，导航后的新文档不会收到旧清理或自动重试。
+- 独立 Chrome 调试探针确认直接对子 target 发送本地原生输入能产生 isTrusted，但可能绕开父层命中检查，因此正式实现统一派发主视口坐标。DOM 内容四边形属于该调试目标根视口；同进程子 frame 需先逆变换到本地视口，沿每层 iframe owner 内容四边形投影到父视口。使用投影变换处理边框、缩放、旋转和透视；滚动保留的节点后，在每个文档的隔离世界 elementFromPoint 检查目标/owner。
+- 首次多 frame 测试中，直接用 DOM.getNodeForLocation 检查同进程子 frame 返回父 iframe owner，导致明确 ELEMENT_OBSCURED（未点击）。据真实几何与 frame 记录改为逐文档逆变换和命中检查后通过，没有放宽遮挡条件。frame tree 缓存也按调试 session 区分。
+- 悬停后重新测量，超过半个 CSS 像素的布局移动拒绝点击；父层/目标遮挡、离屏、文档变化均明确失败。30 秒准备截止阻止迟到指针派发，拖拽出错尝试在最后已发送坐标释放按钮（按下出错也执行释放）；不会自动重试。悬停、双击第一下或部分拖拽可能已产生业务副作用，错误不证明“未操作”，Skill 已说明。
+- 单测：WebCLI 105 文件/1119 项通过；扩展最终聚焦 69 项通过，含投影/逆变换与退化坐标、准备截止后零 Input 事件和标记清理、旧插件能力守卫。既有 frame 8 项先通过，最终总集包含这些回归。
+- 隔离真实 Chromium 完整 29 项通过，报告 `webcli-browser-acceptance-MBAZLR/report.json`。新增六个子 frame（两个同 URL 跨源、各自同源和跨源嵌套），检查缩放/旋转/边框下原生 click/hover/dblclick/drag 的 isTrusted；根/中间父层遮挡拒绝，悬停移位拒绝且点击计数不变，hover 导航拒绝，错配文档拒绝。原有 30 秒 Promise、下载、API/DOM/INTERCEPT/跨文档查询、修复、安装、知识历史和重启全部通过。
+- 完整通过后收尾加入准备截止和拖拽异常释放位置加固；新增截止单测通过，最终 --browser-only 5 项通过，报告 `webcli-browser-acceptance-PYOvFP/report.json`。最终版包含原生输入和下载等全部浏览器场景，未把该聚焦报告当作又一次完整探索流程。
+- 日常 Chrome：核实本任务 source Bridge 后更新并重载工作区插件，doctor 声明新能力。自建公开 loopback fixture 的六个同/跨源子 frame 在缩放/旋转/透视/边框下 click/hover/dblclick/drag 均 isTrusted=true，点击计数准确，父层遮挡拒绝。跨源下载链接直接原生 click 即成功，下载内容逐字节一致，修复上一轮须用 focus+Enter 的限制。报告 `weworker-pointer-live-ubq99z/report.json`；临时服务与自建标签已关闭，示例 txt 留在本机下载目录。
+- B 站重新明确绑定，excel 第一页、原 current-video-links 命令 24 张可见卡片标题/规范化链接逐项一致，下载记录未混入本轮其他标签。只将摘要记入本文，真实响应、页面和包内容未提交。
+- 当前 source Bridge 为 PID 19049、日志 `/tmp/weworker-pointer-live-bridge.log`，仅是快照，下次操作前核对完整命令归属。用户安装位置仍为工作区 extension-dist，B 站会话 bilibili-maintenance 保留；重载后重新选择 tab/document，不复用旧身份。
+- Python 网站探索agent相对 `af8e082` 差异为零，源码/环境/测试/生命周期/数据全程排除；无新权限、依赖、CI/发布改动。未推送、未建 PR，本阶段保存本地检查点。最终分发/代码复验补充如下。
+- 接手下一步：console/network 持续观察、AX 与截图标注/尺寸、Shadow DOM/复杂控件，以及 profile/多连接、PUBLIC_API/COOKIE_API 执行和显式凭据契约；多步 UI/动态页面/写命令、知识修订/共享修复、UI/内置聊天复用、独立 Codex/Claude 对话、平台分发与 Adapter 业务覆盖仍在台账。拖拽当前限同 frame 的指针流程，不构造 DataTransfer 或跨 frame 拖拽；exploration 页面来源仍限主 frame。不能将本轮浏览器进展视作完整 OpenCLI 对齐。
+
+- 最终检查：CLI/Bridge 构建、公开配置、10 个 JS 文件语法、Git 差异格式与新增内容凭据/私网地址检查通过；npm pack dry-run 593 文件，包含 browser-pointer.js 和最新 Skill，构建 CLI 的 drag 帮助包含 frameId/documentId。原有可选列映射资源警告保留，无新依赖。最终插件重载后再次跑日常 Chrome 六 frame/遮挡/直接点击下载，报告 `weworker-pointer-live-1bOX7q/report.json` 通过；B 站重新绑定并再次核对 24 卡片成功。所有自建服务/标签已清理，用户页面保留。检查点 SHA 以 Git 日志为准，全能力目标保持进行中。

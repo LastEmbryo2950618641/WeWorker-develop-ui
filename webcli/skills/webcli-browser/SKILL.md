@@ -21,7 +21,8 @@ description: 通过 WebCLI 和浏览器插件直接操作已登录网页、检�
 - ref 仅限最近一次 state/find 快照。新快照、URL 变化、节点移除或标签变化会让旧 ref 失效。遇到 `STALE_REF` 重新读状态；遇到 `AMBIGUOUS_TARGET` 收窄定位。
 - `get` 读取 text/value/html/attribute；`extract` 获取页面或单元素文本。密码字段 get 不返回内容。
 - fill 替换输入、type 追加、select 选择原生选项，check/uncheck 设置勾选状态，focus/keys 操作键盘。fill/type 使用原生 value setter 和 input/change 事件；需要逐键行为时用 keys。
-- click/dblclick/hover 在主 frame 使用 CDP 原生指针，遮挡会报错；子 frame 目前使用 DOM 事件。drag 使用主 frame 内的 selector/toSelector，两个目标需同时在视口中。
+- click/dblclick/hover 使用 CDP 原生指针，支持主页面及嵌套的同源/跨源 frame；子 frame 需 browser_frame_pointer_v1，旧插件明确拒绝。drag 用 selector/toSelector 选择同一 frame 的两个目标，也可传 frameId/documentId，两者需同时可见；不支持跨 frame 拖拽或构造 HTML5 DataTransfer。
+- 原生 frame 操作保留选中节点与文档身份，处理边框、缩放、旋转与透视，并逐层检查遮挡。ELEMENT_OBSCURED / ELEMENT_OFFSCREEN 时先检查页面；POINTER_TARGET_CHANGED 表示悬停后布局改变，未自动重试。FRAME_DOCUMENT_CHANGED / POINTER_OPERATION_INTERRUPTED 时操作可能已产生悬停或部分点击副作用，先读取状态，不重放。拖拽异常会尝试在最后位置释放鼠标按钮。
 - upload 用 selector + paths 数组指定主 frame 文件输入与本地绝对路径，支持隐藏原生 input。只选择当前任务授权的文件；可能触发站点自动上传，按实际业务副作用处理。
 - 修改、发布、购买等操作须在用户授权范围内；工具存在不等于授权操作。登录、验证码与风控由用户完成。
 
@@ -48,7 +49,7 @@ webcli call browser.wait --args '{"session":"work","kind":"download","after":"<c
 - 成功返回 `downloaded=true`、`state=complete`、downloadId、suggestedFilename 和字节数，表示 Chrome 已报告完成。下载只观察当前标签及其子 frame，不查找或接管其他标签的下载。
 - `DOWNLOAD_TIMEOUT` 区分 `not_seen` 与 `in_progress`。Chrome 尚未创建下载（例如服务器未完成响应类型识别）时也是 not_seen，不能据此认定点击无效。已有下载时用错误里的 downloadId 继续 `wait`，不要再次点击。
 - `DOWNLOAD_INTERRUPTED` 表示 Chrome 中断/取消；`DOWNLOAD_AMBIGUOUS` 表示多个匹配。通过 `downloads` 查看并明确选择 downloadId；不自动重试、取消或绕过浏览器下载提示。
-- 子 frame 的 click 当前是 DOM 事件，可能因缺少用户激活而不产生下载；对可聚焦链接可先用 frameId/documentId 定位 focus，再用原生 keys Enter。以观察到的完成事件为准，不能把点击成功当成下载成功。
+- 子 frame 的 click 现已支持原生用户输入；也可先按 frameId/documentId 定位 focus，再用原生 keys Enter。以观察到的完成事件为准，不能把点击成功当成下载成功；浏览器仍可能显示下载或站点权限提示。
 - `filename` 只是可选落盘路径：对已观察 URL/开始时间做限定查询，唯一匹配时 `fileResolved=true`、`fileResolution=unique_url_time_match`。无法解析或匹配歧义时不猜路径。URL 中的常见凭据参数脱敏，文件正文不返回。
 - 记录仅存扩展内存，每标签最多 100 条；Bridge 重启可继续，扩展重载、浏览器/调试断开、标签关闭会失效。旧/已淘汰游标明确报错，重新绑定后取得新 cursor。cursor 按下载开始排序，不是进度订阅；跟踪已有下载用 downloadId。单次等待最长 30 秒，不修改 Chrome 下载目录、权限或安全设置。
 

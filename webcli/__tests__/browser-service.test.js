@@ -125,3 +125,15 @@ it('download observers release no action locks and propagate progress details, w
   expect((await pending).error).toMatchObject({ code: 'DOWNLOAD_TIMEOUT', details: { download: { downloadId: 'example-guid' } } });
   expect((await capable.execute('wait', { session: 'work', kind: 'selector' })).error.code).toBe('INVALID_ARGUMENT');
 });
+
+it('requires the native frame pointer capability and forwards drag document identity', async () => {
+  const { service, requestExtension, options } = setup();await service.execute('bind',{session:'work',tabId:7});
+  const framesOnly=new BrowserService({...options,capabilities:()=>({connected:true,capabilities:['browser_commands_v1','browser_frames_v1']})});
+  const args={session:'work',frameId:12,documentId:'example-child',selector:'#from',toSelector:'#to'};
+  const before=requestExtension.mock.calls.length;
+  expect((await framesOnly.execute('drag',args)).error.code).toBe('EXTENSION_UPGRADE_REQUIRED');
+  expect(requestExtension.mock.calls.slice(before).some(([msg])=>msg.type==='browser_execute')).toBe(false);
+  const native=new BrowserService({...options,capabilities:()=>({connected:true,capabilities:['browser_commands_v1','browser_frames_v1','browser_frame_pointer_v1']})});
+  expect((await native.execute('drag',args)).ok).toBe(true);
+  expect(requestExtension.mock.calls.at(-1)[0]).toMatchObject({command:'drag',args:{frameId:12,documentId:'example-child',toSelector:'#to'}});
+});

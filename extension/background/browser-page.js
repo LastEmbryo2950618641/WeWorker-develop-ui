@@ -72,7 +72,11 @@ export async function runBrowserPageCommand(command, args = {}) {
       const x = Math.max(0, rect.left) + (Math.min(innerWidth, rect.right) - Math.max(0, rect.left)) / 2;
       const y = Math.max(0, rect.top) + (Math.min(innerHeight, rect.bottom) - Math.max(0, rect.top)) / 2;
       const hit = document.elementFromPoint(x, y);
-      if (!hit || (hit !== node && !node.contains(hit))) fail('ELEMENT_OBSCURED', 'Another element covers this target. Inspect the current page.');
+      // Native frame pointers verify the actual content quad and every ancestor.
+      // A rotated element's bounding-box center need not be inside the element.
+      if (!args.pointerToken && (!hit || (hit !== node && !node.contains(hit)))) fail('ELEMENT_OBSCURED', 'Another element covers this target. Inspect the current page.');
+      // Internal native-pointer handoff stays in the extension's isolated world.
+      if (typeof args.pointerToken === 'string') globalThis[args.pointerToken] = node;
       return { ok: true, data: { x, y } };
     }
     if (command === 'click' || command === 'dblclick') {

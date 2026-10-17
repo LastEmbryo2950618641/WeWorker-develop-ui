@@ -72,7 +72,7 @@ export async function executeFrameScript(chrome, tabId, args, func, input, world
   return result;
 }
 
-export async function evaluateBrowserFrame(chrome, tabId, args, ensureCdpAttached) {
+export async function withBrowserFrameContext(chrome, tabId, args, ensureCdpAttached, operation) {
   browserFrameSelection(tabId, args);
   await ensureCdpAttached(tabId);
   const state = await beginBrowserFrames(chrome, tabId);
@@ -83,7 +83,7 @@ export async function evaluateBrowserFrame(chrome, tabId, args, ensureCdpAttache
       this[name] = true;
       return true;
     }, [marker]);
-    let context;
+    let context, isolated;
     const deadline = Date.now() + 2500;
     while (!context && Date.now() < deadline) {
       for (const candidate of [...state.contexts.values()]) {
@@ -99,7 +99,7 @@ export async function evaluateBrowserFrame(chrome, tabId, args, ensureCdpAttache
             // to select MAIN without executing a page-defined getter/function.
             const main = [...state.contexts.values()].filter(item => item.auxData.isDefault
               && item.auxData.frameId === candidate.auxData.frameId && key(item.source) === key(candidate.source));
-            context = main.length === 1 ? main[0] : null;
+            context = main.length === 1 ? main[0] : null; isolated = candidate;
             break;
           }
         } catch { /* A disappearing context is not another frame. */ }
@@ -109,6 +109,16 @@ export async function evaluateBrowserFrame(chrome, tabId, args, ensureCdpAttache
     if (!context) throw fail('FRAME_CONTEXT_UNAVAILABLE', 'No live execution context matched the selected document. Read browser.frames again.');
     try { await chrome.scripting.executeScript({ target: { tabId, documentIds: [selected.documentId] }, world: 'ISOLATED', func: function (name) { delete this[name]; }, args: [marker] }); }
     catch { throw fail('FRAME_UNAVAILABLE', 'The selected document navigated before execution. Read browser.frames again.'); }
+    return await operation({ context, isolated, selected, state });
+  } finally {
+    if (selected) try {
+      await chrome.scripting.executeScript({ target: { tabId, documentIds: [selected.documentId] }, world: 'ISOLATED', func: function (name) { delete this[name]; }, args: [marker] });
+    } catch { /* Navigated or removed documents need no cleanup in their successor. */ }
+  }
+}
+
+export async function evaluateBrowserFrame(chrome, tabId, args, ensureCdpAttached) {
+  return withBrowserFrameContext(chrome, tabId, args, ensureCdpAttached, async ({ context, selected }) => {
     // Unique context identity prevents an ID recycled after navigation from
     // receiving user code. No retry is allowed after this single evaluation.
     let result, timer;
@@ -125,9 +135,5 @@ export async function evaluateBrowserFrame(chrome, tabId, args, ensureCdpAttache
     if (result.exceptionDetails) throw fail('EVALUATION_FAILED', String(result.exceptionDetails.exception?.description || result.exceptionDetails.text || 'Frame JavaScript failed.').slice(0, 1000));
     if (result.result?.unserializableValue || result.result?.objectId) throw fail('EVALUATION_NOT_SERIALIZABLE', 'Return JSON-compatible data from the expression.');
     return { value: result.result?.value ?? null, frameId: selected.frameId, documentId: selected.documentId };
-  } finally {
-    if (selected) try {
-      await chrome.scripting.executeScript({ target: { tabId, documentIds: [selected.documentId] }, world: 'ISOLATED', func: function (name) { delete this[name]; }, args: [marker] });
-    } catch { /* Navigated or removed documents need no cleanup in their successor. */ }
-  }
+  });
 }

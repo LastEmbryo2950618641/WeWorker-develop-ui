@@ -24,7 +24,7 @@ export const browserCommands = {
   uncheck: { description: 'Ensure a checkbox is unchecked.', params: ['session', ...target] },
   focus: { description: 'Focus an element.', params: ['session', ...target] },
   hover: { description: 'Move the pointer over an element.', params: ['session', ...target] },
-  drag: { description: 'Drag between two unambiguous CSS targets in the main frame using a native pointer.', params: ['session', 'selector', 'toSelector'] },
+  drag: { description: 'Drag between two unambiguous CSS targets in the selected frame using a native pointer.', params: ['session', 'selector', 'toSelector', 'frameId?', 'documentId?'] },
   upload: { description: 'Set files on one native file input in the main frame. paths must be an array of absolute local file paths.', params: ['session', 'selector', 'paths'] },
   scroll: { description: 'Scroll the page or element in a direction.', params: ['session', ...target, 'direction?', 'amount?'] },
   keys: { description: 'Send a keyboard key or modifier combination to the focused page.', params: ['session', 'key'] },

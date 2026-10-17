@@ -51,6 +51,7 @@ export class BrowserService {
   async send(command, args, tabId, identity) {
     if (!this.capabilities().capabilities.includes('browser_commands_v1')) throw fail('EXTENSION_UPGRADE_REQUIRED', 'Reload the extension built from this branch to enable browser commands.');
     if ((args.documentId !== undefined || (command === 'eval' && args.frameId !== undefined)) && !this.capabilities().capabilities.includes('browser_frames_v1')) throw fail('EXTENSION_UPGRADE_REQUIRED', 'Reload the extension to select a frame/document; an older extension may evaluate in the main page.');
+    if (Number(args.frameId) && ['click', 'dblclick', 'hover', 'drag'].includes(command) && !this.capabilities().capabilities.includes('browser_frame_pointer_v1')) throw fail('EXTENSION_UPGRADE_REQUIRED', 'Reload the extension to execute native pointers in child frames. Older extensions use synthetic DOM events.');
     if ((command === 'downloads' || (command === 'wait' && args.kind === 'download')) && !this.capabilities().capabilities.includes('browser_downloads_v1')) throw fail('EXTENSION_UPGRADE_REQUIRED', 'Reload the extension to observe tab download lifecycles.');
     const release = isBrowserObserver(command, args) ? () => {} : this.tabLocks.acquire(tabId);
     try {

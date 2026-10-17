@@ -44,6 +44,7 @@ const EXTENSION_CAPABILITIES = [
   'browser_commands_v1',
   'browser_frames_v1',
   'browser_downloads_v1',
+  'browser_frame_pointer_v1',
   'strict_output_contract_v1',
   'page_sources_v1',
   'intercept_read_v1',
