@@ -186,3 +186,11 @@ it('requires explicit shadow capability even for refs, and rejects shadow on non
   expect(requestExtension.mock.calls.at(-1)[0].args).toEqual({shadow:true,role:'button',name:'Example'});
   expect((await capable.execute('wait',{session:'work',kind:'download',shadow:true})).error.code).toBe('INVALID_ARGUMENT');
 });
+
+it('requires compound capability for structured reads and explicit option matching',async()=>{
+  const {service,options,requestExtension}=setup();await service.execute('bind',{session:'work',tabId:7});
+  for(const [command,args] of [['get',{selector:'input',property:'compound'}],['get',{property:'html',as:'json'}],['state',{compound:true}],['select',{selector:'select',value:'example',by:'value'}]])expect((await service.execute(command,{session:'work',...args})).error.code).toBe('EXTENSION_UPGRADE_REQUIRED');
+  const capable=new BrowserService({...options,capabilities:()=>({connected:true,capabilities:['browser_commands_v1','browser_compound_v1']})});
+  expect((await capable.execute('get',{session:'work',property:'html',as:'json',depth:'3',childrenMax:10})).ok).toBe(true);
+  expect(requestExtension.mock.calls.at(-1)[0].args).toEqual({property:'html',as:'json',depth:'3',childrenMax:10});
+});

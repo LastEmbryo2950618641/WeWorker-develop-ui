@@ -63,6 +63,7 @@ export async function executeBrowserCommand({ command, tabId, args = {}, identit
     if (command === 'state') {
       const options = browserStateOptions(args);
       if(args.shadow!==undefined&&(options.source==='ax'||options.compare))throw fail('INVALID_ARGUMENT','shadow applies to DOM state only; AX already follows accessible shadow nodes.');
+      if(args.compound!==undefined&&(options.source==='ax'||options.compare))throw fail('INVALID_ARGUMENT','compound applies to DOM state only; use get property=compound with an AX reference.');
       if (options.source === 'ax' || options.compare) return {ok:true,data:await readBrowserAxState(chrome,tabId,args,ensureCdpAttached)};
     }
     if (command === 'bind') data = { identity: await bind(tabId) };

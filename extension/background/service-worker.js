@@ -50,6 +50,7 @@ const EXTENSION_CAPABILITIES = [
   'browser_accessibility_v1',
   'browser_screenshot_v1',
   'browser_shadow_query_v1',
+  'browser_compound_v1',
   'strict_output_contract_v1',
   'page_sources_v1',
   'intercept_read_v1',

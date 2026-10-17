@@ -14,6 +14,7 @@ import { verifyBrowserEvents } from './browser-events-acceptance.mjs';
 import { verifyBrowserAx } from './browser-ax-acceptance.mjs';
 import { verifyBrowserScreenshots } from './browser-screenshot-acceptance.mjs';
 import { verifyBrowserShadow } from './browser-shadow-acceptance.mjs';
+import { verifyBrowserCompounds } from './browser-compound-acceptance.mjs';
 
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'webcli-browser-acceptance-'));
@@ -250,6 +251,8 @@ try {
   assert.equal((await cli('browser.doctor')).data.ready, true);
   await cli('browser.bind', { session: 'acceptance', tabId });
   const browserCall = (command, args = {}, expectedOk = true) => cli(`browser.${command}`, { session: 'acceptance', ...args }, expectedOk);
+  if(!['--downloads-only','--events-only','--ax-only','--screenshots-only','--shadow-only'].some(flag=>process.argv.includes(flag)))await verifyBrowserCompounds({cli,root,record,passed});
+  if(process.argv.includes('--compounds-only'))return;
   if(!['--downloads-only','--events-only','--ax-only','--screenshots-only'].some(flag=>process.argv.includes(flag)))await verifyBrowserShadow({cli,record,passed});
   if(process.argv.includes('--shadow-only'))return;
   if (!['--downloads-only','--events-only','--ax-only'].some(flag=>process.argv.includes(flag))) {

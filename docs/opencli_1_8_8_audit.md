@@ -27,3 +27,7 @@ AX 对照增量：核对 cli.js state 的 --source 与 --compare-sources，以�
 真实 Chromium 与日常 Chrome 均覆盖标注/ref 点击、响应式视口、完整页面、滚动恢复、像素上限、失败/导航恢复及保存文件；隔离浏览器另测 125% zoom，日常 Chrome 验证原生高 DPR。截图时 Chrome 重置已有 emulation 导致像素/视口错配，已通过丢弃后一次重拍处理，并以实际按钮颜色/框线像素验证，未用图片缩放伪造布局。恢复报告明确是否保留 measured desktop override；其他客户端的完整手机模拟配置无法读取，因此未声称精确还原任意设备模拟。
 
 开放 Shadow DOM 对照增量：发布包 dom-snapshot.js 可遍历开放 shadowRoot，Skill 另提供语义 find 与 AX 作为复杂组件入口。本项目保留普通 CSS 范围，通过 shadow=true 显式查询所选文档和开放根；CSS 组合器不跨树，结果附 host 路径与 refs，多个匹配不选首项。局部 aria-labelledby、嵌套根、原生指针/同 frame drag、表单 composed 事件、过期/遮挡/限额拒绝及跨源 frame 均纳入实际验收。关闭根继续用 AX；该实现不等于完整无障碍算法、复合 date/select/file 元数据、通用自定义控件或 Shadow 文件输入均已对齐。
+
+复合字段/HTML 树增量：按 compound.d.ts、html-tree.d.ts 和 browser Skill 的公开契约核对。WebCLI DOM state/find 默认提供日期/时间格式与约束、select 列表/current、file 名称与 accept/multiple，get compound 可单独读取；列表同样限 50，选中项独立读取以覆盖列表之外的选中值，另附 currentValues、disabled optgroup、原生 validity 与显式省略/截断。AX state 保留原有省略值规则，需显式 get compound。
+
+select 支持 by=auto/value/label，使用 option.label 并核对修改后状态。与 OpenCLI 标签优先选择相比，本项目在 value/label 碰撞或同类重复时明确拒绝，需要作者明确匹配方式；不能把这种差异写成逐参数完全相同。结构化 HTML 用 get property=html as=json，支持 depth=0、html 根节点、子节点/文本/总节点限额，包含复合信息和截断报告。默认有界、限定属性、密码值/脚本正文省略，原 raw HTML 保留；树不自动遍历 shadow roots，选中内部元素再读。自定义日期弹层/组件状态机和 Shadow 文件输入仍未覆盖。

@@ -1,6 +1,6 @@
 # API 自动探索 CLI 改造跟进与交接
 
-> 更新日期：2026-10-17。当前阶段：开放 Shadow DOM 显式查询、树内标签、嵌套引用与 composed 表单事件已实现；WebCLI 1131 项、扩展相关 109 项、隔离真实浏览器完整 36 项通过。日常 Chrome 同类操作及 B 站主文档 AX/24 卡片回归通过。完整 OpenCLI 对齐继续进行；通用复杂控件、多连接、独立 HTTP runner、独立 Agent 对话、UI 统一与平台安装包验收尚未完成。
+> 更新日期：2026-10-17。当前阶段：原生日期/下拉/文件复合元数据、结构化 HTML 和明确选项匹配/保留校验已实现；WebCLI 1132 项、扩展相关 117 项、隔离真实浏览器完整 37 项及最终复合字段聚焦通过。日常 Chrome 同类操作和 B 站 24 卡片回归通过。完整 OpenCLI 对齐继续进行；通用复杂控件/Shadow 上传、多连接、独立 HTTP runner、独立 Agent 对话、UI 统一与平台安装包验收尚未完成。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
 
 ## 最新状态
@@ -11,7 +11,7 @@
 - 功能分支在集成提交后创建为 `codex/api-exploration-cli`，最终操作结果见文末。未推送或创建 PR，最终发布目标仍待明确。
 - [开发设计](api_exploration_cli_design.md) 为本次审阅入口。
 - [OpenCLI 能力对齐台账](opencli_parity.md) 为最新范围与缺口清单；用户要求尽力对齐完整能力，不能把当前 36 个 browser 命令或单站点验收视为目标完成。
-- 首版功能实现提交为 `821a7df`，本轮从截图检查点 `1b33eb2` 继续；后续实现、真实验收与本地检查点见文末和 Git 日志。集成基线仍为 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`。这些是已纳入快照，后续同步前应重新 fetch，不能据此推断远端未变化。
+- 首版功能实现提交为 `821a7df`，本轮从开放 Shadow DOM 检查点 `b01392e` 继续；后续实现、真实验收与本地检查点见文末和 Git 日志。集成基线仍为 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`。这些是已纳入快照，后续同步前应重新 fetch，不能据此推断远端未变化。
 > 后续每次建分支、同步上游、解决冲突、实现功能或验证后，都应更新本文和 ROADMAP.md。未验证事项不得标为完成。
 
 ## 1. 目标与范围
@@ -494,3 +494,19 @@ npm run test:exploration:browser --prefix webcli -- \
 - 每次重载后重新选择 B 站 excel 用户页并绑定，最终主文档 AX 与 current-video-links 24 张可见卡片标题/规范化链接逐项一致，保持第一页；真实页面数据未进入仓库。source Bridge 当前快照 PID 33631，日志 `/tmp/weworker-shadow-live-bridge.log`；插件仍加载工作区 extension-dist，已经重载新代码，无需用户重装。下一次操作前核实进程完整命令、doctor/tabs，历史身份不可照抄。
 - CLI/Bridge 构建、构建版 browser.help 的 shadow 参数、公开配置、Git 差异格式、10 个 JS/MJS 语法与新增内容凭据/私网检查通过；npm pack dry-run 597 文件包含新能力和 Skill，测试脚本不分发。Python 网站探索agent相对 `af8e082` 零差异，源码/环境/测试/生命周期/数据未触碰。CI/发布/schema/.env 未改，未推送或创建 PR。
 - 下一步优先补 date/select/file 等复合字段元数据与对应结构读取，再推进多 profile/连接及 PUBLIC_API/COOKIE_API 独立 runner；UI/聊天共用入口、写命令/多步 UI、知识修订/共享修复、独立 Agent 对话和平台分发继续保留在完整目标。goal 保持 active；本阶段本地提交 SHA 见 Git 日志。
+
+### 复合控件与结构化 HTML（2026-10-17）
+
+- 从 `b01392e` 继续，分支/集成快照不变，未 fetch/merge/push。新增 browser_compound_v1；DOM state/find 与元素描述默认提供 date/time/datetime-local/month/week、select、file 的 compound，compound=false 可省略。get property=compound 单独读取，允许明确选择隐藏文件输入；AX state 仍省略值，但 AX ref、开放 Shadow 查询、明确 frame/document 均能读取字段信息。
+- 日期返回 ISO 格式/原生 current、min/max/step、required/readOnly 与 validity，time/local 可选秒/毫秒；这不是本地化显示格式。fill 只验证值是否保留，不把范围/步长有效性等同操作成功。文件仅返回名称与 accept/multiple/数量，不读本地路径/正文。
+- select options 限 50，选中标签/currentValues 独立读取，覆盖第 50 项之后的当前选择。支持 option.label 与禁用 optgroup；by=auto/value/label 明确匹配，重复/碰撞返回 AMBIGUOUS_OPTION，缺失/禁用在修改前拒绝。多选允许空数组清空；事件后核对实际节点/选择状态，页面撤回或替换返回 SELECTION_REJECTED，不重放。此处保留比 OpenCLI 标签优先更明确的歧义约束，不宣称参数行为逐字相同。
+- 最多扫描 20000 选项，选择请求最多 1000 项；返回选中项最多 1000、文件名 100，字段长度和全次复合信息 100000 字符预算均明确标记截断/omitted，不能当作空字段。极大选项列表的 metadata 明示 option_scan_limit，动作返回 SELECTION_LIMIT。
+- get property=html as=json 新增结构树，未指定目标读 html 根，支持 depth=0；默认 depth/childrenMax/textMax/maxNodes 为 3/50/200/500，上限 20/200/2000/2000。输出 tag/语义与 aria/data 属性/直接文本/children/compound，密码 value 和 script/style/noscript/template 正文省略，事件属性不返回；普通标签/属性/文本 100000 字符预算，长属性名跳过并标记，tag 限长。各类截断明确报告；原 raw HTML 保留，不能套用 JSON 省略规则。树不自动穿 shadow 根，需选内部元素再读。
+- WebCLI 106 文件/1132 项通过；扩展最终 117 项通过。新增 8 项单测覆盖五类日期约束、选中项超列表 cap、隐藏文件元数据、标签/值碰撞与控制器撤回、HTML 深度/节点/文本/脚本/密码、扫描/预算和长标签/属性名限额；Bridge 另测旧插件拒绝、参数保持与构建帮助。无新增依赖。
+- 新增 browser-compound-acceptance.mjs / --compounds-only。初版隔离真实 Chromium `webcli-browser-acceptance-1CWQO0/report.json` 与日常 `weworker-compound-live-aMnCMi/report.json` 均通过；生产主体完整 37 项 `webcli-browser-acceptance-ikdChv/report.json` 通过，包含原截图/Shadow/AX/流观察/下载/frame 与探索、生成、安装、修复、知识和重启。其后补 HTML 根/depth=0 与长名称预算，最终聚焦 `webcli-browser-acceptance-oCloAm/report.json` 通过；未把最终聚焦称为再次完整运行。
+- 最终日常 Chrome 报告 `weworker-compound-live-8aY5zt/report.json`：五类日期读取/原生 validity、65 选项中第 61/63 项当前选择、列表外选择/清空、重复/禁用/页面撤回拒绝、隐藏 input 真实上传测试文件、HTML 省略/预算、开放 Shadow/关闭 AX/跨源 frame 字段读取全部通过。临时页与自建服务器关闭；只上传公开占位文本到本轮本地测试页面，未触及真实业务上传。
+- 重载插件后重新 tabs 选择 B 站 excel 用户页并绑定，主文档 AX 与 current-video-links 24 张可见视频卡片标题/规范化链接逐项一致，保持第一页；真实页面数据未提交。当前 source Bridge 快照 PID 35677、日志 `/tmp/weworker-compound-live-bridge.log`，仍加载工作区 extension-dist；下次先核实完整进程命令和 doctor/tabs，不能复用历史身份。
+- CLI/Bridge 构建、公开配置、打包入口/帮助、Git 差异格式与 JS/MJS 语法通过；npm pack dry-run 597 文件。Python 网站探索agent相对 `af8e082` 零差异，源码/环境/测试/生命周期/数据未碰；CI/发布/schema/.env 未改。最终新增内容检查与提交见后，SHA 以 Git 日志为准。
+- 下一步继续实际控件操作缺口：Shadow/子 frame/AX ref 文件输入、通用自定义组件；然后推进 profile/多连接、独立 PUBLIC_API/COOKIE_API runner。UI/聊天共用服务、写命令/多步 UI、知识修订与共享修复、独立 Agent 对话、平台分发和其余台账目标均未完成，goal 保持 active。
+
+- 最终分发/受控检查：597 文件 dry-pack、构建帮助、公开配置、9 个 JS/MJS 语法、Git 差异格式与新增内容凭据/私网地址检查通过；最新 Skill 随包，既有可选列映射资源警告保留。最终工作区仅含本阶段源码、测试与文档，保存本地检查点，整体目标未标完成。

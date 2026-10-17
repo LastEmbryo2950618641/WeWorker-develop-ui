@@ -52,6 +52,7 @@ export class BrowserService {
   }
   async send(command, args, tabId, identity) {
     if (!this.capabilities().capabilities.includes('browser_commands_v1')) throw fail('EXTENSION_UPGRADE_REQUIRED', 'Reload the extension built from this branch to enable browser commands.');
+    if((args.compound!==undefined||args.property==='compound'||args.as!==undefined||['depth','childrenMax','textMax','maxNodes','by'].some(key=>args[key]!==undefined))&&!this.capabilities().capabilities.includes('browser_compound_v1'))throw fail('EXTENSION_UPGRADE_REQUIRED','Reload the extension to inspect compound controls, structured HTML or select by an explicit match mode.');
     if((args.shadow!==undefined||String(args.ref||'').startsWith('shadow:'))&&!this.capabilities().capabilities.includes('browser_shadow_query_v1'))throw fail('EXTENSION_UPGRADE_REQUIRED','Reload the extension to query open shadow roots or operate their references.');
     if(command==='screenshot'&&['annotate','width','height'].some(key=>args[key]!==undefined)&&!this.capabilities().capabilities.includes('browser_screenshot_v1'))throw fail('EXTENSION_UPGRADE_REQUIRED','Reload the extension to annotate screenshots or temporarily change their viewport.');
     if (((command === 'state' && (args.source !== undefined || args.compareSources !== undefined)) || String(args.ref||'').startsWith('ax:')) && !this.capabilities().capabilities.includes('browser_accessibility_v1')) throw fail('EXTENSION_UPGRADE_REQUIRED','Reload the extension to use AX snapshots, source comparison and AX references.');

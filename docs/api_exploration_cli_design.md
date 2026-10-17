@@ -163,6 +163,12 @@ DOM 定位可传 shadow=true，在所选文档及开放 shadow roots 内分别�
 
 shadow 查询上限为 20000 元素、100 个开放根、32 层边界，超过即 SHADOW_QUERY_LIMIT，不把不完整候选集当作唯一匹配。输出最多 200 refs，总数和截断明确声明；state 文本仍为 light_dom，深层文本需目标 get/extract。关闭根使用 AX，不支持 shadow 与 AX/compareSources 混用。支持 selector 等待、同 frame drag 与显式 frame/document 操作；子 frame DOM refs 不自动附带路由，调用方继续传身份。upload 与截图编号尚未扩展，通用复合控件协议仍待实现。新能力 browser_shadow_query_v1 防止旧插件忽略选项或引用。
 
+browser_compound_v1 提供原生复合字段和有界 HTML 树。DOM state/find/元素描述默认附 date/time/datetime-local/month/week、select、file 的 compound；显式读取 property=compound 可查询隐藏文件输入，也可对 AX ref 或指定 frame/document 读取，AX state 仍不自动返回值。日期包括 ISO 值格式、范围/步长、required/readOnly 与原生 validity；fill 成功只表示值保留，范围或步长无效会在 validity 中体现。文件只返回名称、数量、accept/multiple，不读取内容或本地路径。
+
+select 的选项列表限 50，current/currentValues 独立扫描选中项，保证常见长列表第 50 项后的选择仍可见。label 使用原生 option.label，disabled 包含 optgroup 继承。by=auto/value/label 明确匹配语义，重复值/标签或 value/label 碰撞不得选择第一项；缺失/禁用在修改前拒绝。派发 input/change 后核对原节点与选择状态，撤回/替换返回 SELECTION_REJECTED，不重放；异步业务完成仍需调用方另验。最多扫描 20000 选项、请求 1000 项，超限明确失败/省略。选中列表最多 1000、文件名最多 100，字段字符串截断显式标记，复合信息单次 100000 字符预算，用尽输出 omitted，不能当成空值。
+
+get property=html as=json 返回 tag/attrs/直接文本/children/compound，未指定目标时从 documentElement 读取，有目标保持唯一匹配约束。默认 depth/childrenMax/textMax/maxNodes 为 3/50/200/500，可分别调到 0–20/0–200/0–2000/1–2000。普通属性/文本合计 100000 字符，attrs 只保留语义及 aria/data 属性，省略事件处理器；密码 value、script/style/noscript/template 正文不序列化。truncated 明确说明各项限制；不保留文本和元素的交错顺序。开放 shadow root 给出未包含标记，选中内部节点后可单独读取；原 raw HTML 行为保留，不复用 JSON 省略规则。
+
 ## 已安装命令修复
 
 已安装命令维护使用 repair-info/repair：先读取当前包摘要并采集新证据，再将已有只读命令复制到隔离草稿，绑定当前任务的修复范围。只允许改所选模块、schema 和 description，其他文件/命令、身份、路由、权限不变，禁止新增共享代码。静态检查、运行验证及发布三处均核对当前包摘要和服务保存的修复范围；草稿文件内的声明不能扩大范围。历史 cases 会带入并标记过期信息，每个目标至少一组，全部重新运行通过才能安装。当前支持 Extension-only 包；写命令、共享文件重构仍待后续。
@@ -173,7 +179,7 @@ shadow 查询上限为 20000 元素、100 个开放根、32 层边界，超过�
 
 ## 验证与未完成范围
 
-具体命令和数量见交接日志。WebCLI 全量 106 文件、1131 项通过；扩展相关 109 项通过。真实 Chromium + 未打包插件 + 独立 CLI/Bridge + loopback 示例站点完整 36 项通过，包含开放 Shadow DOM 定位/输入/等待、截图编号/尺寸/恢复、AX/DOM 对比与跨 frame/Shadow DOM 引用、首次自动启动 JSONL、持续观察/游标/信号/断线续接、浏览器操作、下载生命周期与续等、同 URL/嵌套跨源 frame、POST/GraphQL 工具、六组精确断言、知识持久化、API/DOM 定向修复、三个页面来源、动态 GET/POST 路径参数、跨域 INTERCEPT、跨文档页面查询，以及 API 503 后保留历史并切换 DOM 的闭环。frame 的 Promise 超时、输出身份及页面重写内置函数时的隔离匹配仍通过。用户指定的真实公共视频搜索页已完成采集、生成、修复、验证、增量安装和普通 CLI 搜索/分页，DOM 命令也与当前页面逐项核对；原始页面/响应未进入仓库。动态路径使用公开占位 loopback 示例站点验收，不代表已在该外部搜索站点验证动态详情接口。
+具体命令和数量见交接日志。WebCLI 全量 106 文件、1132 项通过；扩展相关 117 项通过。真实 Chromium + 未打包插件 + 独立 CLI/Bridge + loopback 示例站点完整 37 项通过，包含复合字段/结构化 HTML/严格选项选择、开放 Shadow DOM 定位/输入/等待、截图编号/尺寸/恢复、AX/DOM 对比与跨 frame/Shadow DOM 引用、首次自动启动 JSONL、持续观察/游标/信号/断线续接、浏览器操作、下载生命周期与续等、同 URL/嵌套跨源 frame、POST/GraphQL 工具、六组精确断言、知识持久化、API/DOM 定向修复、三个页面来源、动态 GET/POST 路径参数、跨域 INTERCEPT、跨文档页面查询，以及 API 503 后保留历史并切换 DOM 的闭环。frame 的 Promise 超时、输出身份及页面重写内置函数时的隔离匹配仍通过。用户指定的真实公共视频搜索页已完成采集、生成、修复、验证、增量安装和普通 CLI 搜索/分页，DOM 命令也与当前页面逐项核对；原始页面/响应未进入仓库。动态路径使用公开占位 loopback 示例站点验收，不代表已在该外部搜索站点验证动态详情接口。
 
 验收脚本为 `webcli/scripts/verify-exploration-browser.mjs`；使用临时副本改变连接端口及 CLI 配置目录，生产协议和默认端口未改。只启动/停止脚本自己创建的服务和浏览器，Adapter 安装、任务和浏览器配置均隔离。Playwright 用于测试浏览器启动、示例导航及下载取消刺激/诊断；下载观察、探索/生成/验证/安装和业务调用均经过真实 CLI 与插件，不 mock 扩展传输、fetch 或验证器。隔离浏览器显式允许下载并使用临时目录；日常 Chrome 另行验收，不把该测试设置当成用户浏览器的默认策略。
 

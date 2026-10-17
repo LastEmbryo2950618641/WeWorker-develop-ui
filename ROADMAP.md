@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-17（复合字段与结构读取）：DOM state/find 增加日期/下拉/文件元数据，独立读取保留列表第 50 项后的选中状态；get compound 支持隐藏输入、AX ref 和 frame，HTML JSON 树提供明确预算/截断并省略密码值和脚本。select 支持 by=value/label，歧义/禁用拒绝，页面撤回选择明确失败。WebCLI 1132 项、扩展相关 117 项、隔离 Chromium 完整 37 项及最终聚焦通过；日常 Chrome 真实上传/选择/读取和 B 站 24 卡片回归通过。通用自定义组件、Shadow 上传、多连接等继续进行；Python 网站探索agent零改动，详见跟进文档。
+
 - 2026-10-17（开放 Shadow DOM 查询）：browser 定位支持显式 shadow=true，遍历所选文档及开放根，返回树内名称、宿主路径和引用；CSS 组合器不跨树，重复/过期/遮挡/超限明确失败，input/change 可到达宿主。原生嵌套点击/同 frame drag、selector 等待与跨源 frame 操作通过。WebCLI 1131 项、扩展相关 109 项、隔离 Chromium 完整 36 项和日常 Chrome/B 站 24 卡片回归通过；关闭根继续用 AX，复杂控件/Shadow 文件输入/多连接等继续进行，Python 网站探索agent零改动。详细证据见跟进文档。
 
 - 2026-10-17（截图高级选项）：browser.screenshot 支持主文档 DOM 编号、真实 CSS 视口尺寸、fullPage 与本地新 PNG 文件保存；图像侧合成不插入页面覆盖层，核对像素/几何，失败与导航均恢复观测视口，导航不复用旧滚动。WebCLI 1130 项、扩展相关 105 项、隔离 Chromium 完整 35 项通过；日常 Chrome 高 DPR 同类验收及 B 站 24 卡片回归通过。未知设备模拟配置不保证完整恢复，AX/子 frame 标注尚未覆盖；其他 OpenCLI 差距继续推进，Python 网站探索agent零改动。详细证据和分发结果见跟进文档。

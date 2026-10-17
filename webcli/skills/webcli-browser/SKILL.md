@@ -24,12 +24,32 @@ description: 通过 WebCLI 和浏览器插件直接操作已登录网页、检�
 - AX 需要 browser_accessibility_v1。结果含 tree/text/elements 和 metrics，省略输入值；用 get 显式读普通字段，密码字段仍拒绝。limit 限制总引用数（1–200，默认 100），语义节点最多 1000、文本最多 12000 字符、默认最多 50 frame；达到上限、子 frame 失败或无法解析的节点会标 truncated/partial 与 frame 明细。部分结果不能代表完整页面，可指定 frame 进一步读取。快照分步采集，不是原子冻结网页。
 - compareSources 不创建新引用；DOM 与 AX 统计口径不同，更多节点不代表更优。来源不可用时报告错误；AX_UNAVAILABLE / AX_SNAPSHOT_TIMEOUT / AX_REFERENCE_TIMEOUT 时检查页面状态，再明确选择来源。不会静默回退或重放输入。
 - ref 仅限最近一次 state/find 快照。新快照、URL 变化、节点移除或标签变化会让旧 ref 失效。遇到 `STALE_REF` 重新读状态；遇到 `AMBIGUOUS_TARGET` 收窄定位。
-- `get` 读取 text/value/html/attribute；`extract` 获取页面或单元素文本。密码字段 get 不返回内容。
-- fill 替换输入、type 追加、select 选择原生选项，check/uncheck 设置勾选状态，focus/keys 操作键盘。fill/type 使用原生 value setter 和 input/change 事件；需要逐键行为时用 keys。
+- `get` 读取 text/value/html/attribute/compound；`extract` 获取页面或单元素文本。密码字段 get 不返回内容。原生日期/下拉/文件字段及结构化 HTML 见下。
+- fill 替换输入、type 追加、select 选择原生选项，check/uncheck 设置勾选状态，focus/keys 操作键盘。fill/type 使用原生 value setter 和 input/change 事件；需要逐键行为时用 keys。日期 fill 保留浏览器原生值语义，返回成功不代表范围/step/required 校验通过，随后检查 compound.validity。
 - click/dblclick/hover 使用 CDP 原生指针，支持主页面及嵌套的同源/跨源 frame；子 frame 需 browser_frame_pointer_v1，旧插件明确拒绝。drag 用 selector/toSelector 选择同一 frame 的两个目标，也可传 frameId/documentId，两者需同时可见；不支持跨 frame 拖拽或构造 HTML5 DataTransfer。
 - 原生 frame 操作保留选中节点与文档身份，处理边框、缩放、旋转与透视，并逐层检查遮挡。ELEMENT_OBSCURED / ELEMENT_OFFSCREEN 时先检查页面；POINTER_TARGET_CHANGED 表示悬停后布局改变，未自动重试。FRAME_DOCUMENT_CHANGED / POINTER_OPERATION_INTERRUPTED 时操作可能已产生悬停或部分点击副作用，先读取状态，不重放。拖拽异常会尝试在最后位置释放鼠标按钮。
 - upload 用 selector + paths 数组指定主 frame 文件输入与本地绝对路径，支持隐藏原生 input。只选择当前任务授权的文件；可能触发站点自动上传，按实际业务副作用处理。
 - 修改、发布、购买等操作须在用户授权范围内；工具存在不等于授权操作。登录、验证码与风控由用户完成。
+
+## 复合字段与结构化 HTML
+
+```bash
+webcli call browser.find --args '{"session":"work","selector":"select","compound":true}'
+webcli call browser.get --args '{"session":"work","selector":"#example-upload","property":"compound"}'
+webcli call browser.select --args '{"session":"work","selector":"#example-country","value":"example-value","by":"value"}'
+webcli call browser.get --args '{"session":"work","property":"html","as":"json","depth":3,"childrenMax":30,"textMax":200}'
+```
+
+- DOM state/find 和元素描述默认附 compound，compound=false 可省略；显式 compound=true、get property=compound、结构化树和 select by 需要 browser_compound_v1。AX state 仍省略值，不能传 compound；可对 AX ref 单独 get compound，包括关闭 Shadow DOM 的原生字段。
+- date/time/datetime-local/month/week 返回原生 current、format、min/max/step、required/readOnly 和 validity。格式使用 ISO 值，不是浏览器界面显示的地区格式；time/local 模板中的方括号表示可选秒/毫秒，不应原样输入括号。
+- select 返回 multiple、current（选中标签）、currentValues、selectedTotal、options 和 options_total。选项最多 50 条，**选中状态独立读取**，包含第 50 项之后的选中项；options 的 index 是当前 DOM 索引，不是持久引用。禁用 optgroup 及选项均标 disabled，group 表示分组标签。
+- select 默认 by=auto 匹配 value 或标签；一个输入匹配多个选项时 AMBIGUOUS_OPTION，未修改选择。用明确的 by=value / by=label 消除 value/label 碰撞；同值或同标签仍重复时需要进一步检查控件，不选第一项。标签使用 option.label，禁用/缺失选项返回 OPTION_NOT_FOUND。多选传数组，空数组清空多选；单选要求一个值。
+- 选择后核对实际 option 节点和 selected 状态。页面同步撤回或替换控件返回 SELECTION_REJECTED；事件可能已经发生，先读当前值再决定下一步，不自动重放。异步业务结果仍需单独验证。
+- file 返回 accept/multiple/required、current 文件名与 filesTotal；不返回本地路径或文件内容。get property=compound 可以显式读取隐藏的原生文件输入；上传仍使用 browser.upload，作用范围沿用当前主文档文件输入契约。
+- options 扫描最多 20000 项，超限 omitted=option_scan_limit；选中列表最多 1000 项、文件名最多 100 项，长字符串也有限额，truncated 按字段标记。单次复合信息预算 100000 字符，耗尽时 omitted=response_budget。缺省字段或截断不能当作空选中；收窄到单个控件重读。select 最多 1000 个请求选项，超限 SELECTION_LIMIT。
+- get property=html 默认返回原 HTML 字符串；as=json 才返回结构树，未指定目标时从 html 根节点读取。有目标时仍要求唯一匹配。默认 depth=3、childrenMax=50、textMax=200、maxNodes=500；允许范围分别为 0–20、0–200、0–2000、1–2000，0 表示省略相应层次/内容。
+- JSON 节点含 tag/attrs/直接子文本/children/compound；attrs 是限定的语义属性、aria-* 与 data-*，不含事件处理器。密码 value 和 script/style/noscript/template 正文省略，truncated 报告 depth/children/text/nodes/attributes/tags/characters/compounds/omittedContent。标签及普通属性/文本共 100000 字符预算，属性名最多 128、值最多 500、tag 最多 200 字符；不保留文本与元素的交错顺序，不等同 DOM 完整克隆。raw HTML 沿用原行为，不应将 JSON 的省略规则推广到 raw 输出。
+- 树不会自动穿过 shadow 边界，开放根标 included=false；用 shadow=true + 明确目标或 AX ref 选择树内元素。frameId/documentId 可用于跨源文档。真实字段值只用于本次任务，勿保存到公开仓库或探索结构证据。
 
 ## 开放 Shadow DOM 定位
 
