@@ -1,6 +1,6 @@
 # API 自动探索 CLI 改造跟进与交接
 
-> 更新日期：2026-10-17。当前阶段：独立 WebCLI 探索首版已实现并通过离线验证；真实站点/外部 Agent 验收待完成。
+> 更新日期：2026-10-17。当前阶段：独立 WebCLI 探索首版已实现；真实 Chromium、插件与本地示例站点的 CLI 全流程通过。真实登录站点、Claude 独立对话与安装包验收尚未完成。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
 
 ## 最新状态
@@ -10,17 +10,18 @@
 - 本次使用原工作目录，无新 worktree。切换时 ROADMAP.md 阻止 checkout，具名 stash 保存两份文档后切换并 apply，保留双方路线图。stash 仍保留作备份。
 - 功能分支在集成提交后创建为 `codex/api-exploration-cli`，最终操作结果见文末。未推送或创建 PR，最终发布目标仍待明确。
 - [开发设计](api_exploration_cli_design.md) 为本次审阅入口。
+- 功能实现提交为 `821a7df`；本轮真实浏览器验收与修复见文末。上游整合 SHA 没有变化，仍从 develop `4c3d5bd` / dev-1.1.0 `dae8932` 继续同步。
 > 后续每次建分支、同步上游、解决冲突、实现功能或验证后，都应更新本文和 ROADMAP.md。未验证事项不得标为完成。
 
 ## 1. 目标与范围
 
 将现有界面入口的 API 自动探索能力开放为 WebCLI 命令，支持自然语言驱动调用，后续让界面复用同一套能力。
 
-- 对外遵循 `webcli call <adapter-id>.<tool-id>`；具体 Adapter ID、命令名及参数尚未设计，不视为现有接口。
-- 优先提取共享探索任务服务与契约，再接 CLI、自然语言和界面。模型调用、权限检查和任务执行保留在相应服务边界内，不在 CLI 重写业务流程。
-- 待设计能力包括启动探索、查询状态、读取事件与结果、取消、恢复及生成/验证产物；具体范围需根据现有实现确定。
+- 独立探索使用 `webcli call exploration.<command>`；安装后的业务工具使用 `webcli call <adapter-id>.<tool-id>`。
+- 调用方 Agent 理解自然语言、选取证据并编写代码；WebCLI Bridge 负责确定性任务、验证与安装，不要求桌面 Backend 或额外模型 Key。
+- 已实现启动、状态、事件、证据、补采、安全探测、取消、恢复、草稿读写、生成、验证、审阅和安装。
 - 自然语言层负责理解目标、补齐必要参数及编排命令；CLI 提供稳定、可验证的结构化结果和错误。
-- 界面如何复用服务、是否需要启动 CLI 子进程，尚未决定。
+- 后续 API 探索界面通过薄适配层复用同一 Bridge 契约，本轮未迁移 UI。Python 网站探索agent完全排除在本任务外。
 - 用户不负责 `dev-1.1.0` 上其他特性；同步时保留其行为，不顺手重构或改写他人的功能。
 
 现有参考：[API 探索可靠性计划](api_exploration_reliability_plan.md)、[本地验收](api_exploration_local_acceptance.md)。这些文档是历史设计与验证记录，不代表本次 CLI 已实现或验收。
@@ -211,3 +212,35 @@ git diff --name-only LAST_DEV_SHA origin/dev-1.1.0
 - 没有验收真实 Chrome、登录站点、Codex/Claude 实际对话、各平台安装包。本轮未改 Renderer/Backend 业务源码，也未处理先前 Backend yauzl 类型问题。
 - 下一位 Agent：先查看当前 HEAD 和工作区；运行 `node webcli/index.js call exploration.help`，阅读产品内 Skill。下一步优先准备独立 WebCLI + 插件的真实验收，不能重启/占用未知 Bridge 或改动用户登录数据。之后再设计 API 探索 UI 适配；不把 Python 网站探索agent纳入任务。
 - 最后测试日志位于本机临时目录，不作为需提交的材料；以上验证摘要为可交接记录。代码提交 SHA 可从下一条 feat(exploration) 提交查得，未推送、未开 PR。
+
+### 2026-10-17：自主真实浏览器全流程验收
+
+- 操作前 HEAD：`821a7df`，功能分支 `codex/api-exploration-cli`。用户明确要求开发后自主验证全流程。本轮未合入新上游提交。
+- 修复与可复跑验收脚本提交：`c56f951`。该提交为本轮最后成功验证的代码基线，后续提交仅同步本文、设计和 ROADMAP。
+- 发现本机 3711 已由全局安装的 WebCLI 服务占用，保留其运行。测试临时复制本分支 WebCLI 和已准备的 public 扩展，将副本内的 Bridge/CLI/插件连接端口替换为独立端口，CLI PID/log 目录也指向临时根；生产默认端口、配置和扩展协议未改。
+- 独立启动 headless Chrome for Testing 147.0.7727.15（本机 Playwright 缓存 revision 1217）、unpacked 插件、Node Bridge、loopback HTTP 示例站点。使用独立 user Adapter、data、builtin、浏览器 profile；不加载用户登录信息，不需要桌面 Backend 或模型配置，不操作 Python 网站探索agent。
+- 第一轮真实验证发现：脚手架 `check-login-status` 工具被共享策略标记为跳过，导致目标查询已执行成功（attempted=1/passed=1）仍因 skipped=1 被独立流程阻止安装。此前模拟扩展的测试没有复现真实跳过计数。
+- 修复：独立服务调用共享 preview validator 时启用 `restrictToExpectedTools`，只把明确的生成目标送入执行策略；保留每个目标必须实际执行、零跳过的要求。共享验证器默认关闭该选项，旧 UI/Backend 行为不变。测试同步按真实 testCases 计算 skipped，并覆盖开关两种行为。
+- 新增 `webcli/scripts/verify-exploration-browser.mjs` 和仓库命令 `npm run test:exploration:browser --prefix webcli`。全部 15 个验收检查通过，命令均为实际 CLI 子进程：
+  - 连接、标签选择、幂等 start、安全搜索 probe、collect、结构证据与值省略。
+  - draft-read/write，陈旧 hash 拒绝；故意写入语法错误并用 CLI 修复，补充分页默认参数。
+  - 真实 API 返回 503 时运行验证失败且无法 review；恢复后真实预览 attempted=1/passed=1/skipped=0/failed=0。
+  - 无确认/陈旧 reviewId 拒绝；当前 review 安装到隔离根；普通 webcli call 搜索和分页返回示例数据，空结果及 HTTP 错误正确返回。
+  - 同站点再次生成保留第一次 Agent 修改的代码，新增工具独立验证并升级安装，新旧普通命令都能调用。
+  - cancel 后真实浏览器迟到采集结果被丢弃；重启自建 Bridge 后 installed/cancelled 状态保留，在途任务变 interrupted，相同 requestId 不重复创建，显式 collect 后恢复并能再次调用安装工具。
+- Playwright 只负责启动隔离浏览器、加载插件和打开示例页面；没有模拟浏览器网络、扩展协议、预览验证或安装器。临时产物包含报告、证据、草稿、验证摘要与 Bridge 日志，均未提交；脚本退出会关闭自己创建的进程，临时目录保留供诊断。
+- 全量回归：`npm test --prefix webcli -- --testTimeout=20000`，97 文件、1056 项通过。WebCLI/Bridge bundle、打包 CLI 18 命令帮助、npm pack dry-run（四个探索模块与 Skill 均在包内）、公开配置、语法和差异检查通过。两项构建继续使用现有 Backend 的 esbuild（`NODE_PATH`），没有新增依赖或变更 lockfile；仍有已有可选列映射资源缺失提示。
+- 验收脚本首次启动时，外部 Playwright 默认查找的 revision 1234 不在本机；通过 `--chromium` 选用已安装的 Chromium 后成功。此环境差异不作为产品问题。没有下载浏览器或替换用户全局 WebCLI。
+- Python 源码目录相对本功能起点 `af8e082` 差异为零，未运行该模块测试。未验证真实登录业务站点、各平台安装包，也没有另开 Claude/Codex 会话做生成质量验收；本次不宣称通用 Agent 的任意任务成功率。
+
+复跑前先完成仓库 public profile prepare，确保 `weworker/build/extension-dist` 存在，并准备 Playwright 与支持 unpacked 扩展的 Chromium。依赖可由外部工具环境提供，不必加到生产依赖。示例路径是占位值：
+
+```bash
+npm run test:exploration:browser --prefix webcli -- \
+  --playwright=/absolute/path/to/playwright/index.mjs \
+  --chromium=/absolute/path/to/chromium
+```
+
+若本地已有可导入的 Playwright 和匹配的浏览器，上述两个参数可以省略。脚本输出临时产物路径，`report.json` 中 `passed: true` 才代表完整通过。
+
+下一位 Agent 先核对分支和最新提交，再阅读当前设计与产品 Skill。上游同步仍按“上游 → codex/api-exploration-base → codex/api-exploration-cli”；新 dev 改动不要直接覆盖功能分支，Python 冲突交对应负责人。本轮真实浏览器缺口已补上，下一步可选真实登录站点/独立 Agent 验收或 API 探索 UI 接入。未推送、未创建 PR。
