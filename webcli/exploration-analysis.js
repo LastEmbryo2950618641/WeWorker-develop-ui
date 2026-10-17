@@ -31,6 +31,8 @@ export function analyzeApiCandidate(candidate, index) {
   const eligible = ['likely_data', 'maybe_data'].includes(verdict) && candidate.risk?.level === 'read' && executable;
   return { id: candidate.id, sourceApiIndex: index, url: candidate.url, method: candidate.method, status: candidate.status,
     verdict, reasons, samplePaths: paths, eligible, strategy: eligible ? 'PAGE_FETCH' : null,
+    ...(candidate.risk?.level === 'write' ? { writeEligible: ['POST', 'PUT', 'PATCH', 'DELETE'].includes(candidate.method)
+      && (candidate.declared === true || (candidate.status >= 200 && candidate.status < 300)), declaredOnly: candidate.declared === true } : {}),
     contract: 'unverified', ...(pathname.includes(':id') ? { requiresPathParameters: true } : {}) };
 }
 
@@ -60,6 +62,10 @@ export function analyzeExploration(run, capabilities = []) {
   const auth = codes.some(code => /LOGIN|AUTH|ACCESS_DENIED|SESSION_EXPIRED/.test(code));
   const hasBlocked = candidates.some(item => item.verdict === 'blocked');
   const nextActions = [];
+  if (run.writeExecutions?.some(item => item.status === 'uncertain')) nextActions.push({ action: 'exploration.write-readback', automaticFallback: false,
+    reason: 'A write may already have occurred. Inspect its effect with the independent GET; do not repeat the write.' });
+  if (run.status === 'write_review_ready') nextActions.push({ action: 'exploration.write-review', reason: 'Mocks and reads passed; inspect each exact write and its before/after assertions before explicitly authorizing execution.' });
+  if (!run.draft && candidates.some(item => item.writeEligible)) nextActions.push({ action: 'exploration.generate', reason: 'Explicit HTTP action plans may bind a declared or observed write. A declaration is not proof of execution; author mocks and real effect assertions.' });
   if (auth) nextActions.push({ action: 'restore_session', automaticFallback: false, reason: 'Resolve login or access before switching sources; a different strategy does not grant access.' });
   else if (codes.length) {
     if (codes.includes('INTERCEPT_DOCUMENT_CHANGED')) nextActions.push({ action: 'exploration.query', reason: 'The read control replaces the document. Observe its same-origin result route and DOM/state before replanning.' });
@@ -70,14 +76,14 @@ export function analyzeExploration(run, capabilities = []) {
   if (hasBlocked) nextActions.push({ action: 'inspect_access', automaticFallback: false, reason: 'Observed 401/403 is not evidence that DOM or another endpoint is authorized; inspect the intended source and current session.' });
   if (!auth && pages.some(item => item.available)) nextActions.push({ action: run.draft ? 'exploration.draft-read' : 'exploration.generate', reason: 'Observed DOM/state or query sources are available. Choose the source matching the target and document its limitations.' });
   if (!auth && candidates.some(item => item.eligible)) nextActions.push({ action: run.draft ? 'exploration.draft-read' : 'exploration.generate', reason: 'Inspect candidate fields and authored verification cases. Browser traffic alone does not prove a public or official API contract.' });
-  if (!pages.length && !candidates.some(item => item.eligible)) nextActions.push(run.mode === 'http'
+  if (!pages.length && !candidates.some(item => item.eligible || item.writeEligible)) nextActions.push(run.mode === 'http'
     ? { action: 'exploration.request', reason: 'Choose a documented or known read endpoint and collect an actual HTTP response; declarations alone cannot be generated.' }
     : { action: 'browser.state', reason: 'No supported data source is established. Inspect visible content or public page state, then observe it.' });
   const selected = (run.plan?.tools || []).map(tool => ({ name: tool.name, strategy: tool.strategy || 'PAGE_FETCH',
     contract: ['UI_SELECTOR', 'DOM_STATE'].includes(tool.strategy) ? 'visible-ui' : 'internal-unstable',
     sourceApiIndexes: tool.sourceApiIndexes, sourcePageId: tool.sourcePageId,
     strategyNote: tool.strategyNote || null, needsRationale: !tool.strategyNote }));
-  const actions = ['created', 'collecting', 'validating', 'installing'].includes(run.status)
+  const actions = ['created', 'collecting', 'validating', 'installing', 'verifying_write'].includes(run.status)
     ? [{ action: 'exploration.get', reason: 'Wait for the active operation before changing the draft or evidence.' }]
     : ['installed', 'cancelled'].includes(run.status)
       ? [{ action: 'exploration.trace', reason: 'This task is terminal. Read its history and start a new task for further work.' }]

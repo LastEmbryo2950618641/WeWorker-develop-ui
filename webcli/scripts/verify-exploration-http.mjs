@@ -9,6 +9,7 @@ import net from 'node:net';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { verifyHttpWrites } from './write-acceptance.mjs';
 
 const exec = promisify(execFile), delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -150,6 +151,7 @@ try {
   assert.equal(interrupted.status, 'interrupted'); assert.equal(interrupted.requestCount, 1);
   assert.equal(requests.length, beforeInterruptedRestart);
   pass('restart during an in-flight HTTP operation preserves its budget and marks interrupted without replay');
+  await verifyHttpWrites({ call, waitTask, startBridge, stopBridge, pass });
   async function assertClean(target) {
     const stat = await fs.stat(target).catch(() => null); if (!stat) return;
     if (stat.isDirectory()) { for (const name of await fs.readdir(target)) await assertClean(path.join(target, name)); }

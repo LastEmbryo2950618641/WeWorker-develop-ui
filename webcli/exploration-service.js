@@ -29,9 +29,11 @@ import { normalizeInterceptSource, interceptValues } from './exploration-interce
 import { isHttpStrategy, httpToolContract, buildHttpTool } from './exploration-http.js';
 import { httpCredentialsCapability } from './http-contract.js';
 import { startHostExploration, collectHostEvidence } from './exploration-host.js';
+import { declareWriteSource, plannedWrites, writeCase, writeReview, verifyWrite, readbackWrite, writeProofDigest, writeFixtures, finishWriteValidation } from './exploration-write.js';
+import { verifyGeneratedWriteTools } from './generation-harness/write-tool-verifier.js';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
-const active = new Set(['collecting', 'validating', 'installing']);
+const active = new Set(['collecting', 'validating', 'installing', 'verifying_write']);
 const terminal = new Set(['cancelled', 'installed']);
 const clone = value => JSON.parse(JSON.stringify(value));
 
@@ -60,7 +62,16 @@ export class ExplorationService {
       const run = JSON.parse(fs.readFileSync(assertManagedFile(this.root, name), 'utf8'));
       if (run.schemaVersion !== 1 || `${run.taskId}.json` !== name || (mode === 'http' && run.mode !== 'http')) throw fail('STORE_INVALID', 'Invalid exploration task store.');
       this.runs.set(run.taskId, run);
-      if (!readOnly && active.has(run.status)) this.update(run, 'interrupted', 'Bridge restarted; collect or validate again explicitly.');
+      if (!readOnly) {
+        let recoveredWrite = false;
+        for (const execution of run.writeExecutions || []) if (['preparing', 'dispatching'].includes(execution.status)) {
+          execution.status = execution.dispatched ? 'uncertain' : 'not_dispatched';
+          execution.error = { code: 'WRITE_INTERRUPTED' };
+          recoveredWrite = true;
+        }
+        if (active.has(run.status)) this.update(run, 'interrupted', 'Bridge restarted; inspect consumed writes before continuing. Writes are never replayed.');
+        else if (recoveredWrite) this.save(run);
+      }
     }
   }
 
@@ -83,8 +94,12 @@ export class ExplorationService {
   summary(run) {
     const next = { collecting: ['get', 'cancel'], evidence_ready: ['analyze', 'evidence', 'actions', 'probe', 'observe', 'intercept', 'query', 'generate', 'repair-info', 'repair', 'collect'], draft: ['analyze', 'draft-read', 'draft-write', 'verification-read', 'verification-write', 'validate', 'replan'],
       validating: ['get', 'cancel'], installing: ['get'], review_ready: ['analyze', 'review', 'install', 'replan'], failed: ['analyze', 'evidence', 'collect', 'draft-read', 'validate', 'replan'], interrupted: ['analyze', 'get', 'collect', 'validate', 'replan'] };
+    next.verifying_write = ['get', 'cancel'];
+    next.evidence_ready.push('declare-write');
+    next.draft.push('write-verification-read', 'write-verification-write');
+    next.write_review_ready = ['write-review', 'write-verify', 'write-readback', 'write-verification-read', 'write-verification-write', 'draft-read', 'draft-write', 'validate'];
     if (run.mode === 'http') {
-      next.evidence_ready = ['discover', 'request', 'analyze', 'evidence', 'generate', 'repair-info', 'repair'];
+      next.evidence_ready = ['discover', 'request', 'declare-write', 'analyze', 'evidence', 'generate', 'repair-info', 'repair'];
       next.failed = ['get', 'analyze', 'evidence', 'discover', 'request', 'draft-read', 'validate', 'replan'];
       next.interrupted = ['get', 'analyze', 'discover', 'request', 'validate', 'replan'];
     }
@@ -94,6 +109,7 @@ export class ExplorationService {
       pageSourceCount: run.pageSources?.length || 0,
       draftRevision: (run.revisions?.length || 0) + 1, preservedRevisions: run.revisions?.length || 0,
       toolNames: run.draft?.toolNames || [], validation: run.validation || null, runtimeValidation: run.runtimeSummary || null,
+      writeExecutions: (run.writeExecutions || []).map(({ http, effect, ...record }) => record),
       ...(run.repairScope ? { repair: { ...run.repairScope, editableFiles: run.editableFiles, knowledge: run.repairKnowledge } } : {}),
       error: run.error || null, nextActions: (next[run.status] || []).filter(name => name !== 'replan' || (run.draft && !run.repairScope)).map(name => `exploration.${name}`) };
   }
@@ -204,6 +220,7 @@ export class ExplorationService {
     if (command === 'revision-read') return readExplorationRevision(run, integerArg(args.revision, 'revision'), args.file === undefined ? undefined : textArg(args.file, 'file', 200));
     if (command === 'knowledge-save') {
       if (!['review_ready', 'installed'].includes(run.status) || !run.runtimeDigest || readPackageDirectory(run.draft.adapterDir).digest !== run.runtimeDigest) throw fail('VALIDATION_REQUIRED', 'Knowledge requires a successfully validated current draft.');
+      if (plannedWrites(run).length && run.preWriteDigest !== writeProofDigest(run)) throw fail('VALIDATION_REQUIRED', 'Write verification changed; validate again before saving knowledge.');
       const indexes = [...new Set((run.plan?.tools || []).flatMap(tool => tool.sourceApiIndexes || []))];
       const endpoints = indexes.map(index => clone(run.candidates[index])).filter(Boolean);
       const pageIds = new Set((run.plan?.tools || []).map(tool => tool.sourcePageId).filter(Boolean));
@@ -211,6 +228,10 @@ export class ExplorationService {
       const verifiedAt = run.verifiedAt || run.updatedAt;
       const commands = Object.fromEntries(run.draft.toolNames.map(tool => [tool, { verifiedAt, packageDigest: run.runtimeDigest,
         cases: clone(run.verification?.[tool] || []),
+        ...(plannedWrites(run).includes(tool) ? { writeVerification: { kind: 'http_single_write_v1',
+          fixture: clone(writeFixtures(run).commands[tool.slice(run.siteKey.length + 1)]),
+          verifiedAt: run.writeExecutions.find(item => item.tool === tool && item.digest === run.preWriteDigest && item.status === 'verified')?.at,
+          replayAllowed: false } } : {}),
         pathParameters: clone(run.plan?.tools?.find(item => `${run.siteKey}.${item.name.replace(/_/g, '-')}` === tool)?.pathParameters || []),
         strategy: run.plan?.tools?.find(item => `${run.siteKey}.${item.name.replace(/_/g, '-')}` === tool)?.strategy || null,
         strategyNote: clone(run.plan?.tools?.find(item => `${run.siteKey}.${item.name.replace(/_/g, '-')}` === tool)?.strategyNote || null) }]));
@@ -228,27 +249,30 @@ export class ExplorationService {
       return { taskId, events: run.events.filter(event => event.cursor > cursor), cursor: run.sequence, truncated: cursor < (run.events[0]?.cursor || 1) - 1 };
     }
     if (command === 'evidence') return { taskId, candidates: clone(run.candidates), discoveries: clone(run.discoveries || []), pageSources: clone(run.pageSources || []), allowedOrigins: run.allowedOrigins || [], policy: 'declared task/API origins; structure only; captured scalar values omitted; API document operations are unverified declarations' };
+    if (command === 'write-readback') return readbackWrite(this, run, textArg(args.reviewId, 'reviewId', 64));
+    if (command === 'write-verify' && run.writeExecutions?.some(item => item.reviewId === args.reviewId)) return verifyWrite(this, run, args);
     if (command === 'cancel') {
       if (terminal.has(run.status)) return this.summary(run);
       if (run.status === 'installing') throw fail('INVALID_STATE', 'Installation has started; inspect its outcome before making another change.');
       this.controllers.get(taskId)?.abort();
-      this.update(run, 'cancelled', 'Task cancelled; late observation results will be discarded.');
+      this.update(run, 'cancelled', 'Task cancelled; dispatched writes may have effects. Inspect writeExecutions and use write-readback without replaying.');
       return this.summary(run);
     }
     if (command === 'install' && run.status === 'installed') return this.summary(run);
     if (active.has(run.status) && !(this.readOnly && ['draft-read', 'verification-read'].includes(command))) throw fail('TASK_BUSY', 'Wait for the current operation or cancel the task.');
-    if (terminal.has(run.status) && !['draft-read', 'verification-read'].includes(command)) throw fail('INVALID_STATE', 'This task is terminal. Start a new task.');
+    if (terminal.has(run.status) && !['draft-read', 'verification-read', 'write-verification-read'].includes(command)) throw fail('INVALID_STATE', 'This task is terminal. Start a new task.');
     if (command === 'replan') {
       const revisions = archiveExplorationDraft(run, args.expectedDraftHash, textArg(args.reason, 'reason'));
       run.revisions = revisions;
-      for (const key of ['draft', 'plan', 'memory', 'validation', 'runtimeSummary', 'runtimeDigest', 'review', 'verifiedAt', 'error']) run[key] = null;
+      for (const key of ['draft', 'plan', 'memory', 'validation', 'runtimeSummary', 'runtimeDigest', 'review', 'verifiedAt', 'error', 'preWriteDigest']) run[key] = null;
       run.verification = {}; run.draftFiles = []; run.actions = [];
       this.update(run, 'evidence_ready', 'Previous draft preserved. Inspect alternatives, collect evidence and generate a new plan; all verification must run again.');
       return this.summary(run);
     }
-    if (['collect', 'actions', 'probe', 'observe', 'intercept', 'query', 'discover', 'request'].includes(command)) {
+    if (['collect', 'actions', 'probe', 'observe', 'intercept', 'query', 'discover', 'request', 'declare-write'].includes(command)) {
       if (run.draft) throw fail('INVALID_STATE', 'Preserve the current attempt with exploration.replan before changing source evidence.');
     }
+    if (command === 'declare-write') return declareWriteSource(this, run, args);
     if (['discover', 'request'].includes(command)) {
       if (run.mode !== 'http') throw fail('HTTP_TASK_REQUIRED', 'Create an exploration.start task with mode=http for host API discovery.');
       return collectHostEvidence(this, run, args, command === 'discover');
@@ -318,9 +342,13 @@ export class ExplorationService {
     }
     if (command === 'generate' || command === 'repair') return this.generate(run, args.plan, command === 'repair' ? args : null);
     if (!run.draft) throw fail('INVALID_STATE', 'Generate a draft first.');
+    if (command === 'write-verification-read' || command === 'write-verification-write') return writeCase(this, run, args, command === 'write-verification-write');
+    if (command === 'write-review') return writeReview(this, run, args.tool);
+    if (command === 'write-verify') return verifyWrite(this, run, args);
     if (command === 'verification-read' || command === 'verification-write') {
       const tool = textArg(args.tool, 'tool', 200);
       if (!run.draft.toolNames.includes(tool)) throw fail('INVALID_ARGUMENT', 'Select a tool generated or selected for repair by this task.');
+      if (plannedWrites(run).includes(tool)) throw fail('WRITE_CASE_REQUIRED', 'Use write-verification-read/write for a write command. Ordinary cases never authorize writes.');
       const cases = run.verification?.[tool] || [];
       if (command === 'verification-read') return { tool, cases: clone(cases), hash: hash(JSON.stringify(cases)) };
       if (!this.capabilities().capabilities.includes('strict_output_contract_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension to enable authored output assertions.');
@@ -429,7 +457,7 @@ export class ExplorationService {
     if (run.mode === 'http' && (!proposedPlan?.tools?.length || proposedPlan.tools.some(tool => !['PUBLIC_API', 'AUTH_API'].includes(tool?.strategy) || tool.sourcePageId))) throw fail('HTTP_PLAN_REQUIRED', 'Host tasks require an explicit PUBLIC_API/AUTH_API plan bound to actual HTTP evidence.');
     if (repair && (!proposedPlan || typeof proposedPlan !== 'object')) throw fail('INVALID_PLAN', 'Repair requires an explicit plan naming existing command IDs and current source indexes.');
     const candidates = run.candidates.filter(item => analyzeApiCandidate(item).eligible);
-    if (!candidates.length && !proposedPlan?.tools?.some(tool => tool?.sourcePageId)) throw fail('NO_READ_EVIDENCE', 'Collect a successful read query or observe a page source before generating.');
+    if (!candidates.length && !proposedPlan?.tools?.some(tool => tool?.sourcePageId || tool?.risk === 'write')) throw fail('NO_READ_EVIDENCE', 'Collect a successful read query or observe a page source before generating.');
     if (!proposedPlan && candidates.length && candidates.every(item => new URL(item.url).pathname.includes(':id'))) throw fail('PATH_PLAN_REQUIRED', 'Dynamic endpoints need an explicit plan with pathParameters and authored verification cases.');
     if (!proposedPlan && (run.pageSources?.length || !candidates.some(item => analyzeApiCandidate(item).verdict === 'likely_data'))) throw fail('STRATEGY_PLAN_REQUIRED', 'Use exploration.analyze and choose an explicit plan when page alternatives exist or target API data is uncertain.');
     // Keep original evidence indexes stable for agent-authored plans.
@@ -439,7 +467,7 @@ export class ExplorationService {
     prepareGenerationRun(facade, { paths: this.paths });
     run.siteKey = facade.snapshot.siteKey; run.memory = facade.snapshot.input.memory;
     const plan = clone(proposedPlan || buildQuickGenerationPlan({ ...run.memory, listApiCandidates: run.memory.listApiCandidates.map(item => item.method === 'GET' && !new URL(item.url).pathname.includes(':id') && analyzeApiCandidate(item).verdict === 'likely_data' && candidates.some(candidate => candidate.id === item.id) ? item : { ...item, url: '' }) }));
-    if (!Array.isArray(plan.tools) || !plan.tools.length || plan.tools.length > 50) throw fail('INVALID_PLAN', 'Provide 1–50 read tools per draft. Split larger plans into incremental tasks.');
+    if (!Array.isArray(plan.tools) || !plan.tools.length || plan.tools.length > 50) throw fail('INVALID_PLAN', 'Provide 1–50 tools per draft. Split larger plans into incremental tasks.');
     for (const tool of plan.tools) {
       if (tool?.sourcePageId) {
         const observed = (run.pageSources || []).find(item => item.id === tool.sourcePageId);
@@ -449,6 +477,17 @@ export class ExplorationService {
         continue;
       }
       const candidate = run.candidates[tool.sourceApiIndexes?.[0]];
+      if (tool.risk === 'write') {
+        if (repair || tool.sourceApiKind !== 'action' || !isHttpStrategy(tool.strategy) || !candidate || candidate.risk?.level !== 'write'
+          || !['POST', 'PUT', 'PATCH', 'DELETE'].includes(candidate.method)
+          || (!candidate.declared && !(candidate.status >= 200 && candidate.status < 300))) throw fail('INVALID_PLAN', 'Write plans require one declared or successfully observed write source and an explicit HTTP strategy. Write repair is not supported yet.');
+        httpToolContract(tool, candidate);
+        if (tool.pathParameters?.length) throw fail('INVALID_PLAN', 'Initial write verification uses exact authored requests; path templates are not generated.');
+        textArg(tool.writeReason, 'writeReason');
+        if (!tool.strategyNote) throw fail('STRATEGY_PLAN_REQUIRED', 'HTTP writes require an explicit source rationale and limitations.');
+        tool.strategyNote = normalizeStrategyNote(tool, tool.strategy);
+        continue;
+      }
       if (tool.risk !== 'read' || tool.sourceApiKind !== 'list' || !candidate || !candidates.some(item => item.id === candidate.id)) throw fail('INVALID_PLAN', 'Each tool must reference a successful observed read query by index.');
       if (tool.strategy !== undefined && tool.strategy !== 'PAGE_FETCH' && !isHttpStrategy(tool.strategy)) throw fail('STRATEGY_UNSUPPORTED', 'Choose PAGE_FETCH, PUBLIC_API, COOKIE_API or AUTH_API for observed API sources.');
       tool.strategy ||= 'PAGE_FETCH';
@@ -508,10 +547,13 @@ export class ExplorationService {
     }
   }
 
-  assertReadDraft(run) {
+  assertPlannedDraft(run) {
     const pkg = readPackageDirectory(run.draft.adapterDir);
     const retained = verifyRetainedPackage(pkg, readGenerationEvidence(run.draft.adapterDir), { paths: this.paths, repairScope: run.repairScope });
-    if (pkg.manifest.commands.some(command => !retained.has(command.id) && (command.safety !== 'read' || !['extension', 'http'].includes(command.runtime)))) throw fail('READ_ONLY_REQUIRED', 'This standalone workflow only validates new read-only Extension or HTTP commands.');
+    const writes = plannedWrites(run);
+    if (pkg.commands.some(command => !retained.has(command.id) && (writes.includes(command.name)
+      ? command.safety !== 'write' || command.runtime !== 'http' || command.schema?.['x-webcli-agent-authored'] !== true
+      : command.safety !== 'read' || !['extension', 'http'].includes(command.runtime)))) throw fail('READ_ONLY_REQUIRED', 'Draft safety/runtime must match the explicit plan; writes require HTTP runtime.');
     if (run.mode === 'http' && pkg.commands.some(command => run.draft.toolNames.includes(command.name) && (command.runtime !== 'http' || command.http.cookies))) throw fail('HTTP_PLAN_REQUIRED', 'Host tasks can only validate browser-independent HTTP commands.');
     return pkg;
   }
@@ -545,7 +587,7 @@ export class ExplorationService {
     if ((run.pageSources || []).some(item => ['query', 'navigate', 'workflow'].includes(item.source.mode)) && !this.capabilities().capabilities.includes('page_query_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating navigation-aware page queries.');
     if ((run.pageSources || []).some(item => item.source.mode === 'workflow') && !this.capabilities().capabilities.includes('page_workflow_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating ordered page workflows.');
     if ((run.pageSources || []).some(item => item.source.mode === 'navigate') && !this.capabilities().capabilities.includes('page_navigation_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating parameterized page routes.');
-    const pageTools = (run.plan?.tools || []).filter(tool => tool.sourcePageId || isHttpStrategy(tool.strategy)).map(tool => `${run.siteKey}.${tool.name.replace(/_/g, '-')}`);
+    const pageTools = (run.plan?.tools || []).filter(tool => tool.risk !== 'write' && (tool.sourcePageId || isHttpStrategy(tool.strategy))).map(tool => `${run.siteKey}.${tool.name.replace(/_/g, '-')}`);
     for (const command of readPackageDirectory(run.draft.adapterDir).commands.filter(command => run.draft.toolNames.includes(command.name))) {
       const capability = httpCredentialsCapability(command.http);
       if (capability && !this.capabilities().capabilities.includes(capability)) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating scoped HTTP cookies.');
@@ -555,29 +597,47 @@ export class ExplorationService {
     if ((run.repairScope ? run.draft.toolNames : pageTools).some(tool => !run.verification?.[tool]?.length)) throw fail('VERIFICATION_REQUIRED', 'Every repaired or page-based command needs authored verification cases; read or write cases before validation.');
     if (Object.keys(run.verification || {}).length && !this.capabilities().capabilities.includes('strict_output_contract_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating authored assertions.');
     if (run.mode !== 'http') this.assertTabAvailable(run.tabId, run.taskId);
-    run.review = null; run.runtimeDigest = null; run.runtimeSummary = null;
+    run.review = null; run.runtimeDigest = null; run.runtimeSummary = null; run.preWriteDigest = null;
     return this.launch(run, 'validating', async signal => {
       await this.checkTab(run);
       if (signal.aborted) return;
       run.validation = validateAdapterDraft({ adapterDir: run.draft.adapterDir, expectedSiteKey: run.siteKey, expectedToolNames: run.draft.toolNames, paths: this.paths, repairScope: run.repairScope });
       if (!run.validation.passed) { this.update(run, 'draft', 'Static validation failed; inspect validation errors.'); return; }
-      this.assertReadDraft(run);
-      const runtime = await this.runtimeValidator({ run: this.facade(run), draft: run.draft, signal, plan: run.plan, memory: run.memory, validation: run.validation, verification: run.verification });
+      this.assertPlannedDraft(run);
+      const writes = plannedWrites(run);
+      const proof = writes.length ? writeProofDigest(run) : null;
+      if (writes.length) {
+        const mock = await verifyGeneratedWriteTools({ adapterDir: run.draft.adapterDir, expectedSiteKey: run.siteKey, paths: this.paths, signal });
+        if (signal.aborted) return;
+        if (!mock.passed) {
+          run.runtimeSummary = { passed: false, errors: mock.errors.map(({ code, toolName }) => ({ code, tool: toolName })) };
+          this.update(run, 'draft', 'Write mock verification failed; no real write was dispatched.'); return;
+        }
+      }
+      const readDraft = { ...run.draft, toolNames: run.draft.toolNames.filter(name => !writes.includes(name)) };
+      const runtime = readDraft.toolNames.length ? await this.runtimeValidator({ run: this.facade(run), draft: readDraft, signal, plan: run.plan, memory: run.memory, validation: run.validation, verification: run.verification })
+        : { passed: true, executionSummary: { attempted: 0, passed: 0, failed: 0, skipped: 0 } };
       if (signal.aborted) return;
       await this.checkTab(run);
       if (signal.aborted) return;
       // Persist only verifier summaries, never observed result bodies/test inputs.
       const counts = runtime.executionSummary;
-      run.runtimeSummary = { passed: runtime.passed === true, executionSummary: counts ? { attempted: counts.attempted, passed: counts.passed, skipped: counts.skipped, failed: counts.failed } : null,
+      run.runtimeSummary = { passed: runtime.passed === true, ...(writes.length ? { writeMocks: { passed: true, count: writes.length } } : {}), executionSummary: counts ? { attempted: counts.attempted, passed: counts.passed, skipped: counts.skipped, failed: counts.failed } : null,
         errors: (runtime.errors || []).slice(0, 20).map(error => ({ code: String(error.code || 'VALIDATION_FAILED'),
           ...(error.toolName ? { tool: String(error.toolName).slice(0, 200) } : {}),
           ...(error.caseId ? { caseId: String(error.caseId).slice(0, 64) } : {}),
           ...(error.path ? { path: String(error.path).slice(0, 200) } : {}) })) };
-      const count = run.draft.toolNames.reduce((total, name) => total + (run.verification?.[name]?.length || 1), 0);
+      const count = readDraft.toolNames.reduce((total, name) => total + (run.verification?.[name]?.length || 1), 0);
       if (!runtime.passed || !counts || counts.attempted !== count || counts.passed !== count || counts.skipped !== 0 || counts.failed !== 0) {
         this.update(run, 'draft', 'Runtime validation incomplete; repair the draft or page state and validate again.'); return;
       }
       if (readPackageDirectory(run.draft.adapterDir).digest !== run.validation.packageDigest) throw fail('STALE_DRAFT', 'Draft changed during verification.');
+      if (writes.length) {
+        if (writeProofDigest(run) !== proof) throw fail('STALE_DRAFT', 'Write cases changed during verification.');
+        run.preWriteDigest = proof;
+        finishWriteValidation(this, run);
+        return;
+      }
       run.runtimeDigest = run.validation.packageDigest;
       run.verifiedAt = new Date().toISOString();
       this.update(run, 'review_ready', 'Read tools passed validation. Review before installation.');
@@ -585,7 +645,8 @@ export class ExplorationService {
   }
 
   assertValidated(run) {
-    const pkg = this.assertReadDraft(run);
+    const pkg = this.assertPlannedDraft(run);
     if (run.status !== 'review_ready' || !run.validation?.passed || run.runtimeDigest !== pkg.digest) throw fail('VALIDATION_REQUIRED', 'Validate the current draft before review or installation.');
+    if (plannedWrites(run).length && (run.preWriteDigest !== writeProofDigest(run) || plannedWrites(run).some(tool => !run.writeExecutions?.some(item => item.tool === tool && item.digest === run.preWriteDigest && item.status === 'verified')))) throw fail('VALIDATION_REQUIRED', 'Every current write requires mock and real effect verification.');
   }
 }

@@ -25,7 +25,8 @@ export function createHttpClient(command, options = {}) {
   const request = async (input, redirects = 0) => {
     if (options.signal?.aborted) throw fail('ABORTED', 'HTTP operation cancelled.');
     options.validateRequest?.(input);
-    if (++requests > 50) throw fail('REQUEST_LIMIT', 'HTTP command exceeded 50 requests.');
+    if (++requests > (command.safety === 'write' ? 1 : 50)) throw fail('REQUEST_LIMIT', command.safety === 'write'
+      ? 'HTTP writes permit one request per invocation. Inspect the effect before invoking again.' : 'HTTP command exceeded 50 requests.');
     if (!input || typeof input !== 'object' || Object.keys(input).some(key => !['url', 'method', 'headers', 'json', 'body', 'response'].includes(key))) throw fail('INVALID_REQUEST', 'Invalid HTTP request fields.');
     let url;
     try { url = new URL(input.url); } catch { throw fail('INVALID_URL', 'Request needs an absolute HTTP(S) URL.'); }
@@ -70,11 +71,16 @@ export function createHttpClient(command, options = {}) {
       }
     }
     authenticate({ url, method, body, headers });
+    if (options.signal?.aborted) throw fail('ABORTED', 'HTTP operation cancelled.');
+    // Persist a write dispatch marker before crossing the network boundary.
+    // A failure here must prevent dispatch, including storage failures.
+    options.beforeDispatch?.({ url: url.href, method, body });
     let response;
     try {
       response = await (options.fetch || fetch)(url, { method, headers, body, redirect: 'manual', signal: options.signal });
       if ([301, 302, 303, 307, 308].includes(response.status)) {
         const location = response.headers.get('location'); await response.body?.cancel();
+        if (command.safety === 'write' || options.redirects === false) throw fail('REDIRECT', 'This operation does not follow redirects. Inspect the effect before sending another request.');
         if (!location || redirects >= 5) throw fail('REDIRECT', 'HTTP redirect is missing a location or exceeds five hops.');
         let next;
         try { next = new URL(location, url); } catch { throw fail('REDIRECT', 'Invalid HTTP redirect location.'); }

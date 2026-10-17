@@ -33,9 +33,9 @@ module.exports = async (args, api) => {
 };
 ```
 
-`api.request` 支持 `url`、`method`、`headers`、`json` 或字符串 `body`、`response: "json" | "text"`。默认 GET/JSON；HEAD 和 204 返回 null。参数原样交给作者代码，不按 Schema 自动转型。只读命令可使用 GET/HEAD/POST；其他方法要求 write。POST 的只读语义由来源、作者计划和测试证明，不能仅按 HTTP 方法推断。写命令沿用统一确认门，但探索生成流程当前仍限只读。
+`api.request` 支持 `url`、`method`、`headers`、`json` 或字符串 `body`、`response: "json" | "text"`。默认 GET/JSON；HEAD 和 204 返回 null。参数原样交给作者代码，不按 Schema 自动转型。只读命令可使用 GET/HEAD/POST；其他方法要求 write。POST 的只读语义由来源、作者计划和测试证明，不能仅按 HTTP 方法推断。独立探索现已支持显式 HTTP 写计划、mock、精确执行审阅与真实效果回查，见 [写命令契约](api_exploration_write.md)。
 
-每次调用默认 30 秒、50 次请求，单个请求体/响应体 4 MiB。精确 origin 授权，禁止 URL 用户凭据、片段和命令自行提供 Cookie/Authorization/传输控制头。仅跟随已声明 origin 内最多五跳标准 HTTP 重定向，每跳重新按 URL 获取凭据；301/302 POST 和 303 按标准转换 GET，307/308 保留方法和请求体。不重试失败请求。HTTP 错误返回结构化代码，不包含原始响应正文或请求地址。普通命令可以按业务需要处理这些错误。
+每次调用默认 30 秒；读命令最多 50 请求，write 最多一个请求且拒绝所有重定向，单个请求体/响应体 4 MiB。精确 origin 授权，禁止 URL 用户凭据、片段和命令自行提供 Cookie/Authorization/传输控制头。读命令仅跟随已声明 origin 内最多五跳标准 HTTP 重定向，每跳重新按 URL 获取凭据；301/302 POST 和 303 按标准转换 GET，307/308 保留方法和请求体。不重试失败请求，不能在请求尚未结束时返回成功。HTTP 错误返回结构化代码，不包含原始响应正文或请求地址。普通命令可以按业务需要处理这些错误。
 
 Cookie 策略示例（只声明名称，不保存值）：
 
@@ -132,4 +132,4 @@ webcli call exploration.request --args '{"taskId":"<同一任务 ID>","request":
 
 任务 ID 的 `http-` 前缀自动将后续命令路由到宿主存储，忽略浏览器 profile 的离线/多连接状态；显式错误 mode 会报错，不回退。没有 taskId 的 list、knowledge-read、repair-info、capabilities 使用 `mode=http`。任务、草稿、知识存于 `<Adapter workspace>/http-exploration/`，与各浏览器及 legacy 历史隔离；安装包仍由同一宿主管理。取消会中止请求并丢弃迟到结果；重启将进行中任务标记 interrupted，不重放，调用 Agent 需明确决定下一步。
 
-站点专有签名/OAuth、写命令生成与验证仍待实现。现有 PAGE_FETCH、INTERCEPT、DOM_STATE、UI_SELECTOR 按各自执行路径工作，不自动降级或替换来源。
+站点专有签名/OAuth、页面写流程和多步写效果验证仍待实现。HTTP 单请求写生成与验证见 [写命令契约](api_exploration_write.md)；默认 request/discover/validate 仍不会实际发送写请求。现有 PAGE_FETCH、INTERCEPT、DOM_STATE、UI_SELECTOR 按各自执行路径工作，不自动降级或替换来源。

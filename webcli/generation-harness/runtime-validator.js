@@ -86,7 +86,7 @@ export function createPreviewRuntimeValidator({ requestExtension, restrictToExpe
       const writeVerification = await verifyGeneratedWriteTools({
         adapterDir: draft.adapterDir,
         expectedSiteKey: run.snapshot.siteKey,
-        paths, repairScope,
+        paths, repairScope, signal,
       });
       run.setArtifact('writeVerification', writeVerification);
       if (!writeVerification.passed) {

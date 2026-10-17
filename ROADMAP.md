@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-18（HTTP 写命令与真实效果验证）：新增显式写来源声明、语义骨架、独立 mock fixture、精确请求审阅与 GET before/write/GET after；授权在派发前持久化消耗，同 review 重入、取消、进程重启、响应丢失均不重放。不确定结果可独立只读回查，未通过不得安装；普通 HTTP write 强制确认、单请求、禁重定向，未完成请求不能提前返回成功。WebCLI 113 文件/1218 项、最终写相关 46 项、完整 Chromium 57 项通过；源码与最终打包 CLI/Bridge 各 12 项 HTTP 验收通过，构建、公开配置、18 文件语法与 npm pack dry-run（614 文件）通过。全量后请求头规范化加固由最终聚焦及打包验收覆盖。真实副作用仅使用隔离 PUBLIC/AUTH loopback；页面/多步写、动态 ID 回查、写修复及完整 OpenCLI 对齐仍未完成。Python 网站探索agent未动；OpenCLI 桌面客户端排除，WeWorker UI 单列产品待办。
+
 - 2026-10-18（多步只读网站流程）：exploration.query 的 workflow 模式组合 2–8 个导航/搜索/固定页筛选/翻页步骤，参数预检、结果关联、步骤间 URL/文档身份、动作权限、失败停止、总预算、观察/作者验证取消与断线不重放已接通。生成→逐 case 验证→安装→重复调用→知识→提取修复通过。WebCLI 112 文件/1203 项、最终扩展相关 64 项、完整 Chromium 57 项、最后打包 CLI 工作流专项 7 项通过；CLI/Bridge 构建、公开配置、23 文件语法与 npm pack dry-run（613 文件）通过。写命令/副作用验证、循环/分支、自定义控件及跨源/跨 frame 流程仍未完成；完整对齐继续，OpenCLI 桌面客户端排除，Python 网站探索agent全程未动。
 
 - 2026-10-18（参数化详情页导航）：exploration.query 新增 UI_SELECTOR navigate，同源主文档路径参数保留前导零/Unicode；一次导航等待准确目标、新文档与稳定结果，超时/重定向/文档改变不重放。生成、两组不同路径作者断言、安装权限、普通调用、知识及保留路由的局部修复已接通。WebCLI 111 文件/1197 项、扩展聚焦 40 项、完整 Chromium 52 项、打包 CLI 导航专项 4 项通过；CLI/Bridge 构建、公开配置、20 文件语法与 npm pack dry-run（611 文件）通过。动态 query/hash/跨源页面、多步网站流程和写命令生成仍未完成；OpenCLI 桌面客户端排除，WeWorker UI 单列，Python 网站探索agent全程未动。

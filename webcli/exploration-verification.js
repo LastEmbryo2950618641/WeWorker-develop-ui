@@ -39,7 +39,7 @@ function checkPattern(value) {
   try { new RegExp(value); } catch { invalid('Invalid regular expression.'); }
   return value;
 }
-function dataOnly(value, depth = 0) {
+export function dataOnly(value, depth = 0) {
   if (depth > 12) invalid('Verification values are nested too deeply.');
   if (Array.isArray(value)) { for (const item of value) dataOnly(item, depth + 1); return; }
   if (object(value)) {

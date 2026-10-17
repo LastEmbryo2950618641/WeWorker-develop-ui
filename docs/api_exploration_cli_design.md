@@ -1,8 +1,8 @@
 # API 自动探索 CLI 开发设计与首版实现
 
-更新：2026-10-18。已实现多浏览器 profile、独立 HTTP Runner、PUBLIC_API/COOKIE_API/AUTH_API、mode=http 的无浏览器 OpenAPI JSON 发现与宿主请求证据，以及只读局部修复；最新在参数化页面导航之上增加显式 2–8 步只读 workflow。具体 HTTP 契约见 [HTTP Runtime](http_adapter_runtime.md)，历史与验证结果见 [交接文档](api_exploration_cli_handoff.md)。
+更新：2026-10-18。已实现多浏览器 profile、独立 HTTP Runner、PUBLIC_API/COOKIE_API/AUTH_API、mode=http 的无浏览器 OpenAPI JSON 发现与宿主请求证据、只读局部修复和显式 2–8 步只读 workflow；最新增加 HTTP 单请求写生成、mock 与真实副作用回查。具体契约见 [HTTP Runtime](http_adapter_runtime.md) 和 [写命令验证](api_exploration_write.md)，历史与验证结果见 [交接文档](api_exploration_cli_handoff.md)。
 
-最新回归：WebCLI 112 文件/1203 项、最终扩展相关 64 项、完整 Chromium 57 项通过；完整回归之后的步骤间文档身份加固已通过最终打包 CLI 工作流专项 7 项与聚焦测试。源码与打包链路明细以交接文档末尾为准。HTTP version 2 支持 Bearer/header/Basic/声明式 HMAC 和 Cookie store/分区。下文旧阶段的“PUBLIC_API/COOKIE_API 尚未实现”是历史边界；任意站点签名/OAuth、写命令/副作用验证、任意多步自定义流程及完整对齐仍未完成。
+最新 WebCLI 回归 113 文件/1218 项通过，完整 Chromium 57 项通过；最终 HTTP 打包链路及全量回归后的聚焦结果以交接文档末尾为准。HTTP version 2 支持 Bearer/header/Basic/声明式 HMAC 和 Cookie store/分区。下文旧阶段的“PUBLIC_API/COOKIE_API 尚未实现”是历史边界；任意站点签名/OAuth、页面/多步写、动态写结果回查、任意多步自定义流程及完整对齐仍未完成。
 
 ## HTTP 探索任务：已实现
 
@@ -238,6 +238,10 @@ browser_upload_target_v1 统一上传到主/子 frame 的实际原生文件节�
 ## 已安装命令修复
 
 已安装命令维护使用 repair-info/repair：先读取当前包摘要并采集新证据，再将已有只读命令复制到隔离草稿，绑定当前任务的修复范围。只允许改所选模块、schema 和 description，其他文件/命令、身份、路由、权限不变，禁止新增共享代码。静态检查、运行验证及发布三处均核对当前包摘要和服务保存的修复范围；草稿文件内的声明不能扩大范围。历史 cases 会带入并标记过期信息，每个目标至少一组，全部重新运行通过才能安装。当前支持 Extension-only 包；写命令、共享文件重构仍待后续。
+
+## HTTP 写命令阶段
+
+独立探索现已接入 HTTP 写骨架、独立 mock fixture、精确执行审阅、写前/写后 GET、持久化单次派发与不确定结果回查，详见 [写命令与副作用验证](api_exploration_write.md)。这扩展 PUBLIC_API/COOKIE_API/AUTH_API；默认 validate 不实际写入。页面/多步写操作、写工具 repair 和动态返回 ID 回查继续留在能力台账。下面的旧验收数字是历史记录，最新证据以交接文档顶部及末尾为准。
 
 ## 后续 UI 统一
 

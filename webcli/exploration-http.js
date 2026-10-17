@@ -18,8 +18,21 @@ export function httpToolContract(tool, candidate) {
 
 /** Scaffold from structure only. Actual values and response mappings belong to the calling Agent. */
 export function buildHttpTool(site, tool, candidate) {
-  const bindings = normalizePathParameters(candidate, tool.pathParameters);
   const endpoint = new URL(candidate.url);
+  if (tool.risk === 'write') return {
+    toolDefinition: { name: site + '.' + tool.name, runtime: 'http', http: httpToolContract(tool, candidate), access: 'write',
+      description: tool.purpose || 'Perform the explicitly authored API write after confirmation.',
+      parameters: { type: 'object', properties: { __confirmed: { type: 'boolean' } }, additionalProperties: false,
+        'x-webcli-requires-confirmation': true, 'x-webcli-agent-authored': false },
+      generationSource: { ...buildApiSourceEvidence(candidate, { sourceKind: candidate.declared ? 'authored_write_declaration' : 'observed_write' }), risk: { level: 'write', confidence: 1 } } },
+    v2Content: `module.exports = async function (args = {}, api) {
+  if (args.__confirmed !== true) return {blocked:true, requiresConfirmation:true};
+  // Author the input schema, request and success/failure interpretation.
+  // Declared endpoint: ${candidate.method} ${endpoint.origin}${endpoint.pathname}
+  throw new Error('AGENT_AUTHORED_WRITE_REQUIRED');
+};\n`,
+  };
+  const bindings = normalizePathParameters(candidate, tool.pathParameters);
   const segments = endpoint.pathname.slice(1).split('/');
   for (const binding of bindings) segments[binding.segmentIndex] = ':id';
   endpoint.pathname = '/' + segments.join('/');

@@ -141,6 +141,17 @@ it('checks package snapshots and confirmation before sending a write', async () 
   await expect(runHttpTool(f.match, { __confirmed: true })).rejects.toMatchObject({ code: 'HTTP_STALE_PACKAGE' });
 });
 
+it('does not follow write redirects or dispatch a second write request, and rejects unfinished requests', async () => {
+  const redirect = await fixture(`module.exports = (args, api) => api.request({url: ORIGIN + '/redirect-loop', method:'PUT', json:{title:'Example'}});`, {}, 'write');
+  await expect(runHttpTool(redirect.match, { __confirmed: true })).rejects.toMatchObject({ code: 'HTTP_REDIRECT' });
+  expect(redirect.requests).toHaveLength(1);
+  const twice = await fixture(`module.exports = async (args, api) => { await api.request({url: ORIGIN + '/items',method:'PUT'}); return api.request({url: ORIGIN + '/items',method:'PUT'}); };`, {}, 'write');
+  await expect(runHttpTool(twice.match, { __confirmed: true })).rejects.toMatchObject({ code: 'HTTP_REQUEST_LIMIT' });
+  expect(twice.requests).toHaveLength(1);
+  const pending = await fixture(`module.exports = (args, api) => { api.request({url: ORIGIN + '/slow',method:'PUT'}); return {ok:true}; };`, {}, 'write');
+  await expect(runHttpTool(pending.match, { __confirmed: true })).rejects.toMatchObject({ code: 'HTTP_UNSETTLED_REQUESTS' });
+});
+
 it('requires new installation permissions for origins and cookie names', async () => {
   const f = await fixture(`module.exports = () => null;`);
   const paths = resolveAdapterPaths({ home: f.root, env: f.env });

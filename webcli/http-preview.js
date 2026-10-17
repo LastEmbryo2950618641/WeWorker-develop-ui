@@ -5,7 +5,7 @@ import { runHttpTool } from './http-runner.js';
 import { normalizeVerificationCases } from './exploration-verification.js';
 
 let verifier;
-async function strictVerifier() {
+export async function strictVerifier() {
   // Load the same dependency-free versioned assertion implementation shipped
   // with the extension. A data module works in Node 18 even without package.json.
   if (!verifier) verifier = readFile(join(resolveExtensionDir(), 'background/strict-output-contract.js'), 'utf8')
