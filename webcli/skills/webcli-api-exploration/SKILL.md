@@ -1,6 +1,6 @@
 ---
 name: webcli-api-exploration
-description: 通过 WebCLI 与浏览器插件探索网页 API，生成、修复、验证并安装可复用 Adapter。当用户说探索接口、把当前页面变成工具、生成网站 CLI 时使用。适用于能够执行命令的 Codex、Claude 等 Agent，无需 WeWorker 客户端或额外模型 Key。
+description: 通过 WebCLI 探索公开/鉴权 HTTP API，或通过浏览器插件探索网页，生成、修复、验证并安装可复用 Adapter。当用户说探索接口、把当前页面变成工具、生成网站 CLI 时使用。适用于能够执行命令的 Codex、Claude 等 Agent，无需 WeWorker 客户端或额外模型 Key。
 ---
 
 # API 探索与 Adapter 生成
@@ -9,7 +9,7 @@ description: 通过 WebCLI 与浏览器插件探索网页 API，生成、修复�
 
 ## 多浏览器 profile
 
-先运行 `webcli call profile.list`。每个扩展安装上下文有随机 contextId，重连/重载保持，和 Adapter/build profile 无关。
+浏览器任务先运行 `webcli call profile.list`；下面的 mode=http 任务无需 profile。每个扩展安装上下文有随机 contextId，重连/重载保持，和 Adapter/build profile 无关。
 
 `webcli call profile.rename --contextId=<id> --name=work` 设置唯一别名；`webcli call profile.use --name=work` 保存默认，`--name=auto` 清除默认。命令可以带全局 `--profile=work`，或设置 `WEBCLI_PROFILE=work`。优先级为 flag、环境变量、保存的默认值、唯一在线连接。多连接无选择时报 PROFILE_AMBIGUOUS；指定/默认离线报 PROFILE_OFFLINE，不回退到其他浏览器。
 
@@ -21,7 +21,24 @@ description: 通过 WebCLI 与浏览器插件探索网页 API，生成、修复�
 
 ## 准备
 
-需要已安装 WebCLI 和 WeWorker 浏览器插件。使用基础 webcli Skill 完成安装与连接。`capabilities` 检查连接，`tabs` 获取 tabId；桌面客户端不是前置条件。未知旧 Bridge 不支持协议时提示用户更新并重启 WebCLI 服务，不终止未知进程。
+需要已安装 WebCLI 和运行中的 Bridge。浏览器模式另需 WeWorker 浏览器插件；使用基础 webcli Skill 完成安装与连接，`capabilities` 检查连接，`tabs` 获取 tabId。HTTP 模式用 `capabilities --mode=http` 检查 host_http_exploration_v1，无需浏览器或插件。桌面客户端不是前置条件。未知旧 Bridge 不支持协议时提示用户更新并重启 WebCLI 服务，不终止未知进程。
+
+## 无浏览器的接口发现
+
+已知公开/鉴权 API 或 OpenAPI 文档时，直接创建 HTTP 任务。start 不发请求；可选 auth 只声明环境名与准确 origin，值由 Bridge 的宿主环境提供。Cookie 来源仍须使用浏览器任务。
+
+```bash
+webcli call exploration.start --args '{"mode":"http","origin":"https://example.com","goal":"读取公开条目","requestId":"example-http-task"}'
+webcli call exploration.discover --args '{"taskId":"<start 返回的 http- ID>","url":"https://example.com/openapi.json","reason":"检查已知接口文档"}'
+webcli call exploration.request --args '{"taskId":"<同一任务 ID>","request":{"url":"https://example.com/api/items?limit=2"},"reason":"验证文档中的读取接口"}'
+```
+
+- discover 只取显式 URL 的 OpenAPI 3.0/3.1 或 Swagger 2 JSON，返回结构化操作、参数、pathParameters 段位、响应 schema 和 warnings；不执行端点、不自动授权、不爬取外部 `$ref`，不支持 YAML。server variables、组合 schema 和未解析/循环引用需作者处理，不猜测。最多 200 操作、3000 schema 节点、8 层；不保留描述、示例/default。
+- discover/request 是异步任务阶段，返回 collecting 后用 get/events 检查结果。文档声明 `observed:false`，不能直接生成；必须通过 request 获取实际成功 JSON 证据。请求值不成为用例或默认值。已知端点可直接 request，无需伪造 OpenAPI 文档。
+- request 只支持 GET、已识别只读的 JSON/form POST 与 GraphQL query，每次跳转复核范围和读取语义，拒绝 mutation/未解析 POST 与凭据查询参数。限每次 30 秒/4 MiB/五跳、每任务 100 次显式操作，不自动重试；业务只读语义仍由 Agent 核实。
+- 用 evidence 的 candidates 索引显式 generate PUBLIC_API/AUTH_API 计划，再按下方步骤编辑草稿、写 cases、validate、review/install、普通 call 和 knowledge-save。HTTP 任务不接受页面来源/COOKIE_API，验证不需要标签页；认证失败先恢复正确凭据/权限。
+- `http-` taskId 自动路由宿主服务，无需 --profile，显式离线 profile 不阻塞。无 taskId 的 list、knowledge-read、repair-info、capabilities 加 `--mode=http`。宿主任务/知识与浏览器 profile、legacy 历史隔离，安装包共享；用新的 HTTP 任务修复已安装 PUBLIC/AUTH 命令。
+- 取消中止请求并丢弃迟到结果；运行中 Bridge 重启为 interrupted，次数仍计入预算，不自动重放。已知 URL 路径保留结构，查询/正文/响应标量值省略；不要把凭据或私人内容放在路径、goal、reason、cases、notes。
 
 ## 闭环
 
@@ -49,7 +66,7 @@ PUBLIC_API/COOKIE_API/AUTH_API 计划必须提供 readReason、strategyNote 和�
 
 AUTH_API 计划提供 `auth:{type:"bearer",origin:"https://example.com",env:"EXAMPLE_API_TOKEN"}`，仅声明环境名。还支持 type=header（env/header）、basic（usernameEnv/passwordEnv）和 hmac（env/header/algorithm=sha256|sha512/encoding=hex|base64/canonical/separator，可选 prefix/timestamp/nonce）。HMAC canonical 使用 `{field:"method"|"origin"|"pathQuery"|"bodySha256"|"timestamp"|"nonce"}`、`{header:"x-example-kind"}` 或 `{literal:"example"}`；timestamp 需 header/unit=seconds|milliseconds，nonce 需 header。密钥为 UTF-8、每跳按实际请求重签。COOKIE_API 可叠加 auth；新 auth/scope 会要求安装权限升级。预览使用 Bridge 宿主环境，普通 AUTH_API 使用 CLI 环境；不要把真实值放入参数、草稿、知识或命令行，不读取/改写 .env。该契约不支持任意站点签名或 OAuth 自动刷新。
 
-HTTP 草稿位于 `http/commands/*.js`，导出 `module.exports = async (args, api) => ...`；`api.request({url,method,headers,json|body,response})` 返回 JSON 或 text，可引用同包 `http/internal`。参数不按 Schema 转型，默认返回原接口 JSON，作者应按目标编辑字段映射并用精确断言验证。PUBLIC 不带凭据；COOKIE 临时注入声明 Cookie/CSRF；AUTH 由宿主注入凭据/签名，不暴露给命令代码。精确 origin 授权、30 秒/50 请求/4 MiB 限额，重定向限已声明 origin 和五跳，每跳重新匹配凭据，不重试失败请求。验证仍绑定原任务页，普通 PUBLIC/AUTH 调用无此依赖。HTTP 只读命令可 repair，保留运行时/权限/共享文件；写命令生成仍未开放。
+HTTP 草稿位于 `http/commands/*.js`，导出 `module.exports = async (args, api) => ...`；`api.request({url,method,headers,json|body,response})` 返回 JSON 或 text，可引用同包 `http/internal`。参数不按 Schema 转型，默认返回原接口 JSON，作者应按目标编辑字段映射并用精确断言验证。PUBLIC 不带凭据；COOKIE 临时注入声明 Cookie/CSRF；AUTH 由宿主注入凭据/签名，不暴露给命令代码。精确 origin 授权、30 秒/50 请求/4 MiB 限额，重定向限已声明 origin 和五跳，每跳重新匹配凭据，不重试失败请求。浏览器任务验证仍检查原任务页；mode=http 验证与普通 PUBLIC/AUTH 调用无页面依赖。HTTP 只读命令可 repair，保留运行时/权限/共享文件；写命令生成仍未开放。
 
 显式计划可填写 `strategyNote:{"reason":"选择该来源的事实理由","alternatives":"已检查的替代来源及不适用原因","limitations":"数量、稳定性或页面状态限制"}`。对 PAGE_FETCH/INTERCEPT，若提供 note，alternatives 必填；Agent 应主动填写完整说明，不因兼容旧计划允许省略就跳过判断。reason 不能只是“有请求”或“有 JSON”。API 只有非 JSON 响应时不能生成 JSON 命令；只有模糊 JSON 或已存在页面替代来源时，省略计划会返回 STRATEGY_PLAN_REQUIRED。strategy 和 note 会写进 trace 和验证后的站点知识。
 
@@ -57,7 +74,7 @@ HTTP 草稿位于 `http/commands/*.js`，导出 `module.exports = async (args, a
 
 1. `draft-read --taskId=...` 取得当前 draftHash。它覆盖文件字节、计划和作者 cases；修改后必须重读。
 2. `replan --taskId=... --expectedDraftHash=... --reason='旧接口返回错误，已确认页面仍展示目标公开数据'`。旧草稿、用例、证据和失败结果保留为只读 revision，当前任务返回 evidence_ready；没有自动重试、删除文件或安装。
-3. 继续 browser 检查、collect/observe/intercept/query，再 generate 明确的新计划。保持需要的业务契约；旧 cases 可通过 `revisions` / `revision-read --revision=1` 查看后主动移植，不能把旧通过记录当新验证结果。`revision-read --revision=1 --file=...` 可查看旧源码。
+3. 浏览器任务继续 browser 检查、collect/observe/intercept/query；HTTP 任务继续 discover/request，再 generate 明确的新计划。保持需要的业务契约；旧 cases 可通过 `revisions` / `revision-read --revision=1` 查看后主动移植，不能把旧通过记录当新验证结果。`revision-read --revision=1 --file=...` 可查看旧源码。
 4. 写新 cases → validate → review → 授权范围内 install → 普通 call。旧 review 已失效，必须验证当前来源与实际返回含义。最多三轮修复/来源尝试，仍失败报告具体证据和缺口。
 
 replan 用于尚未安装的新工具草稿；已安装/取消任务不可重置，scoped repair 仍遵守原文件/路由边界，不能借 replan 扩大权限。历史 revision 可跨 Bridge 重启读取；保留文件若被外部改动会明确报错。每任务最多保留 20 个 revision，这是存储边界，不是建议反复重试 20 次。
@@ -145,7 +162,7 @@ webcli call exploration.repair --args '{"taskId":"example-task","site":"example.
 ## 恢复和限制
 
 - 新会话先 `list`，再 `get`/`evidence`/`draft-read` 找回状态。CLI 退出不会取消 Bridge 任务。
-- Bridge 重启中的任务标记 interrupted，明确选择重新 collect 或 validate；不自动重放探测或安装。
+- Bridge 重启中的任务标记 interrupted，明确选择重新 collect（HTTP 模式 discover/request）或 validate；不自动重放探测或安装。
 - `cancel` 停止后续阶段并丢弃迟到结果；已派发浏览器请求可能完成。安装开始后不能取消。
 - start 可传 allowedOrigins 数组，显式授权额外 API origin，如 `https://api.example.com`；只允许精确 origin，无路径、凭据或通配符。流量不会自动扩大权限，安装 review 会列出新域名。
 - 默认 GET、Agent 计划下的只读 POST JSON/form/GraphQL query、API 动态路径、声明式 UI_SELECTOR/DOM_STATE、单步 INTERCEPT 与跨文档页面查询已支持。写命令、动态页面路由、自动多步 UI 工作流仍未支持；报告限制，不伪装成功。

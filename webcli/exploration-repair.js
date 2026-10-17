@@ -40,7 +40,7 @@ export function writeRepairDraft({ site, expectedDigest, plan, memory, candidate
   const evidence = { format: 2, name: site, retainedPackage: { name: site, digest: pkg.digest },
     commands: Object.fromEntries(plan.tools.map(tool => [tool.name, { originalName: `${site}.${tool.name}`, safety: 'read',
       generationSource: tool.sourcePageId ? pageSourceEvidence(memory.pageSources.find(item => item.id === tool.sourcePageId))
-        : buildApiSourceEvidence(candidates[tool.sourceApiIndexes[0]], { sourceKind: 'passive_list' }) }])) };
+        : candidates[tool.sourceApiIndexes[0]].sourceEvidence || buildApiSourceEvidence(candidates[tool.sourceApiIndexes[0]], { sourceKind: 'passive_list' }) }])) };
   const evidenceDir = generationEvidenceDir(adapterDir);
   assertManagedDirectory(evidenceDir);
   fs.mkdirSync(evidenceDir, { recursive: true, mode: 0o700 });

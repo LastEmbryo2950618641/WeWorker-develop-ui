@@ -829,6 +829,15 @@ export class WebSocketBridge extends EventEmitter {
     let result;
     try {
       if (ws._browserConnection || ws._explorationLocal !== true) throw profileError('LOCAL_CLI_REQUIRED', 'Browser and exploration commands require a local CLI.');
+      if (namespace === 'exploration' && msg.args?.mode !== undefined && !['http', 'browser'].includes(msg.args.mode)) throw profileError('INVALID_ARGUMENT', 'Exploration mode must be browser or http.');
+      if (namespace === 'exploration' && (msg.args?.mode === 'http' || /^http-[a-f0-9-]{36}$/.test(msg.args?.taskId || ''))) {
+        const key = 'host:exploration';
+        if (!this._services.has(key)) this._services.set(key, import('./exploration-service.js').then(({ ExplorationService }) =>
+          new ExplorationService({ mode: 'http', rootDir: path.join(this._profiles.workspaceDir, 'http-exploration') })).catch(error => { this._services.delete(key); throw error; }));
+        result = { ...await (await this._services.get(key)).execute(msg.command, msg.args), contextId: null, connectionId: null };
+        this._reply(ws, { type: namespace + '_command_result', id: msg.id, result });
+        return;
+      }
       const readCommands = namespace === 'browser' ? ['help', 'sessions', 'doctor']
         : ['help', 'capabilities', 'list', 'get', 'events', 'evidence', 'trace', 'analyze', 'revisions', 'revision-read', 'draft-read', 'verification-read', 'knowledge-read', 'repair-info'];
       result = await this._runInProfile(msg, ws, async () => {

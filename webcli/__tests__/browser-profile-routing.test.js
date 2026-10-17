@@ -78,6 +78,20 @@ it('routes host AUTH_API desktop calls without a profile, whether zero or multip
   expect((await rpc({ type: 'call_tool', toolName: 'example.http', args: {} })).result).toEqual({ example: 'http' });
 });
 
+it('routes HTTP exploration independently of browser flags/defaults with stable host task history', async () => {
+  const { call, peer } = await setup();
+  const args = { mode: 'http', origin: 'https://example.com', goal: 'Read example API', requestId: 'example-host-route' };
+  const first = await call('exploration', 'start', args, 'example-offline');
+  expect(first).toMatchObject({ ok: true, contextId: null, connectionId: null, data: { mode: 'http', status: 'evidence_ready', tabId: null } });
+  await peer(); await peer();
+  expect((await call('exploration', 'start', args)).data.taskId).toBe(first.data.taskId);
+  expect((await call('exploration', 'get', { taskId: first.data.taskId })).data.mode).toBe('http');
+  expect((await call('exploration', 'list', { mode: 'http' })).data.tasks).toHaveLength(1);
+  expect((await call('exploration', 'list')).error.code).toBe('PROFILE_AMBIGUOUS');
+  expect((await call('exploration', 'get', { taskId: first.data.taskId, mode: 'browser' })).error.code).toBe('MODE_MISMATCH');
+  expect((await call('exploration', 'list', { mode: 'invalid' })).error.code).toBe('INVALID_ARGUMENT');
+});
+
 it('isolates same session names and tab IDs, replies only to the caller, and routes desktop requests and trace', async () => {
   const { call, peer, rpc } = await setup(); const a = await peer(), b = await peer();
   expect((await call('browser', 'tabs')).error.code).toBe('PROFILE_AMBIGUOUS');

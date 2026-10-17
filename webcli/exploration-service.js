@@ -27,6 +27,7 @@ import { normalizePathParameters } from './generation-harness/path-parameters.js
 import { normalizeInterceptSource, interceptValues } from './exploration-intercept.js';
 import { isHttpStrategy, httpToolContract, buildHttpTool } from './exploration-http.js';
 import { httpCredentialsCapability } from './http-contract.js';
+import { startHostExploration, collectHostEvidence } from './exploration-host.js';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const active = new Set(['collecting', 'validating', 'installing']);
@@ -35,27 +36,28 @@ const clone = value => JSON.parse(JSON.stringify(value));
 
 /** Owned by the existing Bridge. No desktop Backend, Python, or model credentials. */
 export class ExplorationService {
-  constructor({ rootDir, paths, readOnly = false, requestExtension, capabilities = () => ({ connected: false, capabilities: [] }),
+  constructor({ rootDir, paths, mode = 'browser', readOnly = false, requestExtension, capabilities = () => ({ connected: false, capabilities: [] }),
     runtimeValidator, publisher, tabLocks = new TabOperationLocks() } = {}) {
     this.readOnly = readOnly;
+    this.mode = mode;
     this.paths = paths || resolveAdapterPaths();
-    this.root = rootDir || path.join(this.paths.workspaceDir, 'exploration');
+    this.root = rootDir || path.join(this.paths.workspaceDir, mode === 'http' ? 'http-exploration' : 'exploration');
     assertManagedDirectory(this.root);
     if (!readOnly) fs.mkdirSync(this.root, { recursive: true, mode: 0o700 });
     this.knowledge = new ExplorationKnowledge(path.join(this.root, 'knowledge'), { readOnly });
-    this.request = requestExtension;
+    this.request = mode === 'http' ? async () => { throw fail('BROWSER_NOT_AVAILABLE', 'HTTP exploration has no browser connection.'); } : requestExtension;
     this.tabLocks = tabLocks;
-    this.capabilities = capabilities;
-    this.runtimeValidator = runtimeValidator || createPreviewRuntimeValidator({ requestExtension, restrictToExpectedTools: true, paths: this.paths, capabilities: () => this.capabilities().capabilities });
+    this.capabilities = mode === 'http' ? () => ({ connected: false, mode: 'http', capabilities: ['host_http_exploration_v1', 'strict_output_contract_v1'] }) : capabilities;
+    this.runtimeValidator = runtimeValidator || createPreviewRuntimeValidator({ requestExtension: this.request, restrictToExpectedTools: true, paths: this.paths, capabilities: () => this.capabilities().capabilities });
     this.publisher = publisher || createAdapterPublisher({ paths: this.paths });
     this.runs = new Map();
     this.controllers = new Map();
     this.jobs = new Map();
     this.starting = new Map();
     for (const name of (fs.existsSync(this.root) ? fs.readdirSync(this.root) : [])) {
-      if (!/^[a-f0-9-]{36}\.json$/.test(name)) continue;
+      if (!(mode === 'http' ? /^http-[a-f0-9-]{36}\.json$/ : /^[a-f0-9-]{36}\.json$/).test(name)) continue;
       const run = JSON.parse(fs.readFileSync(assertManagedFile(this.root, name), 'utf8'));
-      if (run.schemaVersion !== 1 || `${run.taskId}.json` !== name) throw fail('STORE_INVALID', 'Invalid exploration task store.');
+      if (run.schemaVersion !== 1 || `${run.taskId}.json` !== name || (mode === 'http' && run.mode !== 'http')) throw fail('STORE_INVALID', 'Invalid exploration task store.');
       this.runs.set(run.taskId, run);
       if (!readOnly && active.has(run.status)) this.update(run, 'interrupted', 'Bridge restarted; collect or validate again explicitly.');
     }
@@ -80,7 +82,13 @@ export class ExplorationService {
   summary(run) {
     const next = { collecting: ['get', 'cancel'], evidence_ready: ['analyze', 'evidence', 'actions', 'probe', 'observe', 'intercept', 'query', 'generate', 'repair-info', 'repair', 'collect'], draft: ['analyze', 'draft-read', 'draft-write', 'verification-read', 'verification-write', 'validate', 'replan'],
       validating: ['get', 'cancel'], installing: ['get'], review_ready: ['analyze', 'review', 'install', 'replan'], failed: ['analyze', 'evidence', 'collect', 'draft-read', 'validate', 'replan'], interrupted: ['analyze', 'get', 'collect', 'validate', 'replan'] };
-    return { taskId: run.taskId, status: run.status, goal: run.goal, tabId: run.tabId, site: run.origin, adapter: run.siteKey,
+    if (run.mode === 'http') {
+      next.evidence_ready = ['discover', 'request', 'analyze', 'evidence', 'generate', 'repair-info', 'repair'];
+      next.failed = ['get', 'analyze', 'evidence', 'discover', 'request', 'draft-read', 'validate', 'replan'];
+      next.interrupted = ['get', 'analyze', 'discover', 'request', 'validate', 'replan'];
+    }
+    return { taskId: run.taskId, mode: run.mode || 'browser', status: run.status, goal: run.goal, tabId: run.tabId, site: run.origin, adapter: run.siteKey,
+      ...(run.mode === 'http' ? { http: run.http, discoveryCount: run.discoveries?.length || 0, requestCount: run.requestCount || 0 } : {}),
       createdAt: run.createdAt, updatedAt: run.updatedAt, candidateCount: run.candidates.length,
       pageSourceCount: run.pageSources?.length || 0,
       draftRevision: (run.revisions?.length || 0) + 1, preservedRevisions: run.revisions?.length || 0,
@@ -93,7 +101,8 @@ export class ExplorationService {
     try {
       if (!Object.hasOwn(explorationCommands, command)) throw fail('UNKNOWN_COMMAND', 'Use webcli call exploration.help.');
       if (!args || typeof args !== 'object' || Array.isArray(args)) throw fail('INVALID_ARGUMENT', 'Arguments must be an object.');
-      const allowed = explorationCommands[command].params.map(name => name.replace(/\?$/, ''));
+      if (args.mode !== undefined && args.mode !== this.mode) throw fail('MODE_MISMATCH', 'Task mode does not match the selected exploration service.');
+      const allowed = [...explorationCommands[command].params.map(name => name.replace(/\?$/, '')), 'mode'];
       for (const name of Object.keys(args)) if (!allowed.includes(name)) throw fail('INVALID_ARGUMENT', `Unknown argument: ${name}`);
       return { schemaVersion: 1, ok: true, command: `exploration.${command}`, data: await this.dispatch(command, args) };
     } catch (error) {
@@ -116,6 +125,7 @@ export class ExplorationService {
   }
 
   async checkTab(run) {
+    if (run.mode === 'http') return { id: null, url: run.origin };
     const tab = (await this.tabs()).find(tab => tab.id === run.tabId);
     if (!tab || new URL(tab.url).origin !== run.origin) throw fail('TAB_CHANGED', 'The task tab is closed or belongs to a different origin. Select the intended page before continuing.');
     if (run.browserIdentity) {
@@ -126,7 +136,7 @@ export class ExplorationService {
   }
 
   launch(run, status, fn) {
-    const release = this.tabLocks.acquire(run.tabId);
+    const release = run.mode === 'http' ? () => {} : this.tabLocks.acquire(run.tabId);
     run.error = null;
     const controller = new AbortController();
     this.controllers.set(run.taskId, controller);
@@ -157,6 +167,8 @@ export class ExplorationService {
       return this.knowledge.read(site, { activeDigest: activePackage?.digest || null });
     }
     if (command === 'start') {
+      if (this.mode === 'http') return startHostExploration(this, args);
+      if (args.origin !== undefined || args.auth !== undefined) throw fail('INVALID_ARGUMENT', 'origin/auth require mode=http.');
       const requestId = textArg(args.requestId, 'requestId', 100);
       const goal = textArg(args.goal, 'goal');
       const tabId = integerArg(args.tabId, 'tabId');
@@ -214,12 +226,12 @@ export class ExplorationService {
       const cursor = integerArg(args.cursor, 'cursor', 0);
       return { taskId, events: run.events.filter(event => event.cursor > cursor), cursor: run.sequence, truncated: cursor < (run.events[0]?.cursor || 1) - 1 };
     }
-    if (command === 'evidence') return { taskId, candidates: clone(run.candidates), pageSources: clone(run.pageSources || []), allowedOrigins: run.allowedOrigins || [], policy: 'page origin and explicitly allowed API origins; structure only; captured scalar values omitted' };
+    if (command === 'evidence') return { taskId, candidates: clone(run.candidates), discoveries: clone(run.discoveries || []), pageSources: clone(run.pageSources || []), allowedOrigins: run.allowedOrigins || [], policy: 'declared task/API origins; structure only; captured scalar values omitted; API document operations are unverified declarations' };
     if (command === 'cancel') {
       if (terminal.has(run.status)) return this.summary(run);
       if (run.status === 'installing') throw fail('INVALID_STATE', 'Installation has started; inspect its outcome before making another change.');
       this.controllers.get(taskId)?.abort();
-      this.update(run, 'cancelled', 'Task cancelled; late browser results will be discarded.');
+      this.update(run, 'cancelled', 'Task cancelled; late observation results will be discarded.');
       return this.summary(run);
     }
     if (command === 'install' && run.status === 'installed') return this.summary(run);
@@ -233,9 +245,14 @@ export class ExplorationService {
       this.update(run, 'evidence_ready', 'Previous draft preserved. Inspect alternatives, collect evidence and generate a new plan; all verification must run again.');
       return this.summary(run);
     }
-    if (['collect', 'actions', 'probe', 'observe', 'intercept', 'query'].includes(command)) {
+    if (['collect', 'actions', 'probe', 'observe', 'intercept', 'query', 'discover', 'request'].includes(command)) {
       if (run.draft) throw fail('INVALID_STATE', 'Preserve the current attempt with exploration.replan before changing source evidence.');
     }
+    if (['discover', 'request'].includes(command)) {
+      if (run.mode !== 'http') throw fail('HTTP_TASK_REQUIRED', 'Create an exploration.start task with mode=http for host API discovery.');
+      return collectHostEvidence(this, run, args, command === 'discover');
+    }
+    if (run.mode === 'http' && ['collect', 'actions', 'probe', 'observe', 'intercept', 'query'].includes(command)) throw fail('BROWSER_NOT_AVAILABLE', 'Use discovery/request in this HTTP task, or start a separate browser task for page evidence.');
     if (command === 'observe' || command === 'intercept' || command === 'query') {
       if (!this.capabilities().capabilities.includes('page_sources_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension to observe page sources.');
       const intercept = command === 'intercept', query = command === 'query';
@@ -398,6 +415,7 @@ export class ExplorationService {
 
   generate(run, proposedPlan, repair = null) {
     if (run.draft) return this.summary(run); // Repeated generation never overwrites an authored draft.
+    if (run.mode === 'http' && (!proposedPlan?.tools?.length || proposedPlan.tools.some(tool => !['PUBLIC_API', 'AUTH_API'].includes(tool?.strategy) || tool.sourcePageId))) throw fail('HTTP_PLAN_REQUIRED', 'Host tasks require an explicit PUBLIC_API/AUTH_API plan bound to actual HTTP evidence.');
     if (repair && (!proposedPlan || typeof proposedPlan !== 'object')) throw fail('INVALID_PLAN', 'Repair requires an explicit plan naming existing command IDs and current source indexes.');
     const candidates = run.candidates.filter(item => analyzeApiCandidate(item).eligible);
     if (!candidates.length && !proposedPlan?.tools?.some(tool => tool?.sourcePageId)) throw fail('NO_READ_EVIDENCE', 'Collect a successful read query or observe a page source before generating.');
@@ -483,6 +501,7 @@ export class ExplorationService {
     const pkg = readPackageDirectory(run.draft.adapterDir);
     const retained = verifyRetainedPackage(pkg, readGenerationEvidence(run.draft.adapterDir), { paths: this.paths, repairScope: run.repairScope });
     if (pkg.manifest.commands.some(command => !retained.has(command.id) && (command.safety !== 'read' || !['extension', 'http'].includes(command.runtime)))) throw fail('READ_ONLY_REQUIRED', 'This standalone workflow only validates new read-only Extension or HTTP commands.');
+    if (run.mode === 'http' && pkg.commands.some(command => run.draft.toolNames.includes(command.name) && (command.runtime !== 'http' || command.http.cookies))) throw fail('HTTP_PLAN_REQUIRED', 'Host tasks can only validate browser-independent HTTP commands.');
     return pkg;
   }
 
@@ -514,7 +533,7 @@ export class ExplorationService {
     if (run.plan?.tools?.some(tool => tool.sourcePageId) && !this.capabilities().capabilities.includes('page_sources_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating page sources.');
     if ((run.repairScope ? run.draft.toolNames : pageTools).some(tool => !run.verification?.[tool]?.length)) throw fail('VERIFICATION_REQUIRED', 'Every repaired or page-based command needs authored verification cases; read or write cases before validation.');
     if (Object.keys(run.verification || {}).length && !this.capabilities().capabilities.includes('strict_output_contract_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating authored assertions.');
-    this.assertTabAvailable(run.tabId, run.taskId);
+    if (run.mode !== 'http') this.assertTabAvailable(run.tabId, run.taskId);
     run.review = null; run.runtimeDigest = null; run.runtimeSummary = null;
     return this.launch(run, 'validating', async signal => {
       await this.checkTab(run);

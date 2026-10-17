@@ -112,4 +112,24 @@ HMAC 示例：
 
 探索计划可使用 `PUBLIC_API`、`COOKIE_API`、`AUTH_API`，继续绑定真实观察的单个 `sourceApiIndexes`，必须说明 `readReason` 和 `strategyNote`。计划另提供上述 `cookies`/`auth`，生成器自动选择所需契约版本。生成后通过 `draft-read/write/add` 编辑 `http/commands`、`http/internal`，每个 HTTP 命令必须有作者 cases；使用同一严格断言实现逐个验证最终输出，任何失败都阻止 review/install。默认返回 API JSON，作者负责业务字段映射。安装后的只读命令支持局部 repair，保留运行时、origins、鉴权契约、共享文件和其他命令。
 
-当前探索证据采集及任务仍绑定浏览器；安装后的 PUBLIC_API/AUTH_API 调用不依赖浏览器。无需页面的接口发现、站点专有签名/OAuth、写命令生成与验证仍待实现。现有 PAGE_FETCH、INTERCEPT、DOM_STATE、UI_SELECTOR 按各自执行路径工作，不自动降级或替换来源。
+## 无浏览器的 HTTP 探索
+
+`exploration.start` 使用 `mode:"http"`、准确 `origin`、`goal` 和幂等 `requestId` 创建宿主任务，可选 `allowedOrigins` 与上述 `auth`。需要 WebCLI Bridge，不需要浏览器连接、插件或桌面客户端；start 不发网络请求，直接返回 evidence_ready。Cookie 探索仍使用浏览器任务。宿主任务只允许 PUBLIC_API/AUTH_API，鉴权值来自执行请求的 Bridge 环境，不从 CLI 转发。
+
+```bash
+webcli call exploration.start --args '{"mode":"http","origin":"https://example.com","goal":"读取公开条目","requestId":"example-http-task"}'
+webcli call exploration.discover --args '{"taskId":"<start 返回的 http- ID>","url":"https://example.com/openapi.json","reason":"检查已知 API 文档"}'
+webcli call exploration.request --args '{"taskId":"<同一任务 ID>","request":{"url":"https://example.com/api/items?limit=2"},"reason":"实际验证文档中的只读接口"}'
+```
+
+每次 discover/request 返回 collecting，使用 get/events 查看完成或失败。discover 只获取明确指定的 OpenAPI 3.0/3.1 或 Swagger 2.0 JSON：返回声明的方法、结构化 URL、路径参数段位、参数位置/类型、成功响应结构与认证声明，不执行端点、不扩大授权、不跟随外部引用。只展开本地 `$ref`，路径以前置 server/basePath 为准；不猜 server variables，不展开组合 schema，循环/未解析引用与截断均返回 warnings。最多返回 200 个操作、3000 个 schema 节点、8 层结构；不保留描述、示例或默认值。不支持 YAML、HTML 文档、自动爬取或任意 OpenAPI 版本。
+
+文档声明不是执行证据，单独 discover 后 generate 会拒绝。request 接受同 `api.request` 的请求字段，但仅支持 JSON 响应、GET 或已识别读取语义的 JSON/form POST（包括 GraphQL query）。每次跳转前复核 origin、方法、路径和显式动作选择器；mutation、未解析 POST、凭据查询参数被拒绝。只读分类是保守启发式，调用 Agent 仍须依据目标接口契约判断业务语义。每操作最多 30 秒、4 MiB、五跳，每任务最多 100 次显式发现/请求（运行中重启也计数）；不自动重试。
+
+实际响应只转换为结构证据，标记 `sourceKind:"host_http"`；不保存请求头、查询/正文标量值、响应标量值。URL 保留固定路径，数字 ID/UUID/邮箱式段按已有规则归一化；作者不要把凭据或私人数据放在路径、goal、reason、cases 或 notes 中。401/403 保留访问阻塞元数据，不持久化错误正文；无效 JSON 不成为成功证据。
+
+随后显式 generate PUBLIC_API/AUTH_API 计划，绑定实际 candidates 索引，再走作者 cases → validate → review → 授权范围内 install → 普通 call → knowledge-save；宿主验证不检查标签页。草稿和已安装只读命令的 repair 复用现有验证器与安装权限审阅，保持运行时/鉴权/共享文件边界。
+
+任务 ID 的 `http-` 前缀自动将后续命令路由到宿主存储，忽略浏览器 profile 的离线/多连接状态；显式错误 mode 会报错，不回退。没有 taskId 的 list、knowledge-read、repair-info、capabilities 使用 `mode=http`。任务、草稿、知识存于 `<Adapter workspace>/http-exploration/`，与各浏览器及 legacy 历史隔离；安装包仍由同一宿主管理。取消会中止请求并丢弃迟到结果；重启将进行中任务标记 interrupted，不重放，调用 Agent 需明确决定下一步。
+
+站点专有签名/OAuth、写命令生成与验证仍待实现。现有 PAGE_FETCH、INTERCEPT、DOM_STATE、UI_SELECTOR 按各自执行路径工作，不自动降级或替换来源。

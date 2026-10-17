@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-17（无浏览器 HTTP 探索）：mode=http 任务支持明确 OpenAPI 3.0/3.1、Swagger 2 JSON 发现与真实只读宿主请求，生成/作者断言/审阅安装/普通调用/知识/局部修复无需浏览器；需要 Bridge。文档声明不构成执行证据，查询和响应标量省略，重定向逐跳校验，取消与运行中重启不重放且保留次数。WebCLI 111 文件/1193 项、完整 Chromium 50 项、源码与打包 CLI/Bridge 各 8 项零浏览器验收、打包 HTTP 36 项通过；CLI/Bridge 构建、公开配置与 npm pack dry-run（610 文件）通过。JSON 文档仅本地引用，不支持 YAML/自动爬取；完整对齐继续推进动态页面/多步 UI/写命令，OpenCLI 桌面客户端排除，WeWorker UI 单列。Python 网站探索agent未动。
+
 - 2026-10-17（OpenCLI 对齐范围澄清）：用户明确不需要 OpenCLI 桌面客户端，目标为 CLI、浏览器扩展与相关工具能力。此前“桌面 UI”指 WeWorker 自有 API 探索/聊天/profile 界面，单列产品集成，不作为 CLI 对齐完成条件；目标网站多步 UI 和 CDP/Electron 外部目标控制仍按 CLI 能力核对。本次仅同步范围文档，通过 diff 格式检查，未重跑功能测试；Python 网站探索agent未动。
 
 - 2026-10-17（HTTP 宿主鉴权与 Cookie 分区）：契约 version 2 新增 AUTH_API，支持环境 Bearer/header/Basic/声明式 HMAC，精确 origin 注入、重定向按实际请求重新签名，凭据不进入 Worker；Cookie 可选 storeId/partitionKey，旧插件能力不足拒绝派发，不回退默认 store/分区。生成/预览/安装权限/普通调用/只读 repair 已接入。WebCLI 110 文件/1183 项、最终聚焦 84 项、扩展 4 项、完整真实 Chromium 50 项、最终 HTTP 8 项、打包 CLI 36 项通过；构建/配置/22 文件语法检查通过，npm pack dry-run 607 文件含新模块。未重跑日常浏览器/外站，未验证隐身 store、任意站点签名/OAuth；下一步无页面 API 发现，整体 OpenCLI 对齐继续。Python 网站探索agent未动。

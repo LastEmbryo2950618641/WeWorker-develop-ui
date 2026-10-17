@@ -1,18 +1,18 @@
 # API 自动探索 CLI 改造跟进与交接
 
-> 更新日期：2026-10-17。最新阶段在独立 HTTP Runner 与多浏览器 profile 之上新增契约 version 2、AUTH_API、环境 Bearer/header/Basic/声明式 HMAC 和 Cookie store/分区选择。WebCLI 1183 项、完整 Chromium 50 项、最终 HTTP 聚焦 8 项和打包 CLI HTTP 36 项通过；AUTH 生成→宿主验证→安装→无浏览器调用、双 profile 的 HttpOnly/CSRF 与分区隔离、缺失凭据零请求及持久内容无凭据已验证。整体 OpenCLI 对齐仍未完成，Python 网站探索agent全程未动。
+> 更新日期：2026-10-17。最新阶段新增 mode=http 的无浏览器探索任务、OpenAPI JSON 发现、显式宿主请求证据，接通生成→作者验证→审阅安装→调用→知识/只读修复。WebCLI 1193 项、完整 Chromium 50 项、源码与打包 CLI/Bridge 各 8 项零浏览器验收、打包 CLI HTTP 36 项通过。多浏览器 profile、HTTP v2 环境鉴权与 Cookie 分区已在前序阶段完成。整体 OpenCLI 对齐仍未完成，Python 网站探索agent全程未动。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
 
 ## 新会话从这里接手
 
 - 范围澄清：用户明确不需要 OpenCLI 桌面客户端。只对齐 CLI、浏览器扩展与相关工具能力；WeWorker API 探索 UI/内置聊天/profile 选择界面单列产品集成，不作为 CLI 对齐完成条件。多步 UI 指目标网站操作，CDP/Electron 指 CLI 控制外部目标，不是开发桌面客户端。
-- 继续当前分支 `codex/api-exploration-cli`，最新鉴权阶段起点 `953d9e2`；检查点 SHA 见 Git 最新提交。先核对工作区/日志，不重建分支或重复实现 profile/HTTP Runner。根 AGENTS.md、ROADMAP.md、本文末尾、[开发设计](api_exploration_cli_design.md)、[HTTP 契约](http_adapter_runtime.md) 和 [能力台账](opencli_parity.md) 为接手入口。
+- 继续当前分支 `codex/api-exploration-cli`，最新无浏览器阶段起点 `e5e6e44`；检查点 SHA 见 Git 最新提交。先核对工作区/日志，不重建分支或重复实现 profile/HTTP Runner/宿主探索。根 AGENTS.md、ROADMAP.md、本文末尾、[开发设计](api_exploration_cli_design.md)、[HTTP 契约](http_adapter_runtime.md) 和 [能力台账](opencli_parity.md) 为接手入口。
 - 已完成多浏览器 profile，使用 `webcli call profile.list` 和 `--profile=<contextId|alias>`；唯一在线可自动选择，显式/default 离线不回退。旧 browser/exploration 根通过 `--profile=legacy` 只读访问，新 profile 不继承旧 tabId。桌面尚无 profile 选择 UI，多连接时需 CLI 保存默认或由调用方显式传路由。
-- PUBLIC_API/COOKIE_API/AUTH_API runner 已实现，version 2 支持宿主环境 Bearer/header/Basic/HMAC 与 Cookie storeId/partitionKey，保持 Extension/Toolkit Runner 边界。下一步先做无需页面的 API 发现；之后推进动态页面/多步 UI/写命令、知识修订/共享修复、CDP/外部 CLI/插件生态与站点覆盖。任意站点签名/OAuth 仍未等同；API 探索 UI/内置对话复用、独立 Agent 对话及平台分发仍在台账，不能把本阶段当作完整对齐完成。
+- PUBLIC_API/COOKIE_API/AUTH_API runner、version 2 环境鉴权/分区，以及 mode=http 的 JSON OpenAPI 发现/显式请求已实现，保持 Extension/Toolkit Runner 边界。HTTP start 不发请求；http- taskId 自动路由宿主，task-free 命令需 mode=http，文档声明不能代替真实证据。下一步动态页面/多步 UI/写命令，再推进知识修订/共享修复、CDP/外部 CLI/插件生态与站点覆盖。YAML/任意 API 文档爬取、任意站点签名/OAuth 尚未覆盖；独立 Agent 对话及平台分发仍在台账，不能把本阶段当作完整对齐完成。
 - WebCLI + 插件继续面向任意能执行 CLI 的 Agent，调用方处理自然语言，不依赖桌面或第二模型 Key。Python 网站探索agent源码、环境、测试、生命周期和数据全程不动。
 - 集成基线 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`；本轮没有 fetch/merge/push/PR。后续同步按第 4 节“上游 → 集成基线 → 功能分支”，这些 SHA 仅是已纳入快照。
 - 用户已安装工作区 extension-dist，无需重装。HTTP 与鉴权阶段仅重建资源，在隔离浏览器实测，没有重载日常 Chrome 或重启用户 Bridge；使用新 Cookie scope 能力前需核对 `http_credentials_v2` 并重载已安装扩展/本工作区 Bridge。AUTH 普通调用读 CLI 环境；预览/COOKIE/桌面调用读相应 HTTP 宿主环境，不自动转发 CLI 环境、不加载 .env。真实外部目标仍为 B 站 Excel 搜索页，重新 doctor/tabs/bind；不要照抄历史身份/PID。历史 source Bridge 快照 PID 47386、日志 `/tmp/weworker-profile-live-bridge.log`，本阶段未重新核实，重启前必须检查完整命令和归属。
-- 最新鉴权临时报告：完整 `webcli-browser-acceptance-qHQYwP/report.json`（50 项），最终 HTTP 聚焦 `webcli-browser-acceptance-agzerk/report.json`（8 项），位于系统临时根，可被清理；缺失时用已提交脚本复跑，不把旧报告当作最新测试。本阶段未重跑日常 Chrome/B 站。
+- 最新临时报告：完整 `webcli-browser-acceptance-pTMyvl/report.json`（50 项）；零浏览器源码 `webcli-http-discovery-HPGl9M/report.json`、打包 CLI/Bridge `webcli-http-discovery-whk1T0/report.json`（各 8 项）。位于系统临时根，可被清理；缺失时用已提交脚本复跑，不把旧报告当作最新测试。本阶段未重跑日常 Chrome/B 站。
 
 ## 最新状态
 
@@ -583,3 +583,15 @@ npm run test:exploration:browser --prefix webcli -- \
 - 实机包含默认/其他 top-level site/不同 ancestor flag 的同名 Cookie，与显式 store/分区正确隔离；双 profile HttpOnly/CSRF 和缺失零请求回归通过。Chrome 初次拒绝跨站 topLevelSite + ancestor=false 的不合法 fixture，改用自身 schemeful site 的合法双 ancestor 分区后通过。单测初次发现 NUL 经 process.env 赋值被 Node 截断、占位包重新安装需显式 downgrade 参数，已修正测试夹具；没有修改真实环境/安装数据。所有测试安装都使用隔离 options.paths。
 - 未重载日常 Chrome、未重启日常 Bridge、未重跑 B 站；未验证其他浏览器/平台/隐身 store。HTTP 请求级测试另实测四种 auth 的跨 origin 重定向不携带凭据、SHA256/SHA512 与两种编码签名重算、缺失环境零请求、认证头覆盖拒绝、权限升级。
 - 剩余优先级：① 无页面 API 发现/探索；② 动态页面、多步 UI、写命令生成与副作用验证；③ 知识冲突、共享/跨命令/写命令修复；④ 自定义控件、目录上传、跨 frame 拖拽、AX/子 frame 标注、Worker 网络；⑤ CDP/Electron、外部 CLI/插件/补全/输出等逐项矩阵与业务覆盖；⑥ 独立 Agent、跨平台/实际安装包验收。HTTP source-level trace、站点专有签名/OAuth 和 WeWorker UI/聊天复用单独保留，整体目标未完成。
+
+### 2026-10-17：无浏览器 HTTP 探索与 OpenAPI 发现
+
+- 阶段起点 `e5e6e44`，继续当前分支，没有 fetch/merge/push/PR。明确排除 OpenCLI 桌面客户端，WeWorker 探索/聊天/profile UI 单列产品待办。Python 网站探索agent源码相对 `af8e082` 零差异，未运行其测试、修改环境或操作数据/生命周期。
+- 新增 exploration-host.js、exploration-openapi.js、http-client.js；共享受限 HTTP 传输供 Runner 和宿主观察使用。Bridge 在浏览器选择前路由 mode=http/http- taskId，存储独立 http-exploration；PUBLIC/AUTH task-free 入口需 mode=http。HTTP start 幂等且零请求，未知/离线/多浏览器 profile 不影响宿主任务。
+- discover 仅访问指定 OpenAPI 3.0/3.1 或 Swagger 2 JSON，按 server/basePath 前缀提取参数段位、方法与响应结构；只展开本地引用，输出未解析/循环/截断 warnings，不保留描述/示例/default，不执行发现端点。文档不是生成证据，必须 request 获取真实成功 JSON；只读 GET/JSON/form POST/GraphQL query 使用逐跳 origin/语义校验。每任务 100 次、每次 30 秒/4 MiB，不重试。
+- 宿主证据标记 host_http，生成/repair 必须显式 PUBLIC_API/AUTH_API 计划和作者 cases；复用严格验证、安装权限、知识与保留文件守卫。401/403 保留阻塞结构而不保存正文；无效 JSON 不成为成功证据。取消中止并丢弃迟到结果；计数派发前落盘，运行中重启为 interrupted，无自动重放。仅保留结构化 URL 与字段；作者公开的 goal/reason/cases/notes 仍会保存。
+- 验证：WebCLI **111 文件/1193 项**；完整真实 Chromium **50 项**；零浏览器的源码 CLI/Bridge **8 项**、打包 CLI/Bridge **8 项**；打包 CLI HTTP **36 项**。新验收脚本 verify-exploration-http.mjs（可选 --bundled）使用隔离 loopback、配置/安装/数据根和临时端口，从未连接浏览器，完成真实发现→请求→生成→两组断言→安装调用→知识、重启、实际字段漂移失败与修复、取消和运行中重启；检查持久内容不含占位鉴权、查询/响应值。
+- 报告位于系统临时根：webcli-browser-acceptance-pTMyvl/report.json，webcli-http-discovery-HPGl9M/report.json（源码），webcli-http-discovery-whk1T0/report.json（打包）。日志 /tmp/weworker-discovery-full.log、/tmp/weworker-discovery-browser.log、/tmp/weworker-discovery-acceptance.log、/tmp/weworker-discovery-bundled-acceptance.log、/tmp/weworker-discovery-bundled-tests.log。临时服务/浏览器均由脚本关闭；日常 Chrome/Bridge/B 站没有重新操作。
+- 首次验收脚本的临时路径替换损坏语法、误用业务 --format 参数、错误假定 profile.list 无 legacy 条目，均修正测试夹具后通过。源码复核补齐请求预算的重启持久化，新增 Swagger operation schemes/无效 server 与文档条数上限测试。未放宽生产断言或安装审阅。
+- CLI/Bridge 构建、公开配置、12 个 JS/MJS 语法、diff 格式和新增内容常见凭据/私网模式检查通过。npm pack dry-run **610 文件**含三个新模块及更新 Skill；无依赖/lockfile/CI/发布/schema/.env 变更。已有可选列映射资源构建警告保留，不代表完整安装包或所有输出映射已验收。
+- 下一步：动态页面路由、多步网站 UI、写命令生成/副作用验证；之后知识冲突与共享/写修复、复杂浏览器控件、CDP/外部 CLI/插件生态与站点覆盖、独立 Agent/跨平台/安装包。YAML/任意 API 文档爬取、任意站点签名/OAuth、完整 HTTP trace 仍未覆盖；整体 OpenCLI 对齐继续，不能标 complete。

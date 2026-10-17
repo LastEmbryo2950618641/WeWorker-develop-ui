@@ -1,8 +1,16 @@
 # API 自动探索 CLI 开发设计与首版实现
 
-更新：2026-10-17。多浏览器 profile 后已实现独立 HTTP Runner、PUBLIC_API/COOKIE_API 探索生成/验证/安装/调用与只读局部修复。具体版本契约、临时 Cookie/CSRF 与限制见 [HTTP Runtime](http_adapter_runtime.md)。历史分支、同步步骤与验证结果见 [交接文档](api_exploration_cli_handoff.md)。
+更新：2026-10-17。已实现多浏览器 profile、独立 HTTP Runner、PUBLIC_API/COOKIE_API/AUTH_API 与只读局部修复；新增 mode=http 的无浏览器探索任务、显式 OpenAPI JSON 发现和宿主请求证据。具体版本契约、环境鉴权、临时 Cookie/CSRF 与限制见 [HTTP Runtime](http_adapter_runtime.md)。历史分支、同步步骤与验证结果见 [交接文档](api_exploration_cli_handoff.md)。
 
-最新 HTTP 验证：WebCLI 1161 项、完整 Chromium 47 项、最终 HTTP 聚焦 6 项及打包 CLI 的 16 项 HTTP 测试通过；PUBLIC_API 普通调用无浏览器依赖，COOKIE_API 通过所选 profile 临时读取明确名称的 Cookie。原始占位凭据不在 Bridge 日志/任务/包中落盘。下文旧阶段的“PUBLIC_API/COOKIE_API 尚未实现”是历史边界，以本段与 HTTP 契约为准；通用签名/环境凭据、分区 Cookie、多步 UI/写命令及完整对齐仍未完成。
+最新回归：WebCLI 111 文件/1193 项、完整 Chromium 50 项通过；本轮源码与打包链路验证明细以交接文档末尾为准。HTTP version 2 已支持 Bearer/header/Basic/声明式 HMAC 和 Cookie store/分区。下文旧阶段的“PUBLIC_API/COOKIE_API 尚未实现”是历史边界，以本段与 HTTP 契约为准；任意站点签名/OAuth、多步 UI/写命令及完整对齐仍未完成。
+
+## HTTP 探索任务：已实现
+
+`exploration.start {mode:"http",origin,goal,requestId,allowedOrigins?,auth?}` 创建 `http-` 前缀任务，直接 evidence_ready，不发请求。Bridge 在 profile 选择前识别宿主模式，任务/知识存于独立 http-exploration 根；后续 taskId 自动路由，list/knowledge-read/repair-info/capabilities 明确 mode=http。该流程需要 Bridge，不需要浏览器、插件或桌面客户端。
+
+`discover` 从显式 URL 获取 OpenAPI 3.0/3.1 或 Swagger 2 JSON，保留有界声明结构与 warnings，不执行端点。`request` 发送明确的 GET/只读 JSON/form POST，逐跳检查 origin 和动作语义，以 host_http 来源保存实际 JSON 结构；未获取成功证据时禁止生成。每任务 100 次、单次 30 秒/4 MiB，取消/重启不重放，请求预算在派发前持久化。JSON 文档仅支持本地引用，不猜变量、不展开组合 schema、不自动爬取。
+
+生成必须显式选择 PUBLIC_API/AUTH_API 并绑定观察索引，每命令有作者断言；validate、review/install、知识及 scoped repair 复用现有流程，宿主任务禁止浏览器依赖的命令。HTTP 传输抽取为 http-client.js，由观察和 Worker Runner 共用，鉴权值只留宿主内存。浏览器模式的页面身份、锁、profile 和 Cookie 路径保持独立。
 
 ## 多浏览器 profile：已实现
 
@@ -47,8 +55,9 @@ Codex / Claude / 其他 CLI Agent + Skill
      现有 WebCLI Bridge（本地后台服务）
             ↓ ExplorationService（无模型依赖）
      任务持久化 / 证据结构化 / 草稿 / 验证 / 安装
-            ↓ 现有消息、预览验证器和 Adapter 安装器
-       WeWorker 浏览器插件
+            ↓ 预览验证器和 Adapter 安装器
+       浏览器任务 → WeWorker 浏览器插件
+       HTTP 任务 → 独立宿主 HTTP 传输/Worker
 ```
 
 外部 Agent 负责理解目标、选策略、命名工具、编写/修复代码和向用户提问。WebCLI 负责确定性操作；`generate` 是依据已观察证据生成隔离草稿，不是调用模型自主创作。Agent 用 `draft-read` / `draft-write` 完成语义改造。

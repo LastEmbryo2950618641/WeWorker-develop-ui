@@ -47,6 +47,7 @@ export function normalizeStrategyNote(tool, strategy) {
 
 export function analyzeExploration(run, capabilities = []) {
   const candidates = run.candidates.map(analyzeApiCandidate);
+  if (run.mode === 'http') for (const candidate of candidates) if (candidate.eligible) candidate.strategy = run.http.strategy;
   const pages = (run.pageSources || []).map(item => {
     const strategy = item.source.strategy;
     const requiredCapability = item.source.mode === 'query' ? 'page_query_v1' : strategy === 'INTERCEPT' ? 'intercept_read_v1' : 'page_sources_v1';
@@ -69,7 +70,9 @@ export function analyzeExploration(run, capabilities = []) {
   if (hasBlocked) nextActions.push({ action: 'inspect_access', automaticFallback: false, reason: 'Observed 401/403 is not evidence that DOM or another endpoint is authorized; inspect the intended source and current session.' });
   if (!auth && pages.some(item => item.available)) nextActions.push({ action: run.draft ? 'exploration.draft-read' : 'exploration.generate', reason: 'Observed DOM/state or query sources are available. Choose the source matching the target and document its limitations.' });
   if (!auth && candidates.some(item => item.eligible)) nextActions.push({ action: run.draft ? 'exploration.draft-read' : 'exploration.generate', reason: 'Inspect candidate fields and authored verification cases. Browser traffic alone does not prove a public or official API contract.' });
-  if (!pages.length && !candidates.some(item => item.eligible)) nextActions.push({ action: 'browser.state', reason: 'No supported data source is established. Inspect visible content or public page state, then observe it.' });
+  if (!pages.length && !candidates.some(item => item.eligible)) nextActions.push(run.mode === 'http'
+    ? { action: 'exploration.request', reason: 'Choose a documented or known read endpoint and collect an actual HTTP response; declarations alone cannot be generated.' }
+    : { action: 'browser.state', reason: 'No supported data source is established. Inspect visible content or public page state, then observe it.' });
   const selected = (run.plan?.tools || []).map(tool => ({ name: tool.name, strategy: tool.strategy || 'PAGE_FETCH',
     contract: ['UI_SELECTOR', 'DOM_STATE'].includes(tool.strategy) ? 'visible-ui' : 'internal-unstable',
     sourceApiIndexes: tool.sourceApiIndexes, sourcePageId: tool.sourcePageId,
@@ -84,7 +87,7 @@ export function analyzeExploration(run, capabilities = []) {
       { strategy: 'PUBLIC_API', available: true, reason: 'Independent host HTTP. Requires explicit rationale and authored cases proving credential-free execution.' },
       { strategy: 'AUTH_API', available: true, reason: 'Independent host HTTP with declared environment credentials (Bearer/header/Basic/HMAC). Host environment must supply the values; authored cases required.' },
       { strategy: 'COOKIE_API', available: capabilities.includes('http_credentials_v1'), reason: 'Independent host HTTP with explicitly named browser cookies and optional CSRF mapping. Requires http_credentials_v1 and authored cases.' },
-      ...['UI_SELECTOR', 'DOM_STATE', 'PAGE_FETCH', 'INTERCEPT'].map(strategy => ({ strategy, available: true })),
+      ...['UI_SELECTOR', 'DOM_STATE', 'PAGE_FETCH', 'INTERCEPT'].map(strategy => ({ strategy, available: run.mode !== 'http' })),
     ],
     guidance: 'Recommendations are structural hints, not semantic proof. Choose by the task and verified contract, not API count. No source is executed or silently substituted by analyze.' };
 }
