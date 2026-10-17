@@ -1,3 +1,4 @@
+import { browserContextId } from './browser-profile.js';
 import { scopedGenerationPreviewScripts } from './generation-preview-bundle.js';
 import { buildV2Bootstrap, v2InjectionFiles } from "./v2-loader.js";
 import { injectAdapterSources } from './adapter-script-loader.js';
@@ -43,6 +44,7 @@ const EXTENSION_CAPABILITIES = [
   'generation_harness_v1',
   'runtime_validation_v1',
   'browser_commands_v1',
+  'browser_profiles_v1',
   'browser_frames_v1',
   'browser_downloads_v1',
   'browser_frame_pointer_v1',
@@ -58,9 +60,11 @@ const EXTENSION_CAPABILITIES = [
   'page_query_v1',
 ];
 
+let currentBrowserContextId;
 function buildExtensionHello(extra = {}) {
   return {
     type: 'extension_hello',
+    contextId: currentBrowserContextId,
     version: chrome.runtime.getManifest().version,
     capabilities: EXTENSION_CAPABILITIES,
     ...extra,
@@ -2475,6 +2479,7 @@ function scheduleNativeHeartbeatAckCheck(socket, sentAt) {
 function sendNativeHeartbeat() {
   const socket = ws;
   if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+  if (!currentBrowserContextId) return false;
   const sentAt = Date.now();
   const sent = sendToNative(buildExtensionHello({ heartbeat: true }));
   if (sent) scheduleNativeHeartbeatAckCheck(socket, sentAt);
@@ -2524,13 +2529,15 @@ function connectToNativeHost() {
   }
 
   const socket = ws;
-  socket.addEventListener("open", () => {
+  socket.addEventListener("open", async () => {
     if (ws !== socket) return;
     console.log("[WebMCP] Connected to native host");
     isConnecting = false;
     lastNativeAckAt = Date.now();
 
-    // 先发送一个握手消息，让 Bridge 识别这是 Chrome 扩展（即使暂无工具）
+    try { currentBrowserContextId = await browserContextId(chrome.storage.local); }
+    catch (error) { console.error('[WebMCP] Browser profile unavailable:', error.message); socket.close(1008, 'PROFILE_ID_INVALID'); return; }
+    if (ws !== socket || socket.readyState !== WebSocket.OPEN) return;
     sendToNative(buildExtensionHello());
 
     chrome.tabs.query({}, (tabs) => {

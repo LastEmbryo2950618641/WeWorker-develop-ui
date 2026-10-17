@@ -2,14 +2,14 @@
 
 更新：2026-10-17。用户要求尽力实现与 OpenCLI 完全相同的能力；本文件保留完整目标，不把当前首版或单个测试站点视为完成标准。分支历史与同步约束见 [CLI 跟进文档](api_exploration_cli_handoff.md)。Python 网站探索agent全程排除。
 
-当前交接状态：用户要求暂停本会话，准备在新会话继续。最后已验证功能提交为 `3e9a7ff`；多浏览器连接只完成源码核查和设计记录，尚未实现。下一步入口见 [开发设计](api_exploration_cli_design.md)，原有未完成项保持未完成。
+当前进展：已从交接提交 `0f085ce` 继续，实现多浏览器 profile 和连接路由隔离；完整 Chromium 44 项、日常 Chrome/B 站 24 卡片回归通过。最后检查点与分发证据见交接日志；其余未完成项保持未完成。
 
 对照基线包括本机 OpenCLI 1.8.6 的实际命令帮助、本地技能与 npm 官方 1.8.8 发布包静态接口审计，见 [1.8.8 核查](opencli_1_8_8_audit.md)。静态接口不等于上游实机验收。按能力实现，保留本项目统一 `webcli call <namespace>.<command>` 入口和 Extension / Toolkit 分离边界，不复制上游业务实现。
 
 | 能力族 | 目标与验收证据 | 当前状态 |
 | --- | --- | --- |
 | 任意 Agent 与发现 | 不依赖桌面或第二模型 Key；结构化帮助、Skill；Codex/Claude 独立对话 | 核心架构已实现；跨 Agent 独立验收待做 |
-| 浏览器会话 | open/bind/unbind/close/tab、profile、多连接管理、doctor；用户页不误关闭、跨 CLI/重启恢复 | 命名会话、owned/bound 关闭规则、doctor、持久绑定、Chrome 会话身份守卫已实现；真实 owned/bound 验收通过；多 profile/连接待做 |
+| 浏览器会话 | open/bind/unbind/close/tab、profile、多连接管理、doctor；用户页不误关闭、跨 CLI/重启恢复 | 命名会话、owned/bound 关闭规则、doctor、持久绑定、Chrome 会话身份守卫已实现；新增稳定 contextId、profile list/rename/use、flag/env/default、双连接隔离与断线不重放；双真实浏览器及重启/重载验收通过，旧历史只读保留；桌面选择 UI/其他浏览器品牌及平台分发未验收 |
 | 页面操作 | state/find/get/extract、click/dblclick/fill/type/select/check/uncheck/focus/hover/scroll/keys/drag/upload/dialog；过期引用和模糊定位报错 | 主/子 frame 原生指针、同 frame 拖拽、输入/弹窗已真实验收；AX 引用支持开放/关闭/嵌套 Shadow DOM 控件及准确文档；DOM 显式 shadow 查询、树内标签及嵌套引用已实现；原生复合字段、HTML 树、明确选项匹配/保留校验已真实验收；隐藏/Shadow/AX/嵌套跨源原生文件输入上传与验证通过；自定义控件、目录输入与跨 frame/DataTransfer 拖拽待补 |
 | 页面观察 | frames/screenshot/console/eval/wait、网络摘要/detail/filter/follow、有界响应读取、失效错误 | frame eval/身份、完整截图、下载续等、console/network JSONL 与游标已真实验收；state source=ax、DOM/AX 指标比较、跨 frame 引用及部分结果/超时通过；截图主文档 DOM 编号、临时 CSS 尺寸、新文件保存及恢复通过，AX/子 frame 编号与任意设备模拟恢复未覆盖 |
 | 探索策略 | PUBLIC/COOKIE/PAGE_FETCH/INTERCEPT/DOM_STATE/UI_SELECTOR；接口/页面状态/脚本发现与策略理由 | PAGE_FETCH、声明式 UI_SELECTOR/DOM_STATE、单步 INTERCEPT 与跨文档页面查询已真实验收。analyze 提供结构分类/契约/错误建议，strategyNote 保存理由；Agent 可 replan 保留旧方案再换来源，API 失败→DOM 全流程通过。PUBLIC_API/COOKIE_API 独立 host HTTP runner、多步 UI 未实现；无运行时静默回退 |

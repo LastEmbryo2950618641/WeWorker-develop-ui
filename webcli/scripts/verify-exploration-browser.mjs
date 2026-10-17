@@ -16,6 +16,7 @@ import { verifyBrowserScreenshots } from './browser-screenshot-acceptance.mjs';
 import { verifyBrowserShadow } from './browser-shadow-acceptance.mjs';
 import { verifyBrowserCompounds } from './browser-compound-acceptance.mjs';
 import { verifyBrowserUploads } from './browser-upload-acceptance.mjs';
+import { verifyBrowserProfiles } from './browser-profile-acceptance.mjs';
 
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'webcli-browser-acceptance-'));
@@ -240,13 +241,21 @@ try {
   await page.goto(origin);
   async function connected() {
     for (let i = 0; i < 30; i++) {
-      const caps = await cli('exploration.capabilities');
-      if (caps.data.connected) return;
+      const status = await cli('profile.list');
+      if (status.data.profiles.some(item => item.online)) return;
       await delay(500);
     }
     throw new Error('Extension did not connect');
   }
   await connected(); passed('standalone extension connected');
+  const profiles = () => verifyBrowserProfiles({ browser, cliEntry, env, record, passed,
+    launchSecond: () => chromium.launchPersistentContext(path.join(root, 'browser-profile-second'), { channel: 'chromium', executablePath, headless: true,
+      args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] }),
+    stopBridge: async () => { const closed = new Promise(resolve => bridge.once('exit', resolve)); bridge.kill('SIGTERM'); await closed; },
+    startBridge: async () => { await startBridge(); await connected(); },
+  });
+  if (process.argv.includes('--profiles-only')) { await profiles(); return; }
+
   const tabs = (await cli('exploration.tabs')).data.tabs;
   const tabId = tabs.find(tab => tab.url === origin + '/').id;
   assert.equal((await cli('browser.doctor')).data.ready, true);
@@ -934,6 +943,7 @@ try {
   assert.equal((await settle(interruptedId)).status, 'evidence_ready');
   assert.equal((await cli(generated.data.toolNames[0], { page: 2 })).ok, true);
   passed('Bridge restart restores tasks, marks interruption and permits explicit resumption');
+  await profiles();
   })();
 } catch (error) {
   await record('failure', { message: error.message, stack: error.stack, browserEvents });

@@ -33,13 +33,14 @@ const clone = value => JSON.parse(JSON.stringify(value));
 
 /** Owned by the existing Bridge. No desktop Backend, Python, or model credentials. */
 export class ExplorationService {
-  constructor({ rootDir, paths, requestExtension, capabilities = () => ({ connected: false, capabilities: [] }),
+  constructor({ rootDir, paths, readOnly = false, requestExtension, capabilities = () => ({ connected: false, capabilities: [] }),
     runtimeValidator, publisher, tabLocks = new TabOperationLocks() } = {}) {
+    this.readOnly = readOnly;
     this.paths = paths || resolveAdapterPaths();
     this.root = rootDir || path.join(this.paths.workspaceDir, 'exploration');
     assertManagedDirectory(this.root);
-    fs.mkdirSync(this.root, { recursive: true, mode: 0o700 });
-    this.knowledge = new ExplorationKnowledge(path.join(this.root, 'knowledge'));
+    if (!readOnly) fs.mkdirSync(this.root, { recursive: true, mode: 0o700 });
+    this.knowledge = new ExplorationKnowledge(path.join(this.root, 'knowledge'), { readOnly });
     this.request = requestExtension;
     this.tabLocks = tabLocks;
     this.capabilities = capabilities;
@@ -49,12 +50,12 @@ export class ExplorationService {
     this.controllers = new Map();
     this.jobs = new Map();
     this.starting = new Map();
-    for (const name of fs.readdirSync(this.root)) {
+    for (const name of (fs.existsSync(this.root) ? fs.readdirSync(this.root) : [])) {
       if (!/^[a-f0-9-]{36}\.json$/.test(name)) continue;
       const run = JSON.parse(fs.readFileSync(assertManagedFile(this.root, name), 'utf8'));
       if (run.schemaVersion !== 1 || `${run.taskId}.json` !== name) throw fail('STORE_INVALID', 'Invalid exploration task store.');
       this.runs.set(run.taskId, run);
-      if (active.has(run.status)) this.update(run, 'interrupted', 'Bridge restarted; collect or validate again explicitly.');
+      if (!readOnly && active.has(run.status)) this.update(run, 'interrupted', 'Bridge restarted; collect or validate again explicitly.');
     }
   }
 
@@ -115,6 +116,10 @@ export class ExplorationService {
   async checkTab(run) {
     const tab = (await this.tabs()).find(tab => tab.id === run.tabId);
     if (!tab || new URL(tab.url).origin !== run.origin) throw fail('TAB_CHANGED', 'The task tab is closed or belongs to a different origin. Select the intended page before continuing.');
+    if (run.browserIdentity) {
+      const result = await this.request({ type: 'browser_execute', command: 'identity', args: {}, tabId: run.tabId, identity: run.browserIdentity }, 15000);
+      if (!result?.ok) throw fail(result?.error?.code || 'SESSION_EXPIRED', result?.error?.message || 'Task browser tab identity expired. Start a new task in the intended tab.');
+    }
     return tab;
   }
 
@@ -216,7 +221,7 @@ export class ExplorationService {
       return this.summary(run);
     }
     if (command === 'install' && run.status === 'installed') return this.summary(run);
-    if (active.has(run.status)) throw fail('TASK_BUSY', 'Wait for the current operation or cancel the task.');
+    if (active.has(run.status) && !(this.readOnly && ['draft-read', 'verification-read'].includes(command))) throw fail('TASK_BUSY', 'Wait for the current operation or cancel the task.');
     if (terminal.has(run.status) && !['draft-read', 'verification-read'].includes(command)) throw fail('INVALID_STATE', 'This task is terminal. Start a new task.');
     if (command === 'replan') {
       const revisions = archiveExplorationDraft(run, args.expectedDraftHash, textArg(args.reason, 'reason'));
@@ -360,8 +365,14 @@ export class ExplorationService {
     const tab = (await this.tabs()).find(tab => tab.id === tabId);
     if (!tab) throw fail('TAB_CHANGED', 'Select a tab from exploration.tabs.');
     this.assertTabAvailable(tabId);
+    let browserIdentity;
+    if (caps.capabilities.includes('browser_profiles_v1')) {
+      const result = await this.request({ type: 'browser_execute', command: 'bind', args: {}, tabId }, 15000);
+      if (!result?.ok || !result.data?.identity) throw fail('SESSION_EXPIRED', 'Could not retain the task browser tab identity.');
+      browserIdentity = result.data.identity;
+    }
     const now = new Date().toISOString();
-    const run = { schemaVersion: 1, taskId: randomUUID(), requestId, signature, goal, tabId, allowedOrigins, origin: new URL(tab.url).origin,
+    const run = { schemaVersion: 1, taskId: randomUUID(), requestId, signature, goal, tabId, ...(browserIdentity ? { browserIdentity } : {}), allowedOrigins, origin: new URL(tab.url).origin,
       siteKey: new URL(tab.url).hostname, createdAt: now, updatedAt: now, status: 'created', candidates: [], events: [], sequence: 0 };
     this.runs.set(run.taskId, run);
     try { return this.collect(run, true); }

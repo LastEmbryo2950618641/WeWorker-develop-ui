@@ -66,7 +66,8 @@ it('reports capability gaps and preserves typed page failures', async () => {
 it('only local RPC callers receive browser results; extension peers cannot invoke it', async () => {
   const bridge = Object.create(WebSocketBridge.prototype);
   const execute = vi.fn(async () => ({ ok: true, data: { title: 'Example' } }));
-  bridge._browserServicePromise = Promise.resolve({ execute }); bridge._broadcast = vi.fn();
+  bridge._profileService = vi.fn(async () => ({ execute }));
+  bridge._runInProfile = (msg, ws, fn) => fn(); bridge._route = { getStore: () => ({ contextId: 'example-context' }) }; bridge._broadcast = vi.fn();
   const ws = { _explorationLocal: true, readyState: 1, send: vi.fn() };
   await bridge._handleBrowserCommand({ id: 'one', command: 'state', args: {} }, ws);
   expect(execute).toHaveBeenCalledOnce(); expect(bridge._broadcast).not.toHaveBeenCalled();

@@ -7,6 +7,18 @@ description: 通过 WebCLI 与浏览器插件探索网页 API，生成、修复�
 
 你是负责理解目标、分析证据与编写代码的 Agent。WebCLI 提供确定性工具，不会替你调用另一个模型。不要等待后台模型完成“智能生成”。所有调用使用 `webcli call exploration.<command>`；先运行 `webcli call exploration.help` 获取当前契约。
 
+## 多浏览器 profile
+
+先运行 `webcli call profile.list`。每个扩展安装上下文有随机 contextId，重连/重载保持，和 Adapter/build profile 无关。
+
+`webcli call profile.rename --contextId=<id> --name=work` 设置唯一别名；`webcli call profile.use --name=work` 保存默认，`--name=auto` 清除默认。命令可以带全局 `--profile=work`，或设置 `WEBCLI_PROFILE=work`。优先级为 flag、环境变量、保存的默认值、唯一在线连接。多连接无选择时报 PROFILE_AMBIGUOUS；指定/默认离线报 PROFILE_OFFLINE，不回退到其他浏览器。
+
+- profile 是传输选项，不写进业务 JSON args。同名 session、tabId、探索任务、锁、知识与草稿按 contextId 隔离；安装的 Adapter 包仍在同一宿主目录，普通调用显式选择执行浏览器。
+- 一次操作和后台探索任务固定到开始时的 socket。断线返回 PROFILE_DISCONNECTED，不重放；先检查页面再显式重试。follow 也固定首个 profile/连接；重启后显式用原 profile 和 cursor 续接。
+- 旧插件单连接可用临时身份，不能持久设置别名/default；重载当前版本以获得稳定 ID。复制浏览器数据目录导致同 ID 同时在线时拒绝后连接，不覆盖已有连接。
+- `--profile=legacy` 只读升级前的 sessions、exploration.list/get/evidence/draft-read/knowledge-read 等历史；不移动、不覆盖旧数据，也不自动继承旧 tabId。明确在新 profile 中 bind 或 start；可参考旧 cases/知识重新验证。
+- 已知离线 profile 可读取历史和 sessions；实时操作必须在线。浏览器重启或插件重载后 SESSION_EXPIRED 需要重新选标签和绑定；旧探索任务的页面身份过期后应启动新任务。
+
 ## 准备
 
 需要已安装 WebCLI 和 WeWorker 浏览器插件。使用基础 webcli Skill 完成安装与连接。`capabilities` 检查连接，`tabs` 获取 tabId；桌面客户端不是前置条件。未知旧 Bridge 不支持协议时提示用户更新并重启 WebCLI 服务，不终止未知进程。

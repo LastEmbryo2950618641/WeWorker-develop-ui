@@ -11,8 +11,9 @@ function number(value, fallback, min, max, name) {
 
 /** Agent-neutral JSON Lines protocol, driven by the same poll API a UI can use. */
 export async function followBrowser(command, args, { request = (args, options) => callLocalCommand('browser', 'events', args, options),
-  emit, signal, now = Date.now, sleep = (ms, signal) => delay(ms, undefined, { signal }) } = {}) {
+  emit, signal, profile = process.env.WEBCLI_PROFILE, now = Date.now, sleep = (ms, signal) => delay(ms, undefined, { signal }) } = {}) {
   const envelope = { schemaVersion: 1, command: `browser.${command}`, session: args.session };
+  let connectionId;
   let currentCursor = args.cursor, count = 0, ready = false;
   try {
     if (!['console', 'network'].includes(command)) throw failure('INVALID_ARGUMENT', 'follow is available for console/network.');
@@ -27,11 +28,16 @@ export async function followBrowser(command, args, { request = (args, options) =
     let reason = 'duration';
     while (!signal?.aborted && (!duration || now() - started < duration)) {
       const result = await request({ ...filters, channel: command, ...(currentCursor ? { cursor: currentCursor } : {}) },
-        { signal, timeoutMs: duration ? Math.min(20000, Math.max(1, duration - (now() - started))) : 20000 });
+        { signal, profile, connectionId, timeoutMs: duration ? Math.min(20000, Math.max(1, duration - (now() - started))) : 20000 });
       if (signal?.aborted) break;
       if (!result.ok) {
         if (ready && result.error?.code === 'TIMEOUT' && duration && now() - started >= duration) break;
         throw failure(result.error?.code || 'BROWSER_OPERATION_FAILED', result.error?.message || 'Browser event poll failed.');
+      }
+      if (result.contextId) {
+        if (ready && result.contextId !== profile) throw failure('PROFILE_CHANGED', 'Browser profile changed during observation.');
+        profile = result.contextId; envelope.contextId = profile;
+        connectionId ||= result.connectionId;
       }
       const batch = result.data;
       if (batch?.observationVersion !== 1 || !Array.isArray(batch.entries) || typeof batch.startCursor !== 'string' || typeof batch.nextCursor !== 'string') throw failure('EXTENSION_UPGRADE_REQUIRED', 'Reload the extension to stream browser events.');
@@ -72,7 +78,7 @@ export async function followBrowser(command, args, { request = (args, options) =
   }
 }
 
-export async function runBrowserFollow(command, args) {
+export async function runBrowserFollow(command, args, { profile } = {}) {
   const controller = new AbortController();
   const stopInterrupt = () => controller.abort('SIGINT'), stopTerminate = () => controller.abort('SIGTERM');
   const outputError = error => controller.abort(error.code === 'EPIPE' ? 'output_closed' : 'output_error');
@@ -83,7 +89,7 @@ export async function runBrowserFollow(command, args) {
       if (error) { outputError(error); reject(error); } else resolve();
     });
   });
-  try { return await followBrowser(command, args, { emit, signal: controller.signal }); }
+  try { return await followBrowser(command, args, { emit, signal: controller.signal, profile }); }
   finally {
     // Node emits the stream error after the write callback; keep its handler
     // until that turn has completed even when the callback already rejected.

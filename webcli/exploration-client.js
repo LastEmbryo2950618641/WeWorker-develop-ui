@@ -1,11 +1,11 @@
 import { WebSocket } from 'ws';
 import { randomUUID } from 'node:crypto';
 
-export function callExploration(command, args, { url = 'ws://127.0.0.1:3711', timeoutMs = 20000 } = {}) {
-  return callLocalCommand('exploration', command, args, { url, timeoutMs });
+export function callExploration(command, args, options = {}) {
+  return callLocalCommand('exploration', command, args, options);
 }
 
-export function callLocalCommand(namespace, command, args, { url = 'ws://127.0.0.1:3711', timeoutMs = 20000, signal } = {}) {
+export function callLocalCommand(namespace, command, args, { url = 'ws://127.0.0.1:3711', timeoutMs = 20000, signal, profile = process.env.WEBCLI_PROFILE, connectionId } = {}) {
   return new Promise(resolve => {
     if (signal?.aborted) { resolve({ schemaVersion: 1, ok: false, command: `${namespace}.${command}`, error: { code: 'ABORTED', message: 'Local request canceled.' } }); return; }
     const socket = new WebSocket(url);
@@ -22,7 +22,7 @@ export function callLocalCommand(namespace, command, args, { url = 'ws://127.0.0
       socket.terminate();
     }, timeoutMs);
     signal?.addEventListener('abort', abort, { once: true });
-    socket.on('open', () => socket.send(JSON.stringify({ type: `${namespace}_command`, id, command, args })));
+    socket.on('open', () => socket.send(JSON.stringify({ type: `${namespace}_command`, id, command, args, ...(profile !== undefined ? { browserProfile: profile } : {}), ...(connectionId ? { browserConnectionId: connectionId } : {}) })));
     socket.on('message', data => {
       let message;
       try { message = JSON.parse(data.toString()); } catch { return; }

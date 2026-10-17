@@ -6,7 +6,7 @@ import { explorationError as fail, textArg } from './exploration-commands.js';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 export class ExplorationKnowledge {
-  constructor(root) { this.root = root; assertManagedDirectory(root); fs.mkdirSync(root, { recursive: true, mode: 0o700 }); }
+  constructor(root, { readOnly = false } = {}) { this.root = root; assertManagedDirectory(root); if (!readOnly) fs.mkdirSync(root, { recursive: true, mode: 0o700 }); }
   file(site) {
     textArg(site, 'site', 128);
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(site)) throw fail('INVALID_ARGUMENT', 'Use the Adapter name returned in the task summary.');

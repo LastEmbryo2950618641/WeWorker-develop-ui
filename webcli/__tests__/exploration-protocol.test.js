@@ -43,7 +43,8 @@ it('cancels an in-flight browser poll, closes its socket and never replays it', 
 it('Bridge replies only to the requesting local client and rejects extension-origin peers', async () => {
   const bridge = Object.create(WebSocketBridge.prototype);
   const execute = vi.fn(async () => ({ ok: true, data: { taskId: 'example-task' } }));
-  bridge._explorationServicePromise = Promise.resolve({ execute });
+  bridge._profileService = vi.fn(async () => ({ execute }));
+  bridge._runInProfile = (msg, ws, fn) => fn(); bridge._route = { getStore: () => ({ contextId: 'example-context' }) };
   bridge._broadcast = vi.fn();
   const ws = { readyState: 1, _explorationLocal: true, send: vi.fn() };
   await bridge._handleExplorationCommand({ id: 'one', command: 'get', args: {} }, ws);

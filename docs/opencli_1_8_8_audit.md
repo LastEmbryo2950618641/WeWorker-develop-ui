@@ -4,12 +4,12 @@
 
 来源：package.json、cli-manifest.json、dist/src/cli.js、dist/src/browser/analyze.js、README.md、包内 opencli-adapter-author 技能。公开发布包 tarball 为 https://registry.npmjs.org/@jackwener/opencli/-/opencli-1.8.8.tgz 。没有复制上游业务实现。
 
-多浏览器核查补充（文档交接，未实现）：继续读取该发布包的 dist/src/browser/profile.js，确认 alias 映射、持久 defaultContextId、显式 flag/OPENCLI_PROFILE 的选择，以及显式 contextId 与 preferredContextId 的路由参数区别；尚未据此核实 daemon 在全部冲突/断线场景的行为。WebCLI 拟保留更明确的离线失败规则，不将持久默认自动降级到其他浏览器；这属于本项目设计选择，不能声称与上游逐项相同。现有 `_extensionWs`、响应广播、单服务根与 tabId 锁的问题及完整验证要求见开发设计。用户要求在此检查点暂停，暂无 profile 实现或双浏览器实测证据。
+多浏览器核查补充（最初文档设计记录）：继续读取该发布包的 dist/src/browser/profile.js，确认 alias 映射、持久 defaultContextId、显式 flag/OPENCLI_PROFILE 的选择，以及显式 contextId 与 preferredContextId 的路由参数区别；尚未据此核实 daemon 在全部冲突/断线场景的行为。WebCLI 拟保留更明确的离线失败规则，不将持久默认自动降级到其他浏览器；这属于本项目设计选择，不能声称与上游逐项相同。现有 `_extensionWs`、响应广播、单服务根与 tabId 锁的问题及完整验证要求见开发设计。用户要求在此检查点暂停，暂无 profile 实现或双浏览器实测证据。
 
 - cli-manifest.json 包含 1366 个命令条目、179 个 site 分组（包括桌面应用，不能全部称为网站）。策略字段计数：cookie 778、public 345、ui 195、local 26、intercept 22。这个枚举比作者技能中的六种策略更粗；不能只按标签数宣称能力相等。
 - 作者技能仍按 PUBLIC_API / COOKIE_API / PAGE_FETCH / INTERCEPT / DOM_STATE / UI_SELECTOR 选择，要求来源证据、契约与替代策略理由。analyze 对实际响应做业务数据、噪声、权限阻塞判别；页面请求多不等于接口可复用。WebCLI 本轮加入结构分析与保留失败 revision 后显式重做计划，未实现自动运行时静默回退。
 - 浏览器接口除既有基本操作外，仍包含 state 的 AX 对比选项、截图标注与临时视口尺寸、console/network since/until/follow、跨源 frame eval、download 等待。WebCLI 已补嵌套跨源 eval、download 等待、console/network 持续输出、AX/DOM 来源对比及编号/临时尺寸截图，并经真实 Chromium 与日常 Chrome 检查；各项覆盖与限制分别记录，不由普通截图通过推断全部能力。
-- profile list/rename/use 与全局 --profile、环境 OPENCLI_PROFILE 支持多个扩展连接，不明确时选择 profile；另有 OPENCLI_CDP_ENDPOINT / OPENCLI_CDP_TARGET 和 Electron 应用适配。WebCLI 当前只验收一个 Chrome 插件连接和命名标签会话，不应把 session 当作多 profile 实现。
+- profile list/rename/use 与全局 --profile、环境 OPENCLI_PROFILE 支持多个扩展连接，不明确时选择 profile；另有 OPENCLI_CDP_ENDPOINT / OPENCLI_CDP_TARGET 和 Electron 应用适配。WebCLI 现已实现独立多连接 profile：统一 call profile.*、--profile/WEBCLI_PROFILE、alias/default 与双连接/重启实测；桌面选择 UI、外部 CDP/Electron 目标仍未对齐。
 - 其他接口包括 skills list/read、validate/verify、convention-audit、adapter status/eject/reset、plugin create/install/update/uninstall、daemon status/stop/restart、external register/install/list 和 shell completion。WebCLI 部分已有相近的 Adapter 管理/服务/Skill 分发能力，仍需逐命令核对输出、错误、覆盖和差异；不能直接按名字视为完成。
 - PUBLIC_API 可在没有浏览器时通过 host HTTP 执行；COOKIE_API 使用明确的运行时鉴权。WebCLI 当前自动生成的 API 命令仍是 Extension PAGE_FETCH，独立 host HTTP/通用鉴权能力待设计，同时必须遵守本项目 Extension 与 Toolkit Runner 边界。
 - 179 个分组/1366 个命令的业务覆盖也并未等同于本项目当前 Adapter 集合。后续先完成运行与生成能力，再核查站点覆盖需求，不以单个 B 站结果推断任意网站可用。
@@ -35,3 +35,5 @@ AX 对照增量：核对 cli.js state 的 --source 与 --compare-sources，以�
 select 支持 by=auto/value/label，使用 option.label 并核对修改后状态。与 OpenCLI 标签优先选择相比，本项目在 value/label 碰撞或同类重复时明确拒绝，需要作者明确匹配方式；不能把这种差异写成逐参数完全相同。结构化 HTML 用 get property=html as=json，支持 depth=0、html 根节点、子节点/文本/总节点限额，包含复合信息和截断报告。默认有界、限定属性、密码值/脚本正文省略，原 raw HTML 保留；树不自动遍历 shadow roots，选中内部元素再读。自定义日期弹层/组件状态机和 Shadow 文件输入仍未覆盖。
 
 上传对照增量：核对发布包 BasePage.uploadFiles 的 selector/semantic/ref 入口和 CDP setFileInput。WebCLI 统一 upload target 与其他命令，新增准确 frame/document、开放 shadow 与关闭 AX ref 上传，隐藏原生 input 也可选择。实现保留隔离世界实际节点，经所属 target session 按 objectId 赋文件，不向 DOM 写标记属性；验证文件名/顺序/大小，失效目标不重识别，已派发失败明确标记。原生 disabled/单多文件限制和目录输入拒绝均纳入测试；目录/文件选择弹窗、通用自定义上传业务流程尚未覆盖。
+
+多 profile 实现增量（2026-10-17）：按上述 1.8.8 发布接口实现 list/rename/use 与选择优先级，保留本项目离线 default 不回退的选择。普通调用、后台探索/Worker、trace、follow 均绑定选定连接，响应不广播；双 Chromium 和日常 Chrome 回归通过。旧数据通过 legacy 只读访问，未自动迁移。对照仍是发布包接口与本机 1.8.6 help，未宣称上游 daemon 全部冲突/断线行为与本实现相同。

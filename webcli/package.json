@@ -22,6 +22,7 @@
     "exploration-analysis.js",
     "exploration-revisions.js",
     "browser-commands.js",
+    "browser-profiles.js",
     "browser-service.js",
     "browser-follow.js",
     "tab-operation-locks.js",

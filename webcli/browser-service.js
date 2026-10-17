@@ -7,9 +7,9 @@ import { explorationError as fail, integerArg, textArg } from './exploration-com
 import { TabOperationLocks } from './tab-operation-locks.js';
 
 export class BrowserService {
-  constructor({ rootDir, requestExtension, tabLocks = new TabOperationLocks(), capabilities = () => ({ connected: false, capabilities: [] }) } = {}) {
+  constructor({ rootDir, readOnly = false, requestExtension, tabLocks = new TabOperationLocks(), capabilities = () => ({ connected: false, capabilities: [] }) } = {}) {
     this.root = rootDir || path.join(resolveAdapterPaths().workspaceDir, 'browser');
-    assertManagedDirectory(this.root); fs.mkdirSync(this.root, { recursive: true, mode: 0o700 });
+    assertManagedDirectory(this.root); if (!readOnly) fs.mkdirSync(this.root, { recursive: true, mode: 0o700 });
     this.file = assertManagedFile(this.root, 'sessions.json');
     this.bindings = fs.existsSync(this.file) ? JSON.parse(fs.readFileSync(this.file, 'utf8')) : {};
     this.request = requestExtension; this.capabilities = capabilities; this.busy = new Set(); this.tabLocks = tabLocks;

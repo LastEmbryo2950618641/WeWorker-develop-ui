@@ -1,18 +1,17 @@
 # API 自动探索 CLI 改造跟进与交接
 
-> 更新日期：2026-10-17。当前状态：应用户要求暂停本会话目标，交给新会话继续。最后完成的功能为文件输入目标扩展 `3e9a7ff`；WebCLI 1133 项、扩展相关 122 项、隔离真实浏览器完整 38 项及最终上传聚焦通过，日常 Chrome 与 B 站 24 卡片回归通过。随后只核查多浏览器路由并记录设计，尚未修改相关代码。整体对齐目标未完成。
+> 更新日期：2026-10-17。当前阶段已继续并完成多浏览器 profile：稳定身份、显式选择、请求/响应隔离、按浏览器持久会话/任务/锁、断线不重放。WebCLI 1145 项、扩展相关 85 项、完整真实 Chromium 44 项及最终 profile/trace 聚焦通过；日常 Chrome/B 站 Excel 第一页 24 卡片回归通过。整体 OpenCLI 对齐仍未完成，Python 网站探索agent全程未动。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
 
 ## 新会话从这里接手
 
-- 继续使用当前分支 `codex/api-exploration-cli`。最后功能提交为 `3e9a7ff`，其后只有本次交接文档提交；先核对 `git status --short --branch` 与最近日志，不重新建分支或重复上传改造。
-- 先读根 AGENTS.md、ROADMAP.md、本节与本文末尾，再读 [多浏览器设计](api_exploration_cli_design.md) 和 [能力台账](opencli_parity.md)。前面各阶段的 active/下一步描述为历史，当前暂停状态以本节为准。
-- 下一项：实现浏览器 profile 的连接身份、明确选择、请求与响应路由，以及会话/任务/标签锁隔离。当前 Bridge 仍只有一个 `_extensionWs`，不能认为已有多连接支持。设计与必测场景已经写好，尚无半完成代码或待运行测试。
-- 独立 WebCLI + 插件面向任何能执行 CLI 的 Agent；自然语言由调用 Agent 处理，无桌面或第二套模型 Key 依赖。保持统一 `webcli call` 与 Extension/Toolkit Runner 分离。Python 网站探索agent源码、环境、测试、生命周期和数据全程不动。
-- 集成基线 `baf9f98`；已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`，#106/#91 已合入 develop。本次没有 fetch/merge/push/PR；后续同步依本文第 4 节“上游 → 集成基线 → 功能分支”，这些 SHA 只是已纳入快照。
-- 用户已安装 `weworker/build/extension-dist`，上一阶段已重载，不需要重复要求安装。真实目标仍为用户指定的 B 站 Excel 搜索页；使用前重新 doctor/tabs/bind，不照抄旧 tab/document 身份。源码 Bridge 在本次只读核对时仍为 PID 38679、日志 `/tmp/weworker-upload-live-bridge.log`；任何重启前重新核对完整命令和归属。
-- 报告位于系统临时目录，上传完整报告 `webcli-browser-acceptance-W5Q8Pm/report.json`、最终聚焦 `webcli-browser-acceptance-nlsrAp/report.json`、日常 Chrome `weworker-upload-live-Giy5xv/report.json`。这些是上阶段证据，本次文档收尾没有重新运行浏览器验收。临时文件可能被系统清理，缺失时依已提交验收脚本重跑。
-- 后续仍有独立 PUBLIC_API/COOKIE_API runner、多步 UI/写命令、自定义控件、知识修订/共享修复、API 探索 UI 与内置对话复用、独立 Agent 对话及平台分发。不要把多 profile 完成视为整个目标完成。
+- 继续当前分支 `codex/api-exploration-cli`，本轮起点 `0f085ce`；本轮检查点 SHA 见 Git 最新提交。先核对工作区/日志，不重建分支或重复实现 profile。根 AGENTS.md、ROADMAP.md、本文末尾、[开发设计](api_exploration_cli_design.md) 和 [能力台账](opencli_parity.md) 为接手入口。
+- 已完成多浏览器 profile，使用 `webcli call profile.list` 和 `--profile=<contextId|alias>`；唯一在线可自动选择，显式/default 离线不回退。旧 browser/exploration 根通过 `--profile=legacy` 只读访问，新 profile 不继承旧 tabId。桌面尚无 profile 选择 UI，多连接时需 CLI 保存默认或由调用方显式传路由。
+- 下一步优先设计并实现独立 PUBLIC_API/COOKIE_API runner 和显式凭据契约，保持 Extension/Toolkit Runner 边界；通用自定义控件、动态页面/多步 UI/写命令、知识修订/共享修复、API 探索 UI/内置对话复用、独立 Agent 对话及平台分发仍在台账。多 profile 完成不等于完整对齐完成。
+- WebCLI + 插件继续面向任意能执行 CLI 的 Agent，调用方处理自然语言，不依赖桌面或第二模型 Key。Python 网站探索agent源码、环境、测试、生命周期和数据全程不动。
+- 集成基线 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`；本轮没有 fetch/merge/push/PR。后续同步按第 4 节“上游 → 集成基线 → 功能分支”，这些 SHA 仅是已纳入快照。
+- 用户已安装工作区 extension-dist，本轮已重载，无需重装。真实目标仍是用户指定 B 站 Excel 搜索页，重新 doctor/tabs/bind 后使用；不要照抄历史 tab/document/profile/PID。当前 source Bridge 快照 PID 47386、日志 `/tmp/weworker-profile-live-bridge.log`；重启前再核对完整命令和归属。
+- 本轮临时报告：完整 `webcli-browser-acceptance-pwbLA3/report.json`（44 项），最终 profile/trace 聚焦 `webcli-browser-acceptance-5UiXsh/report.json`（8 项），日常 Chrome `/tmp/weworker-profile-bilibili-regression.json`。前两项位于系统临时根，可被清理；缺失时用已提交脚本复跑，不把旧报告当作最新测试。
 
 ## 最新状态
 
@@ -22,7 +21,7 @@
 - 功能分支在集成提交后创建为 `codex/api-exploration-cli`，最终操作结果见文末。未推送或创建 PR，最终发布目标仍待明确。
 - [开发设计](api_exploration_cli_design.md) 为本次审阅入口。
 - [OpenCLI 能力对齐台账](opencli_parity.md) 为最新范围与缺口清单；用户要求尽力对齐完整能力，不能把当前 36 个 browser 命令或单站点验收视为目标完成。
-- 首版功能实现提交为 `821a7df`，最新功能检查点为文件输入扩展 `3e9a7ff`；后续交接提交见 Git 日志。集成基线仍为 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`。这些是已纳入快照，后续同步前应重新 fetch，不能据此推断远端未变化。
+- 首版功能实现提交为 `821a7df`，最新功能为多浏览器 profile（本轮起点 `0f085ce`），检查点 SHA 见 Git 日志。集成基线仍为 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`。这些是已纳入快照，后续同步前应重新 fetch，不能据此推断远端未变化。
 > 后续每次建分支、同步上游、解决冲突、实现功能或验证后，都应更新本文和 ROADMAP.md。未验证事项不得标为完成。
 
 ## 1. 目标与范围
@@ -543,3 +542,19 @@ npm run test:exploration:browser --prefix webcli -- \
 - 更新本文顶部接手入口、开发设计、能力台账、OpenCLI 核查和 ROADMAP，共 5 份文档。没有新功能代码、测试进程、依赖、构建、fetch/merge/push/PR；功能验证数字沿用上传阶段，文档检查不冒充重跑测试。
 - 本次只读核实 source Bridge PID 38679 的完整命令仍指向本工作区 `webcli/index.js --service`。没有停止或重载服务，没有操作浏览器；上一阶段上传验收的用户插件和页面保留。新会话使用前重新核对进程和标签身份。
 - 收尾验证：检查 5 份文档差异和本地链接、Git 差异格式、修改范围；Python 网站探索agent相对 `af8e082` 保持零差异。提交 SHA 以本次文档提交的 Git 日志为准，提交后工作区应为干净状态。
+
+### 2026-10-17：多浏览器 profile 实现与验收
+
+- 从 `0f085ce` 继续当前分支，工作区初始干净；未同步上游、未新建分支/worktree。实现文件为 browser-profiles.js、扩展 browser-profile.js、Bridge 路由与 CLI/follow，沿用已有 Runner 边界，无新依赖。
+- Chrome local storage 保存 UUID contextId，socket 单独身份；同 ID 同时在线拒绝后连接。profile.list/rename/use、--profile/WEBCLI_PROFILE、原子配置和离线历史就绪；flag > env > default > 唯一在线，不回退。浏览器命名会话/任务/知识/草稿/锁按 contextId 隔离，宿主安装包共享。
+- 操作/后台任务用固定 route，Worker IPC 显式 AsyncResource；请求随机 UUID 跨 Bridge 重启不复用，绑定响应 socket，断线清 timer/失败，不接受迟到或异源回复。普通结果/Worker 进度只回请求者；目录通知仍广播，扩展资源回复原 socket。trace/follow 固定选择，选定 open_browser 不走系统回退。
+- 新探索任务同时保留并复核标签 identity，阻止浏览器重启后的同 tabId 复用。旧根不移动/改写，通过 legacy 只读恢复任务/草稿/知识/旧生成历史，不自动继承或迁移。旧插件单连接临时可用，持久 alias/default 明确升级。
+- 自动化：WebCLI 全量 108 文件/1145 项通过；扩展 browser-*、消息安全和导航守卫 85 项通过；最后 CLI/路由聚焦 16 项通过。双真实 Chromium 完整 44 项通过，包含旧单连接探索/修复/安装回归和多 profile；最后 profile/verbose trace 聚焦 8 项通过。
+- 双浏览器覆盖同站点/同名 session、异 profile ref/cursor 拒绝、flag/env/default、两侧独立探索/作者 cases/真实验证/增量安装、普通调用、trace、follow/default 切换、Bridge 重启、扩展重载、浏览器退出/重启与离线默认不回退。协议单测另覆盖相同 tabId 的锁、异 socket 冒用请求 ID、断线/迟到回复、Worker 回调归属、动作模型上下文隔离与零/多浏览器 Toolkit。
+- 首次新验收计划遗漏 readReason 被正常拒绝，补齐测试输入。Chrome for Testing 未开 developer mode 时 runtime.reload 会将命令行扩展标记 unsupportedDeveloperExtension，使用隔离测试 profile 的扩展管理 API 开启开发者模式后重载通过，未调整日常浏览器设置。关闭浏览器可能先返回 CDP 取消(BROWSER_OPERATION_FAILED)，随后 socket 才关闭；两种路径都无重放，断线立即失败由 WebSocket 单测另精确验证。
+- 代码复核发现 verbose trace 的函数参数漏传，修正并新增双 profile CLI --verbose 实机检查；最终聚焦通过。同一个业务命令在不同 profile 读取不同页面，trace 仍取选定浏览器。
+- 日常 Chrome：核实旧 source Bridge PID 38679 完整命令归属后更新至本轮源码，已重载工作区 extension-dist，稳定身份/doctor 就绪。重新选择并绑定用户指定 Excel 第一页，主文档 AX 有搜索控件；已安装 explored-current-video-links 的 24 张可见视频标题/规范化 URL 与 DOM 逐项一致；legacy 旧任务可读。首次人工期望包含隐藏卡片且未规范化空白，按原命令“可见卡片/规范化文本”契约修正验收后通过，未改业务 Adapter 或页面。
+- 真实结果未提交，系统临时报告见顶部；所有临时 Chromium/fixture/Bridge 已按验收清理，日常浏览器及本任务 source Bridge 保留。Python 网站探索agent相对本轮起点与 `af8e082` 源码零差异，未执行其环境/测试/生命周期操作；CI/发布/schema/.env 未改。
+- 下一阶段仍是 PUBLIC_API/COOKIE_API 与显式鉴权契约，以及能力台账的其余项；不将本阶段完成标为完整目标完成。最终构建/打包检查结果见本节后续记录。
+
+- 最终收尾：补齐离线 cancel 与 legacy 活跃任务草稿读取，聚焦 41 项及完整 WebCLI 1145 项再次通过；禁止 alias 使用 UUID 形状，避免别名与当前/未来 contextId 冲突。CLI/Bridge bundle、打包 CLI profile.help 和普通 profile 调用/verbose trace、公开配置均通过；npm pack dry-run 600 文件，含 browser-profiles.js、扩展 browser-profile.js 和两份 Skill。22 个 JS/MJS 语法、Git 差异格式、改动内容凭据/私网地址检查通过；已有可选列映射资源警告保留。最终 source Bridge 重启后旧绑定恢复且打包 CLI B 站仍返回 24 卡片。没有新依赖、未推送或创建 PR；本地功能检查点见 Git 日志。

@@ -56,6 +56,7 @@ export async function executeBrowserCommand({ command, tabId, args = {}, identit
     if (!Number.isInteger(tabId) || tabId < 0) throw fail('INVALID_ARGUMENT', 'tabId is required.');
     const tab = await chrome.tabs.get(tabId);
     if (!/^https?:\/\//.test(tab.url || '')) throw fail('UNSUPPORTED_PAGE', 'Only HTTP(S) pages are supported.');
+    if (command === 'identity') return { ok: true, data: { identity } };
     const axReference = typeof args.ref === 'string' && args.ref.startsWith('ax:');
     if (axReference) {
       args = browserAxReference(args);
