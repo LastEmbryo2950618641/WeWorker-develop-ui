@@ -16,7 +16,7 @@
 - PUBLIC_API 可在没有浏览器时通过 host HTTP 执行；COOKIE_API 使用明确的运行时鉴权。WebCLI 当前自动生成的 API 命令仍是 Extension PAGE_FETCH，独立 host HTTP/通用鉴权能力待设计，同时必须遵守本项目 Extension 与 Toolkit Runner 边界。
 - 179 个分组/1366 个命令的业务覆盖也并未等同于本项目当前 Adapter 集合。后续先完成运行与生成能力，再核查站点覆盖需求，不以单个 B 站结果推断任意网站可用。
 
-下一步仍包括多步 UI/写命令、通用鉴权、复杂浏览器能力、知识修订、UI/聊天共用服务和独立 Agent 验收。此核查更新比较基线，不改变用户要求尽力完整对齐的目标。
+下一步 CLI 对齐仍包括目标网站多步 UI/写命令、复杂浏览器能力、知识修订和独立 Agent 验收；鉴权最新范围见顶部增量。用户明确不需要 OpenCLI 桌面客户端；WeWorker UI/聊天共用服务及 profile 选择界面单列产品集成，不作为 CLI 对齐完成条件。CDP/Electron 指 CLI 控制外部目标。此核查更新比较基线，不改变其余 CLI 能力对齐目标。
 
 下载对照增量：核对发布包 cli.js 的 wait download、browser/page.js 与类型声明。本项目使用同一 call 入口，显式区分未见/进行中/中断/歧义；匹配为字面子串，downloadId 为 CDP GUID，Chrome 数字 ID 只是可选元数据。每次等待最长 30 秒，可按同一 ID 续等；不保证总能取得路径，不改浏览器下载策略。子 frame DOM 点击在日常 Chrome 未形成下载，focus + 原生 Enter 的跨源示例完成；这是仍待补原生子 frame 指针的实际边界。
 

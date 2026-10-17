@@ -5,6 +5,7 @@
 
 ## 新会话从这里接手
 
+- 范围澄清：用户明确不需要 OpenCLI 桌面客户端。只对齐 CLI、浏览器扩展与相关工具能力；WeWorker API 探索 UI/内置聊天/profile 选择界面单列产品集成，不作为 CLI 对齐完成条件。多步 UI 指目标网站操作，CDP/Electron 指 CLI 控制外部目标，不是开发桌面客户端。
 - 继续当前分支 `codex/api-exploration-cli`，最新鉴权阶段起点 `953d9e2`；检查点 SHA 见 Git 最新提交。先核对工作区/日志，不重建分支或重复实现 profile/HTTP Runner。根 AGENTS.md、ROADMAP.md、本文末尾、[开发设计](api_exploration_cli_design.md)、[HTTP 契约](http_adapter_runtime.md) 和 [能力台账](opencli_parity.md) 为接手入口。
 - 已完成多浏览器 profile，使用 `webcli call profile.list` 和 `--profile=<contextId|alias>`；唯一在线可自动选择，显式/default 离线不回退。旧 browser/exploration 根通过 `--profile=legacy` 只读访问，新 profile 不继承旧 tabId。桌面尚无 profile 选择 UI，多连接时需 CLI 保存默认或由调用方显式传路由。
 - PUBLIC_API/COOKIE_API/AUTH_API runner 已实现，version 2 支持宿主环境 Bearer/header/Basic/HMAC 与 Cookie storeId/partitionKey，保持 Extension/Toolkit Runner 边界。下一步先做无需页面的 API 发现；之后推进动态页面/多步 UI/写命令、知识修订/共享修复、CDP/外部 CLI/插件生态与站点覆盖。任意站点签名/OAuth 仍未等同；API 探索 UI/内置对话复用、独立 Agent 对话及平台分发仍在台账，不能把本阶段当作完整对齐完成。
@@ -32,7 +33,7 @@
 - 调用方 Agent 理解自然语言、选取证据并编写代码；WebCLI Bridge 负责确定性任务、验证与安装，不要求桌面 Backend 或额外模型 Key。
 - 已实现启动、状态、事件、证据、补采、安全探测、取消、恢复、草稿读写、生成、验证、审阅和安装。
 - 自然语言层负责理解目标、补齐必要参数及编排命令；CLI 提供稳定、可验证的结构化结果和错误。
-- 后续 API 探索界面通过薄适配层复用同一 Bridge 契约，本轮未迁移 UI。Python 网站探索agent完全排除在本任务外。
+- 后续 WeWorker API 探索界面通过薄适配层复用同一 Bridge 契约，单列产品集成，不作为 CLI 对齐完成条件；不开发 OpenCLI 桌面客户端。Python 网站探索agent完全排除在本任务外。
 - 用户不负责 `dev-1.1.0` 上其他特性；同步时保留其行为，不顺手重构或改写他人的功能。
 
 现有参考：[API 探索可靠性计划](api_exploration_reliability_plan.md)、[本地验收](api_exploration_local_acceptance.md)。这些文档是历史设计与验证记录，不代表本次 CLI 已实现或验收。

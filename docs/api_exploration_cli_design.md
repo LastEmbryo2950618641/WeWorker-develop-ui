@@ -212,6 +212,8 @@ browser_upload_target_v1 统一上传到主/子 frame 的实际原生文件节�
 
 ## 后续 UI 统一
 
+这里的 UI 指 WeWorker 自有界面。用户明确不需要 OpenCLI 桌面客户端；本节属于后续产品集成，不作为 CLI 对齐的完成条件。目标网站的多步 UI 操作和 CDP/Electron 外部目标控制仍按 CLI 能力分别核对。
+
 本轮独立命令不经过 TypeScript Backend。后续由 Backend 的薄适配层调用相同 Bridge 命令，使 API 探索页面、内置聊天工具与外部 Agent 共用任务状态和校验。UI 不需要启动 shell；不得借此改动 Python 网站探索agent。
 
 ## 验证与未完成范围

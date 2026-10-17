@@ -2,6 +2,8 @@
 
 更新：2026-10-17。用户要求尽力实现与 OpenCLI 完全相同的能力；本文件保留完整目标，不把当前首版或单个测试站点视为完成标准。分支历史与同步约束见 [CLI 跟进文档](api_exploration_cli_handoff.md)。Python 网站探索agent全程排除。
 
+范围澄清（2026-10-17）：用户明确不需要 OpenCLI 桌面客户端，本次只对齐 CLI、浏览器扩展与相关工具能力。此前“桌面 UI”指 WeWorker 的 API 探索页面、内置聊天和 profile 选择界面；这些属于单列产品集成，不计入 CLI 对齐的完成条件。下文“多步 UI”指 CLI 操作目标网站的流程；“CDP/Electron 接入”指 CLI 控制浏览器或第三方 Electron 应用，均不表示开发 OpenCLI 桌面客户端。
+
 当前进展：在多浏览器 profile 检查点 `81b4fd0` 上新增独立 HTTP Runner、PUBLIC_API/COOKIE_API 生成/严格验证/安装/调用与只读定向修复。WebCLI 1161 项、完整 Chromium 47 项通过，双真实 profile 的 HttpOnly Cookie/CSRF 隔离及最终 6 项 HTTP 检查通过；完整目标仍未完成。
 
 最新鉴权增量：在 HTTP 检查点 `953d9e2` 上补 version 2、AUTH_API、宿主环境 Bearer/header/Basic/声明式 HMAC，以及 Cookie storeId/partitionKey。安装权限覆盖完整契约，旧插件能力不足时零凭据派发，AUTH 普通调用无需 profile。阶段证据见交接文档顶部与末尾；不是任意站点签名/OAuth 的完成声明。
@@ -11,7 +13,7 @@
 | 能力族 | 目标与验收证据 | 当前状态 |
 | --- | --- | --- |
 | 任意 Agent 与发现 | 不依赖桌面或第二模型 Key；结构化帮助、Skill；Codex/Claude 独立对话 | 核心架构已实现；跨 Agent 独立验收待做 |
-| 浏览器会话 | open/bind/unbind/close/tab、profile、多连接管理、doctor；用户页不误关闭、跨 CLI/重启恢复 | 命名会话、owned/bound 关闭规则、doctor、持久绑定、Chrome 会话身份守卫已实现；新增稳定 contextId、profile list/rename/use、flag/env/default、双连接隔离与断线不重放；双真实浏览器及重启/重载验收通过，旧历史只读保留；桌面选择 UI/其他浏览器品牌及平台分发未验收 |
+| 浏览器会话 | open/bind/unbind/close/tab、profile、多连接管理、doctor；用户页不误关闭、跨 CLI/重启恢复 | 命名会话、owned/bound 关闭规则、doctor、持久绑定、Chrome 会话身份守卫已实现；新增稳定 contextId、profile list/rename/use、flag/env/default、双连接隔离与断线不重放；双真实浏览器及重启/重载验收通过，旧历史只读保留；其他浏览器品牌及平台分发未验收；WeWorker profile UI 另列产品集成 |
 | 页面操作 | state/find/get/extract、click/dblclick/fill/type/select/check/uncheck/focus/hover/scroll/keys/drag/upload/dialog；过期引用和模糊定位报错 | 主/子 frame 原生指针、同 frame 拖拽、输入/弹窗已真实验收；AX 引用支持开放/关闭/嵌套 Shadow DOM 控件及准确文档；DOM 显式 shadow 查询、树内标签及嵌套引用已实现；原生复合字段、HTML 树、明确选项匹配/保留校验已真实验收；隐藏/Shadow/AX/嵌套跨源原生文件输入上传与验证通过；自定义控件、目录输入与跨 frame/DataTransfer 拖拽待补 |
 | 页面观察 | frames/screenshot/console/eval/wait、网络摘要/detail/filter/follow、有界响应读取、失效错误 | frame eval/身份、完整截图、下载续等、console/network JSONL 与游标已真实验收；state source=ax、DOM/AX 指标比较、跨 frame 引用及部分结果/超时通过；截图主文档 DOM 编号、临时 CSS 尺寸、新文件保存及恢复通过，AX/子 frame 编号与任意设备模拟恢复未覆盖 |
 | 探索策略 | PUBLIC/COOKIE/PAGE_FETCH/INTERCEPT/DOM_STATE/UI_SELECTOR；接口/页面状态/脚本发现与策略理由 | PUBLIC_API/COOKIE_API 独立 HTTP Runner 已接入显式计划、作者 cases、安装、调用与只读 repair；真实 PUBLIC 全闭环、双 profile COOKIE/CSRF 普通调用通过。PAGE_FETCH、声明式页面来源、单步 INTERCEPT 与受约束跨文档查询已验证。无需页面的 API 发现、多步 UI 仍待做；无静默回退 |
@@ -20,7 +22,7 @@
 | 维护与知识 | 站点 endpoints/field-map/notes/fixtures、有效期、trace、安装后自动修复、重试界限 | 已有任务历史、结构 trace、站点知识/过期标记；repair-info/repair 支持 Agent 定向修复已安装的只读命令，带入历史 cases 并重新验证、审阅安装；真实字段漂移后六组失败→修复通过已验收。知识冲突修订、共享文件/写命令修复待做；Agent 依 Skill 最多三轮修复 |
 | 分发与工具生态 | 对应 plugin / adapter 管理能力、输出格式、补全、现有 Adapter 能力对照 | 复用已有 v2/AdapterHub；逐项差异和覆盖率待核对 |
 | 扩展运行目标 | Electron/CDP 接入、外部 CLI passthrough 等 OpenCLI 能力 | 尚未实现/核对，不据当前浏览器验收宣称完成 |
-| 产品复用 | API 探索 UI 和内置对话复用同一命令服务 | 待接入；不涉及 Python 模块 |
+| 产品复用（独立于 CLI 对齐） | WeWorker API 探索 UI、内置对话及 profile 选择复用同一命令服务 | 后续产品待办，不作为 CLI 对齐完成条件；不涉及 Python 模块，也不开发 OpenCLI 桌面客户端 |
 
 验收记录要求：每项提供代码位置、自动化用例、真实运行证据和剩余限制。没有证据的项保持未完成。真实站点使用用户指定的 B 站 `https://search.bilibili.com/all?keyword=excel`；仓库内只保存公开占位示例与验证摘要，不保存用户页面、登录信息或网络原始响应。
 
