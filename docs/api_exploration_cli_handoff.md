@@ -1,6 +1,6 @@
 # API 自动探索 CLI 改造跟进与交接
 
-> 更新日期：2026-10-18。用户在本对话明确恢复持续目标，当前 active；498ba61 干净起点与 53acae7 代码检查点已核对。下文暂停为历史结束状态。完整余项以能力台账为准，B01 hash/有界循环与分支已实现，完整回归修复后复跑中，未验证前不计完成。
+> 更新日期：2026-10-18。用户在本对话明确恢复持续目标，当前 active；498ba61 干净起点与 53acae7 代码检查点已核对。下文暂停为历史结束状态。完整余项以能力台账为准，B01 hash/有界循环与分支在 d0e8ea9 已验证（完整双打包 99 项）；跨源主文档下一实现未提交、未实机，整体 active。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
 
 ## 新会话从这里接手
@@ -866,3 +866,11 @@ npm run test:exploration:browser --prefix webcli -- \
 - 补充：最终双打包控制专项 **7 项** 4FVrEL 已通过，28 文件隐私检查通过。随后给验收脚本增加“作者验证在重复步骤取消，下一轮和下一 case 均零派发”实机断言，最终专项再次运行；生产实现未变。B01 跨源/frame 已完成固定源码摘要核对与差距/实现边界审计，见 opencli_workflow_context_audit.md；该部分尚无半成品实现。
 
 - 追加最终控制专项：Y3nbGm **8 项通过**，日志 /tmp/weworker-control-bundled-cancel-final.log；新增作者预览取消覆盖正在执行的重复步骤和下一条作者 case，均零后续派发。33 产品文件/0 私有绑定隐私检查通过，产品与诊断观察串均未持久化。完整 XoGPDg 已越过此前 hash 重启失败点并通过线性/受控 workflow，后续回归仍在运行。
+
+### 2026-10-18：d0e8ea9 hash/有界控制最终证据，继续跨源（active）
+
+- 本地代码检查点 **d0e8ea9**，未 push/PR。Chromium 1217 最终完整 CLI＋Bridge 双打包 **99 项全部通过**，XoGPDg/report.json，日志 /tmp/weworker-control-bundled-full.log；包括此前失败的 hash 重启、线性/控制 workflow、profile/HTTP、PAGE_FETCH/UI 单写、实际 ID/异步效果、三类修复与共享修复。执行快照早于最后的诊断文本脱敏、额外知识字段断言和作者取消专项，生产代码相同；最终专项 Y3nbGm **8 项**补齐最后作者取消断言。
+- 完整产品目录与日志 **5370 文件/28 私有 resultBinding** 权限及敏感占位扫描通过，hash/fragment/control 观察标记零持久化，日志 /tmp/weworker-control-privacy-full.log。最终控制专项 **33 文件/0 绑定**通过。此前失败 SpVEmj/I4bcQi 保留；没有通过删除页面或弱化请求计数绕过断线重放。
+- 阶段验证汇总：WebCLI **127 文件/1427 项**、聚焦 **69 项**、扩展 **53 项**；源码控制 **7 项** dZJaoz、最终打包控制 **8 项** Y3nbGm、hash 专项 **9 项** c4GzcD、双打包 HTTP **24 项** uL2N25；构建/配置/3 配置测试/28 文件语法/探索 Skill/npm pack **630 文件**与字节一致性通过。只证明 d0e8ea9 阶段，不覆盖下列未提交跨源代码。
+- 已继续下一 B01：跨源 origin 规范化 helper、navigate.resultOrigin、workflow step.origin、任务 allowedOrigins 限制、manifest match/权限、route 选择与 preview 固定任务 tab 开始实现。普通 observe/collect/write 的 checkTab 默认仍要求原 origin，仅声明读路由允许有限目的地；旧 profile 在派发前拒绝。**新 capability 尚未在扩展公告，当前没有跨源实机或完整回归通过，不得算完成。** frame 暂无实现。
+- 下一实现当前单元：origin helper 最初 4 项、主机聚焦 55 项、profile/服务聚焦 63 项、扩展 navigation/tool-route 39 项通过，均不足以验收跨源。service-worker 测试 loader 缺新增 import 导致旧 route 用例失败，补同步注入后 39 项通过。跨源支持后续仍需预览恢复/重复调用/修复/取消重启与双打包真实两个 loopback origin 验证；当前半成品不要误并为 d0e8ea9 的已验结果。
