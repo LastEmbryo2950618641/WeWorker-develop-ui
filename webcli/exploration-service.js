@@ -606,6 +606,7 @@ export class ExplorationService {
     const pageTools = (run.plan?.tools || []).filter(tool => tool.risk !== 'write' && (tool.sourcePageId || isHttpStrategy(tool.strategy))).map(tool => `${run.siteKey}.${tool.name.replace(/_/g, '-')}`);
     for (const command of readPackageDirectory(run.draft.adapterDir).commands.filter(command => run.draft.toolNames.includes(command.name))) {
       if (command.uiWrite && !this.capabilities().capabilities.includes('ui_write_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating UI writes.');
+      if (command.uiWrite?.result && !this.capabilities().capabilities.includes('ui_write_result_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating UI receipt IDs.');
       if (command.pageWrite && !this.capabilities().capabilities.includes('page_write_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating page writes.');
       const capability = httpCredentialsCapability(command.http);
       if (capability && !this.capabilities().capabilities.includes(capability)) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating scoped HTTP cookies.');

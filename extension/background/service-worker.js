@@ -69,6 +69,7 @@ const EXTENSION_CAPABILITIES = [
   'page_workflow_v1',
   'page_write_v1',
   'ui_write_v1',
+  'ui_write_result_v1',
 ];
 
 let currentBrowserContextId;

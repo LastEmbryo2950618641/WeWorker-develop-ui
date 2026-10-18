@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import { runHttpTool } from '../http-runner.js';
 import { isPackageDraft, packageDraftBundle, readGenerationEvidence } from './package-inspection.js';
 import { verifyRetainedPackage } from './existing-site.js';
-import { resolveUiWrite, validateUiEffect, uiWriteSuccess, uiWriteFailure } from '../exploration-ui-write.js';
+import { resolveUiWrite, validateUiEffect, uiWriteSuccess, uiWriteFailure, uiWriteMockSuccess } from '../exploration-ui-write.js';
 import { resolvePageWrite } from '../exploration-extension-write.js';
 
 function error(code, message, extra = {}) {
@@ -148,7 +148,7 @@ export async function verifyGeneratedWriteTools({ adapterDir, expectedSiteKey = 
           const request = resolveUiWrite(command, args);
           requests.push(normalizeHttpWriteRequest({ url: request.url, method: request.method, json: request.body }));
           // A model of the declared submission, never a mocked network response.
-          return structuredClone(responseSpec.status >= 400 ? uiWriteFailure : uiWriteSuccess);
+          return structuredClone(responseSpec.status >= 400 ? uiWriteFailure : uiWriteMockSuccess(command));
         } : command.pageWrite ? async args => {
           if (args.__confirmed !== true) return { blocked: true, requiresConfirmation: true };
           const request = resolvePageWrite(command, args);

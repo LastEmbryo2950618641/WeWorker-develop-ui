@@ -2,11 +2,17 @@
 
 更新：2026-10-18。已实现多浏览器 profile、独立 HTTP Runner、PUBLIC_API/COOKIE_API/AUTH_API、mode=http 的无浏览器 OpenAPI JSON 发现与宿主请求证据、只读局部修复和显式 2–8 步只读 workflow；最新增加 HTTP 写与具有服务端幂等契约的 Extension PAGE_FETCH 声明式写生成、mock 和真实副作用回查。具体契约见 [HTTP Runtime](http_adapter_runtime.md) 和 [写命令验证](api_exploration_write.md)，历史与验证结果见 [交接文档](api_exploration_cli_handoff.md)。
 
-最新数字 ID/轮询阶段 WebCLI 117 文件/1330 项、最终聚焦 159 项、扩展相关 18 项、源码与双打包 HTTP 各 18 项、完整 Chromium 1217 双打包 74 项通过，证据见交接末尾。完整浏览器覆盖最终运行代码与验收夹具，之后仅更新文档。1194 既有 Shadow/frame 兼容问题未重测；复杂 UI 控件、多步写、多 ID/header/响应 URL/UI 响应 ID 回查、任意签名/OAuth 和完整对齐仍未完成；本轮数字 ID/轮询增量见下一节。
+当前增量从 `05b4b44` 继续，UI 同文档原生表单支持公开新回执 ID，复用数字/字符串 ID、持久账本和有界 GET 轮询。WebCLI 1341 项、最终聚焦 152 项、扩展 16 项、源码 UI 11 项、双打包 HTTP 18 项与 Chromium 1217 双打包完整 77 项通过，详细证据见交接最新记录。复杂 UI、多步写、多 ID/header/响应 URL、任意 UI 网络响应拦截、签名/OAuth 与完整对齐仍未完成；1194 既有 Shadow/frame 兼容及平台欠账保留。
+
+## UI 公开新回执 ID
+
+uiWrite.result 声明同一 confirmation 节点的公开 data-* ID 属性和显式 string/integer 类型，新增 ui_write_result_v1 阻止旧扩展忽略。新回执匹配时同步取得与提交前不同的 ID；string 保留前导零，integer 仅解析规范十进制非负安全整数。缺失/陈旧/非法、节点替换或换文档失败，不重提交。它是页面回执 ID，不声称捕获实际 HTTP 响应。
+
+fixture 配套 resultReadback.responsePath=resultId 和一致 idType；固定 before/after 的稳定资源身份、每项输入和改变关联值保持，动态资源还必须按相同 argumentPaths 匹配所有输入。离线模型只校验公开占位 ID 契约。实际 ID 在任何效果 GET 前先以 {id} 保存到原任务私有账本，复用同源单段模板、原类型身份比较、pending/resultPending、总预算和同文档检查。恢复匹配不认证 uncertain。安装权限覆盖完整 result 契约，普通 call 返回 resultId/effectVerified:false，不增加 GET。见 [写命令验证](api_exploration_write.md) 末节。
 
 ## 写结果关联增量：数字 ID 与异步效果
 
-从 `1b123da` 继续，HTTP/PAGE_FETCH 的 resultReadback 可显式 idType=integer，保留非负安全整数的类型与数值（包括 0）；默认字符串契约不扩大。固定 before/after、实际响应取值、最小 ID 账本及严格资源身份比较沿用现有机制。多 ID、Header/响应 URL、UI 响应 ID 仍待办。
+从 `1b123da` 继续，HTTP/PAGE_FETCH 的 resultReadback 可显式 idType=integer，保留非负安全整数的类型与数值（包括 0）；默认字符串契约不扩大。固定 before/after、实际响应取值、最小 ID 账本及严格资源身份比较沿用现有机制。多 ID、Header/响应 URL、任意 UI 网络响应拦截仍待办；同文档公开新回执 ID 见上节。
 
 新增宿主 exploration-write-poll，共享于 HTTP、PAGE_FETCH 和原生 UI 的独立效果 GET。effect.poll 显式指定 2–20 轮、250–5000 毫秒间隔及 pending/resultPending 精确 equals；只有声明的 pending 才等待，HTTP/网络错误、身份错配、未声明状态或文档变化立即停止。前置检查和写不循环，原 30 秒验证/15 秒恢复预算不变，普通安装命令无附加轮询。页面每轮保持原文档身份，恢复首轮固定当前合法文档。取消独立回查保留原写状态；恢复匹配也不将 uncertain 升级或解除安装限制。完整字段与边界见写契约，验证证据见交接最新记录。
 
@@ -14,7 +20,7 @@
 
 UI_SELECTOR 写计划生成固定 uiWrite 契约。原生 setter 填写 1–10 个公开单行文本字段，不触发 input/change/click；校验唯一表单/按钮/字段后一次 requestSubmit，等待同文档、同节点、关联参数匹配的新回执。expectedSubmission 描述提交字段而不是实际网络请求；独立 GET before/after 必须绑定全部输入、稳定资源身份和改变的关联字段。复用原审阅、派发前持久消费、取消/重启不重放与安装门禁。普通 call 明确 effectVerified:false，需调用方另行读取。
 
-页面/浏览器可自行重发，本能力不假设服务端幂等，也不保证一次网络请求或一次实际修改。未知自动保存、受控组件、整页提交、多步写及 UI 响应 ID 未覆盖；独立效果 GET 已可显式轮询 pending 状态；完整契约和验收边界见 [写命令验证](api_exploration_write.md) 末节。Python 网站探索agent不参与。
+页面/浏览器可自行重发，本能力不假设服务端幂等，也不保证一次网络请求或一次实际修改。未知自动保存、受控组件、整页提交、多步写及任意 UI 网络响应拦截未覆盖；独立效果 GET 已可显式轮询 pending 状态；完整契约和验收边界见 [写命令验证](api_exploration_write.md) 末节。Python 网站探索agent不参与。
 
 ## 写响应资源 ID 回查
 

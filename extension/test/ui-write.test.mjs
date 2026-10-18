@@ -6,7 +6,7 @@ import { executePageRequest } from '../background/page-write.js';
 
 const origin='https://example.com';
 const ui={version:1,url:origin+'/items/example',method:'POST',form:'#form',inputMode:'native-setter-no-events',inputs:[{selector:'#title',name:'title',parameter:'title'}],submit:{selector:'#submit',text:'Save'},confirmation:{selector:'#receipt',attribute:'data-title',parameter:'title'}};
-function fixture(mode) {
+function fixture(mode, resultText, previousId = null) {
   let submissions=0, events=0;
   class Element {
     constructor(){this.isConnected=true;this.attrs={};this.name='';this.value='';this.validity={valid:true};}
@@ -21,11 +21,12 @@ function fixture(mode) {
   class Input extends Element {get value(){return this._value;}set value(v){this._value=v; if(mode==='replaced' && v==='After')this.isConnected=false;}}
   class Textarea extends Input {}
   class Button extends Element {}
-  class Form extends Element {requestSubmit(){submissions++; if(mode==='lost')return; receipt.attrs['data-title']=input.value;}}
+  class Form extends Element {requestSubmit(){submissions++; if(mode==='lost')return; receipt.attrs['data-title']=input.value; if(resultText !== undefined)receipt.attrs['data-result-id']=resultText;}}
   const form=new Form(),input=new Input(),button=new Button(),receipt=new Element();
   Object.assign(form,{action:ui.url,method:'post',target:'',enctype:'application/x-www-form-urlencoded'});
   Object.assign(input,{type:'text',name:'title',form,willValidate:true});Object.assign(button,{type:'submit',textContent:'Save',form});
   form.children={'#title':[input],'#submit':[button]};form.elements=[input,button];
+  if(previousId !== null)receipt.attrs['data-result-id']=previousId;
   const document={querySelectorAll:selector=>({'#form':[form],'#receipt':[receipt]}[selector]||[])};
   if(mode==='disabled')button.disabled=true;
   if(mode==='extra')form.elements.push(Object.assign(new Input(),{name:'extra'}));
@@ -74,4 +75,20 @@ test('ordinary UI arguments require exact booleans and strings',()=>{
   const command={runtime:'extension',safety:'write',uiWrite:ui};
   assert.equal(uiWriteRequest(command,{title:'007 示例',__confirmed:true}).body.title,'007 示例');
   for(const args of [{title:'After'},{title:'After',__confirmed:'true'},{title:1,__confirmed:true},{title:'After',extra:'x',__confirmed:true},{title:'\n',__confirmed:true}])assert.throws(()=>uiWriteRequest(command,args));
+});
+
+test('fresh UI result IDs preserve strings and parse only explicitly typed canonical safe integers', async () => {
+  for (const [raw, type, expected] of [['007示例','string','007示例'],['0','integer',0],['9007199254740991','integer',9007199254740991]]) {
+    const f=fixture(undefined,raw),reply=await f.run({ui:{...ui,result:{attribute:'data-result-id',publicId:true,idType:type}}});
+    assert.equal(reply.ok,true);assert.equal(reply.value.resultId,expected);assert.deepEqual(f.count(),{submissions:1,events:0});
+  }
+});
+test('invalid, missing or stale receipt IDs fail after one submit without fallback or coercion', async () => {
+  for (const [raw,type,previous] of [[undefined,'string'],['old','string','old'],['../other','string'],['%2f','string'],['','string'],['007','integer'],['-0','integer'],['-1','integer'],['1.0','integer'],['1e3','integer'],['9007199254740992','integer'],[' 7','integer']]) {
+    const f=fixture(undefined,raw,previous),reply=await f.run({ui:{...ui,result:{attribute:'data-result-id',publicId:true,idType:type}}});
+    assert.equal(reply.ok,false,String(raw));assert.match(reply.error.code,/UI_WRITE_(STALE_RESULT_ID|RESULT_ID_INVALID)/);assert.equal(f.count().submissions,1);
+  }
+  for(const result of [{attribute:'data-marker',idType:'string',publicId:false},{attribute:'data-token',idType:'string',publicId:true},{attribute:'data-title',idType:'string',publicId:true}]) {
+    const f=fixture(undefined,'example'),reply=await f.run({ui:{...ui,result}});assert.equal(reply.ok,false);assert.equal(f.count().submissions,0);
+  }
 });

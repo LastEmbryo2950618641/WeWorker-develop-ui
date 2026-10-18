@@ -274,3 +274,8 @@ UI fixture 用 id、representativeArgs、expectedSubmission:{url,method:"POST",b
 validate 的模型零提交；write-review 展示完整输入/提交/确认/读取契约，只有用户授权实际目标和副作用后才 write-verify 精确 reviewId。已有明确隔离测试授权无需重复确认；外部账户写没有授权时先完成具体审阅再征求同意。任务账本在交给扩展前持久消费，同 review 重入/失败/超时/取消/重启/丢响应均不重放。恢复优先 write-readback 的独立 GET，uncertain 不变成通过、不放行安装。
 
 一次 requestSubmit 不等于一次网络请求或实际修改，页面和浏览器可能重发；本路径不注入幂等键、不假设服务端去重。普通 call 的 submitted/confirmationMatched 只证明页面回执，effectVerified:false 明确尚未回查；fixture 不随包安装，调用方须另行读取实际效果。旧回执拒绝仅为防陈旧结果，不能当持久去重。不要为取得新回执换关联值后自动重交。
+
+
+UI 新资源 ID：仅当同一 confirmation 节点在本次提交后同时更新公开 ID 属性时，可声明 `uiWrite.result:{attribute:"data-result-id",publicId:true,idType:"string"|"integer"}`；需要 ui_write_result_v1。ID 必须与提交前旧值不同，不读取另一个节点或猜测网络响应。integer 仅接受规范十进制安全整数文本（0 或无前导零正整数），string 保留前导零/Unicode；缺失/陈旧/非法立即失败，不重交或自动换关联值。
+
+声明 result 必须配套 effect.resultReadback，responsePath 固定 resultId，idType 与 result 一致。复用固定同源 :id URL、publicId、identityPath、expect；固定 before/after 与全部 argumentPaths 仍必需，动态资源 expect.equals 也必须按相同字段逐项等于全部输入。离线占位 ID 不是实际回查来源。回执 ID 先以最小 {id} 持久化，再按原预算进行固定 GET/实际 ID GET 与已声明 pending 轮询。资源身份类型不匹配立即失败；取消/重启恢复只读、不认证 uncertain。普通 call 返回 resultId 和 effectVerified:false，无额外 GET；同资源更新继续使用固定资源契约。详细示例见 docs/api_exploration_write.md 的“UI 新回执 ID 与资源回查”。

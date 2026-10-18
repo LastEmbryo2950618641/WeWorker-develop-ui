@@ -1,4 +1,5 @@
 import { buildApiSourceEvidence } from './generation-harness/source-evidence.js';
+import { normalizeWriteResult } from './exploration-write-result.js';
 
 const fail = message => { throw Object.assign(new Error(message), { code: 'INVALID_UI_WRITE' }); };
 const object = v => v && typeof v === 'object' && !Array.isArray(v);
@@ -10,7 +11,7 @@ const selector = v => typeof v === 'string' && v.trim() && v.length <= 300 && !/
 export function validateUiWrite(command) {
   if (command.uiWrite === undefined) return;
   const spec = command.uiWrite, route = command.pageRoute;
-  if (!exact(spec, ['version', 'url', 'method', 'form', 'inputs', 'submit', 'confirmation', 'inputMode']) || spec.version !== 1
+  if (!exact(spec, ['version', 'url', 'method', 'form', 'inputs', 'submit', 'confirmation', 'inputMode', ...(spec?.result !== undefined ? ['result'] : [])]) || spec.version !== 1
     || spec.inputMode !== 'native-setter-no-events' || spec.method !== 'POST'
     || command.runtime !== 'extension' || command.safety !== 'write' || command.requires_confirmation === false
     || command.pageWrite || command.execution || command.pageWorkflow || command.pageStrategy || !exact(route, ['origin', 'pathname'])) fail('UI writes require a fixed foreground route, explicit confirmation and a native form contract.');
@@ -25,6 +26,9 @@ export function validateUiWrite(command) {
     || !exact(spec.confirmation, ['selector', 'attribute', 'parameter']) || !selector(spec.confirmation.selector)
     || !/^data-[a-z][a-z0-9-]{0,63}$/.test(spec.confirmation.attribute) || !publicName(spec.confirmation.attribute.slice(5).replaceAll('-', '_'))
     || !spec.inputs.some(v => v.parameter === spec.confirmation.parameter)) fail('Declare unique public native inputs, a named submit button and an input-correlated confirmation attribute.');
+  if (spec.result !== undefined && (!exact(spec.result, ['attribute', 'publicId', 'idType']) || spec.result.publicId !== true
+    || !['string', 'integer'].includes(spec.result.idType) || !/^data-[a-z][a-z0-9-]{0,63}$/.test(spec.result.attribute)
+    || !publicName(spec.result.attribute.slice(5).replaceAll('-', '_')) || spec.result.attribute === spec.confirmation.attribute)) fail('UI results require a distinct public ID attribute on the same receipt and an explicit string/integer type.');
   const names = spec.inputs.map(v => v.parameter).sort(), schema = command.schema;
   if (!schema || schema.type !== 'object' || schema.additionalProperties !== false || schema['x-webcli-requires-confirmation'] !== true
     || JSON.stringify(Object.keys(schema.properties || {}).sort()) !== JSON.stringify([...names, '__confirmed'].sort())
@@ -67,18 +71,26 @@ export function buildUiWriteTool(site, tool, candidate, origin) {
 
 export const uiWriteSuccess = { ok: true, submitted: true, confirmationMatched: true, effectVerified: false };
 export const uiWriteFailure = { ok: false, errorCode: 'UI_WRITE_CONFIRMATION_FAILED' };
+// An offline submission model, never a source for the real execution's ID.
+export const uiWriteMockSuccess = command => ({ ...uiWriteSuccess, ...(command.uiWrite.result ? { resultId: command.uiWrite.result.idType === 'integer' ? 7 : 'example-ui-result' } : {}) });
 
 // Bind all authored inputs to independent resource fields, including a changed
 // correlation field. Canonical paths prevent $ aliases from weakening this proof.
 export function validateUiEffect(command, fixture) {
   const spec = command.uiWrite, paths = fixture.effect.argumentPaths;
   const names = spec.inputs.map(v => v.parameter).sort();
-  if (fixture.effect.resultReadback !== undefined || !object(paths) || JSON.stringify(Object.keys(paths).sort()) !== JSON.stringify(names)
-    || new Set(Object.values(paths)).size !== names.length) fail('UI effects require one distinct readback field per input; response ID capture is unsupported.');
+  const result = fixture.effect.resultReadback;
+  if (Boolean(spec.result) !== (result !== undefined) || !object(paths) || JSON.stringify(Object.keys(paths).sort()) !== JSON.stringify(names)
+    || new Set(Object.values(paths)).size !== names.length) fail('UI effects require one distinct readback field per input and a matching declared receipt ID readback.');
+  if (spec.result) {
+    normalizeWriteResult(result, uiWriteMockSuccess(command), command.pageRoute.origin);
+    if (result.responsePath !== 'resultId' || (result.idType || 'string') !== spec.result.idType) fail('UI result readback must use the declared receipt resultId with the exact type.');
+  }
   for (const name of names) {
     const field = paths[name];
     if (typeof field !== 'string' || !/^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+){0,7}$/.test(field) || field.split('.').some(v => !publicName(v))) fail('UI readback bindings require exact public property paths.');
     if (fixture.effect.after.equals?.[field] !== fixture.representativeArgs[name]) fail('Every after field must equal its exact reviewed input.');
+    if (result && result.expect.equals?.[field] !== fixture.representativeArgs[name]) fail('Every result resource field must also equal its exact reviewed input.');
   }
   const identity = fixture.effect.identityPath;
   if (typeof identity !== 'string' || !/^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+){0,7}$/.test(identity) || identity.split('.').some(v => !publicName(v))

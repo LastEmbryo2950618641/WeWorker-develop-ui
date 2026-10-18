@@ -11,7 +11,7 @@ import { assertReadRequest } from './exploration-host.js';
 import { createHttpClient } from './http-client.js';
 import { runHttpTool } from './http-runner.js';
 import { strictVerifier } from './http-preview.js';
-import { resolveUiWrite, validateUiEffect, uiWriteSuccess } from './exploration-ui-write.js';
+import { resolveUiWrite, validateUiEffect, uiWriteSuccess, uiWriteMockSuccess } from './exploration-ui-write.js';
 import { resolvePageWrite } from './exploration-extension-write.js';
 import { normalizeWriteResult, resolveWriteResult, savedWriteResult } from './exploration-write-result.js';
 import { normalizeWritePoll, readWriteEffect } from './exploration-write-poll.js';
@@ -90,7 +90,7 @@ function normalizeFixture(run, command, input) {
   if (!Object.entries(before.equals || {}).some(([key, value]) => !key.includes('*') && Object.hasOwn(after.equals || {}, key) && !Object.is(value, after.equals[key]))) invalid('Before/after need a changed scalar equals assertion at the same exact path.');
   if (command.uiWrite) validateUiEffect(command, input);
   const resultReadback = input.effect.resultReadback === undefined ? undefined
-    : normalizeWriteResult(input.effect.resultReadback, input.successResponse.body, url.origin);
+    : normalizeWriteResult(input.effect.resultReadback, command.uiWrite ? uiWriteMockSuccess(command) : input.successResponse.body, url.origin);
   const poll = input.effect.poll === undefined ? undefined : normalizeWritePoll(input.effect.poll, { after, resultReadback });
   return clone({ ...input, effect: { readback: input.effect.readback, before, after, ...(command.uiWrite ? { argumentPaths: input.effect.argumentPaths, identityPath: input.effect.identityPath } : {}), ...(resultReadback ? { resultReadback } : {}), ...(poll ? { poll } : {}) } });
 }
@@ -120,7 +120,7 @@ export function writeReview(service, run, tool) {
   return { reviewId, digest, tool: command.name, fixture, ...(command.uiWrite ? { page: { tabId: run.tabId, route: command.pageRoute, ui: command.uiWrite } } : command.pageWrite ? { page: { tabId: run.tabId, route: command.pageRoute, request: command.pageWrite,
     idempotency: { header: command.pageWrite.idempotency.header, key: hash({ taskId: run.taskId, reviewId }) } } } : { http: command.http }),
     consumed: Boolean(previous), execution: previous ? previousSummary : null, requiresConfirmation: true,
-    ...(fixture.effect.resultReadback ? { responseIdPolicy: 'Retain only the declared public string or non-negative safe integer ID from the actual transport response in this task ledger for independent recovery GETs. Never use a mock ID, handler output, response URL or replay to recover it.' } : {}),
+    ...(fixture.effect.resultReadback ? { responseIdPolicy: `Retain only the declared public string or non-negative safe integer ID from the ${command.uiWrite ? 'fresh correlated page receipt' : 'actual transport response'} in this task ledger for independent recovery GETs. Never use a mock ID, handler output, response URL or replay to recover it.` } : {}),
     ...(fixture.effect.poll ? { pollingPolicy: 'Only repeat reviewed GETs for explicitly declared pending states within the attempt/time budget. Errors, identity changes and other mismatches stop. Recovery never promotes an uncertain write or permits installation.' } : {}),
     policy: command.uiWrite ? 'One native requestSubmit after silent input assignment. Page acknowledgement is not business proof; independent GET binds every input and a changed correlation. No assumption of server idempotency or single network request. Never automatically retry an uncertain submission.' : command.pageWrite ? 'One logical page write after the before check; browser transport may resend with the same reviewed idempotency key. The declared server must deduplicate it. No application retries or rollback.'
       : 'One real write after a successful before check; no redirects, retries or rollback. Readback is an independent GET.' };
@@ -140,6 +140,7 @@ const cookieResolver = service => async payload => (await service.request({ type
 async function pageRequest(service, execution, request, signal, { document, operationId, deadline } = {}) {
   if (signal.aborted) throw fail('PAGE_WRITE_CANCELLED', 'Page request cancelled before dispatch.');
   if (!service.capabilities().capabilities.includes('page_write_v1') || execution.page.ui && !service.capabilities().capabilities.includes('ui_write_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before page write verification.');
+  if (execution.page.ui?.result && !service.capabilities().capabilities.includes('ui_write_result_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before reading UI receipt IDs.');
   const id = operationId || randomUUID();
   const abort = () => { void service.request({ type: 'exploration_cancel_workflow', tabId: execution.page.tabId, operationId: id }, 5000).catch(() => {}); };
   signal.addEventListener('abort', abort, { once: true });
@@ -195,7 +196,7 @@ export function verifyWrite(service, run, args) {
     const captureResult = value => {
       if (!execution.effect.resultReadback) return;
       try {
-        const binding = resolveWriteResult(execution.effect.resultReadback, value, new URL(review.fixture.expectedRequest.url).origin);
+        const binding = resolveWriteResult(execution.effect.resultReadback, value, new URL((review.fixture.expectedSubmission || review.fixture.expectedRequest).url).origin);
         execution.resultBinding = { id: binding.id };
         service.save(run); // Keep only the public ID, before handler completion or effect GETs.
       } catch (error) { bindingError = error; throw error; }

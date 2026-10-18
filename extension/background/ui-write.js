@@ -33,7 +33,13 @@ export async function pageUiSubmit(input) {
     const spec = input.ui;
     if (!spec || spec.version !== 1 || spec.method !== 'POST' || spec.inputMode !== 'native-setter-no-events'
       || spec.url !== input.request.url || input.request.method !== 'POST' || !Array.isArray(spec.inputs) || !spec.inputs.length || spec.inputs.length > 10) error('INVALID_UI_WRITE');
+    if (spec.result !== undefined && (!spec.result || Object.keys(spec.result).sort().join(',') !== 'attribute,idType,publicId'
+      || spec.result.publicId !== true || !['string', 'integer'].includes(spec.result.idType)
+      || !/^data-[a-z][a-z0-9-]{0,63}$/.test(spec.result.attribute)
+      || /token|cookie|auth|password|secret|session|credential|api.?key|csrf|ticket|prototype|constructor/i.test(spec.result.attribute)
+      || spec.result.attribute === spec.confirmation.attribute)) error('INVALID_UI_WRITE');
     const form = unique(document, spec.form), submit = unique(form, spec.submit.selector), receipt = unique(document, spec.confirmation.selector);
+    const previousId = spec.result ? receipt.getAttribute(spec.result.attribute) : null;
     const entries = spec.inputs.map(binding => ({ binding, node: unique(form, binding.selector) }));
     const correlate = entries.find(v => v.binding.parameter === spec.confirmation.parameter);
     if (!correlate || Object.keys(input.request.body).length !== entries.length || entries.some(({ binding }) => typeof input.request.body[binding.name] !== 'string')) error('INVALID_UI_WRITE');
@@ -54,6 +60,7 @@ export async function pageUiSubmit(input) {
       // contract. Never silently submit captured data or credentials.
       if (new Set(entries.map(v => v.node)).size !== entries.length || [...form.elements].some(node => node.name && !node.matches(':disabled') && !entries.some(v => v.node === node))) error('UI_WRITE_EXTRA_FIELDS');
       if (!visible(receipt) || !/^data-[a-z][a-z0-9-]*$/.test(spec.confirmation.attribute) || !wanted?.trim() || receipt.getAttribute(spec.confirmation.attribute) === wanted) error('UI_WRITE_STALE_CONFIRMATION');
+      if (spec.result && receipt.getAttribute(spec.result.attribute) !== previousId) error('UI_WRITE_TARGET_CHANGED');
     };
     inspect();
     for (const { binding, node } of entries) {
@@ -69,7 +76,21 @@ export async function pageUiSubmit(input) {
     while (true) {
       current();
       if (!form.isConnected || unique(document, spec.form) !== form || !receipt.isConnected || unique(document, spec.confirmation.selector) !== receipt) error('UI_WRITE_TARGET_CHANGED');
-      if (receipt.getAttribute(spec.confirmation.attribute) === wanted && visible(receipt)) return { ok: true, value: { ok: true, submitted: true, confirmationMatched: true, effectVerified: false }, submitted };
+      if (receipt.getAttribute(spec.confirmation.attribute) === wanted && visible(receipt)) {
+        let resultId;
+        if (spec.result) {
+          const raw = receipt.getAttribute(spec.result.attribute);
+          if (raw === previousId) error('UI_WRITE_STALE_RESULT_ID');
+          // DOM attributes are text. Explicit integer mode parses only canonical
+          // non-negative decimal; string mode preserves leading zeros/Unicode.
+          const valid = typeof raw === 'string' && (spec.result.idType === 'integer'
+            ? /^(0|[1-9][0-9]{0,15})$/.test(raw) && Number.isSafeInteger(Number(raw))
+            : raw.length > 0 && raw.length <= 512 && raw !== '.' && raw !== '..' && /^[\p{L}\p{N}_.-]+$/u.test(raw));
+          if (!valid) error('UI_WRITE_RESULT_ID_INVALID');
+          resultId = spec.result.idType === 'integer' ? Number(raw) : raw;
+        }
+        return { ok: true, value: { ok: true, submitted: true, confirmationMatched: true, effectVerified: false, ...(spec.result ? { resultId } : {}) }, submitted };
+      }
       await new Promise(resolve => setTimeout(resolve, 50));
     }
   } catch (cause) { return { ok: false, error: { code: cause.code || 'UI_WRITE_FAILED' }, submitted }; }

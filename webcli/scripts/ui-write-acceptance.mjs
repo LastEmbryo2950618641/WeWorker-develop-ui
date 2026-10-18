@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 
 export async function verifyUiWrites({ cli, record, passed, stopBridge, startBridge }) {
-  const requests = [], values = new Map(), held = new Map(), effects = new Map(), readyAt = new Map();
+  const requests = [], values = new Map(), held = new Map(), effects = new Map(), readyAt = new Map(), resultIds = new Map(), heldDetails = new Map(), resources = new Map();
   const pause = () => new Promise(resolve => setTimeout(resolve, 100));
   const server = http.createServer(async (req, res) => {
-    const url = new URL(req.url, 'http://localhost'), label = url.pathname.split('/').pop();
+    const url = new URL(req.url, 'http://localhost'), detail = url.pathname.startsWith('/resources/'), label = detail ? url.pathname.split('/')[2] : url.pathname.split('/').pop();
     if (url.pathname.startsWith('/editor/')) {
       res.writeHead(200, { 'content-type': 'text/html', 'set-cookie': 'example_ui=example-placeholder; HttpOnly; SameSite=Strict; Path=/' });
       res.end(`<!doctype html><title>Example native editor</title>
@@ -23,18 +23,30 @@ export async function verifyUiWrites({ cli, record, passed, stopBridge, startBri
             const form=event.target, body=Object.fromEntries(new FormData(form));
             try {
               const response=await fetch(form.action,{method:'POST',body:JSON.stringify(body),headers:{'content-type':'application/json'}});
-              await response.json();
+              const result=await response.json();
               if(${JSON.stringify(label)}==='navigation'){location.reload();return;}
-              if(response.ok)document.querySelector('#receipt').setAttribute('data-marker',body.marker);
+              if(response.ok){
+                if(result.id!==undefined)document.querySelector('#receipt').setAttribute('data-result-id',String(result.id));
+                document.querySelector('#receipt').setAttribute('data-marker',body.marker);
+              }
             }catch{}
           });
         </script>`); return;
     }
-    if (!url.pathname.startsWith('/items/')) { res.end(''); return; }
+    if (!url.pathname.startsWith('/items/') && !detail) { res.end(''); return; }
     let body = ''; for await (const chunk of req) body += chunk;
-    requests.push({ label, method: req.method, body, hasIdempotency: Boolean(req.headers['idempotency-key']), authenticated: req.headers.cookie?.includes('example_ui=example-placeholder') === true });
+    requests.push({ label, detail, method: req.method, body, hasIdempotency: Boolean(req.headers['idempotency-key']), authenticated: req.headers.cookie?.includes('example_ui=example-placeholder') === true });
     res.setHeader('content-type', 'application/json');
     if (!requests.at(-1).authenticated) { res.writeHead(401); res.end('{}'); return; }
+    if (detail) {
+      const resource = resources.get(label + '/' + decodeURIComponent(url.pathname.split('/')[3]));
+      if (!resource) { res.writeHead(404); res.end('{}'); return; }
+      const result = { ...resource, id: label === 'idwrong' ? String(resultIds.get(label)) : resultIds.get(label),
+        state: ['idasync', 'idwrong'].includes(label) && Date.now() < readyAt.get(label) ? 'pending' : 'ready' };
+      if (label === 'idcontent') result.title = 'Other';
+      if (['idstopped', 'idrestart'].includes(label) && !heldDetails.has(label)) { heldDetails.set(label, { res, result }); return; }
+      res.end(JSON.stringify(result)); return;
+    }
     if (req.method === 'POST') {
       const submitted = JSON.parse(body);
       if (label !== 'noeffect') {
@@ -45,6 +57,11 @@ export async function verifyUiWrites({ cli, record, passed, stopBridge, startBri
       if (label === 'lost') { req.socket.destroy(); return; }
       if (['timeout', 'stopped', 'restart'].includes(label)) { held.set(label, { res, submitted }); return; }
       if (label === 'error') { res.writeHead(409); res.end('{}'); return; }
+      if (label.startsWith('id')) {
+        const id = ['idstring', 'idstale'].includes(label) ? '007示例-' + label + (label === 'idstring' ? '-' + effects.get(label) : '') : label === 'idinvalid' ? '007' : label === 'idzero' && effects.get(label) === 1 ? 0 : 730 + (effects.get(label) || 0);
+        resultIds.set(label, id); resources.set(label + '/' + id, { ...submitted });
+        res.end(JSON.stringify({ ok: true, note: 'example-unretained-ui-response', ...(label === 'idmissing' ? {} : { id }) })); return;
+      }
       res.end(JSON.stringify({ ok: true })); return;
     }
     res.end(JSON.stringify({ ...(values.get(label) || { item: 'example-item', title: 'Before', marker: 'before' }),
@@ -73,6 +90,7 @@ export async function verifyUiWrites({ cli, record, passed, stopBridge, startBri
     const plan={tools:[{name:'ui_write_'+label,risk:'write',sourceApiKind:'action',sourceApiIndexes:[index],strategy:'UI_SELECTOR',pagePathname:'/editor/'+label,
       uiWrite:{form:'#editor',inputMode:'native-setter-no-events',inputs:['item','title','marker'].map(name=>({selector:'#'+name,name,parameter:name})),submit:{selector:'#save',text:'Save'},confirmation:{selector:'#receipt',attribute:'data-marker',parameter:'marker'}},
       writeReason:'Update public example through one submit event',strategyNote:{reason:'The native form reads its current fields on submission',limitations:'No input/change events, same document, no server idempotency guarantee'}}]};
+    if (label.startsWith('id')) plan.tools[0].uiWrite.result = { attribute: 'data-result-id', publicId: true, idType: ['idstring', 'idstale'].includes(label) ? 'string' : 'integer' };
     const generated=(await cli('exploration.generate',{taskId,plan})).data,tool=generated.toolNames[0];
     const representativeArgs={item:'example-item',title:'007 示例',marker:'after-'+label};
     const fixture={id:'example-'+label,representativeArgs,expectedSubmission:{url,method:'POST',body:representativeArgs},
@@ -80,6 +98,11 @@ export async function verifyUiWrites({ cli, record, passed, stopBridge, startBri
     if (['async', 'pollidentity'].includes(label)) {
       fixture.effect.after.equals = { ...representativeArgs, state: 'ready' };
       fixture.effect.poll = { intervalMs: 250, maxAttempts: 10, pending: { equals: { state: 'pending' } } };
+    }
+    if (label.startsWith('id')) {
+      fixture.effect.resultReadback = { url: origin + '/resources/' + label + '/:id', publicId: true, idType: plan.tools[0].uiWrite.result.idType,
+        responsePath: 'resultId', identityPath: 'id', expect: { equals: { ...representativeArgs, state: 'ready' } } };
+      if (['idasync', 'idwrong'].includes(label)) fixture.effect.poll = { intervalMs: 250, maxAttempts: 10, resultPending: { equals: { state: 'pending' } } };
     }
     const old=(await cli('exploration.write-verification-read',{taskId,tool})).data;
     await cli('exploration.write-verification-write',{taskId,tool,fixture,expectedHash:old.hash});
@@ -164,6 +187,56 @@ export async function verifyUiWrites({ cli, record, passed, stopBridge, startBri
       await cli('exploration.write-verify', f.args); assert.equal(count(label), 1);
     }
     passed('UI receipt remains separate from delayed effects; bounded GET polling preserves input/identity checks and never resubmits');
+    for (const label of ['idstring', 'idzero', 'idasync']) {
+      const f = await draft(label); await cli('exploration.write-verify', f.args); const state = await settle(f.args.taskId);
+      assert.equal(state.status, 'review_ready', JSON.stringify(state)); assert.equal(count(label), 1);
+      assert.equal(state.writeExecutions[0].resultBinding, undefined);
+      if (label === 'idasync') assert.ok(state.writeExecutions[0].effectAttempts > 1);
+      assert.ok(requests.some(v => v.label === label && v.detail));
+      const page = (await cli('browser.eval', { session: f.session, expression: '({submissions:window.exampleSubmissions,events:window.exampleInputEvents})' })).data.value;
+      assert.deepEqual(page, { submissions: 1, events: 0 });
+      const review = (await cli('exploration.review', { taskId: f.args.taskId })).data;
+      assert.ok(review.permissions.some(v => v.startsWith('ui-write:') && v.includes('data-result-id')));
+      await cli('exploration.install', { taskId: f.args.taskId, reviewId: review.reviewId, confirmed: true });
+      assert.equal((await settle(f.args.taskId)).status, 'installed');
+      const before = requests.length;
+      const ordinary = await cli(f.args.tool, { ...f.representativeArgs, marker: 'ordinary-' + label, __confirmed: true });
+      assert.equal(ordinary.resultId, resultIds.get(label)); assert.equal(ordinary.effectVerified, false);
+      assert.deepEqual(requests.slice(before).filter(v => v.label === label).map(v => v.method), ['POST']);
+      assert.equal(count(label), 2); // Installation may reload the page and reset its counters.
+    }
+    passed('UI fresh string/zero/integer receipt IDs drive exact resource GETs and pending polling; ordinary calls expose ID without certifying effects');
+    for (const label of ['idmissing', 'idinvalid', 'idstale', 'idwrong', 'idcontent']) {
+      const f = await draft(label);
+      if (label === 'idstale') await cli('browser.eval', { session: f.session, expression: "document.querySelector('#receipt').setAttribute('data-result-id','007示例-idstale');true" });
+      await cli('exploration.write-verify', f.args); const state = await settle(f.args.taskId);
+      assert.equal(state.writeExecutions[0].status, 'uncertain', JSON.stringify(state)); assert.equal(count(label), 1);
+      if (label === 'idwrong') assert.equal(state.writeExecutions[0].effectAttempts, 1);
+      await cli('exploration.write-verify', f.args); assert.equal(count(label), 1);
+      if (['idmissing', 'idinvalid', 'idstale'].includes(label)) {
+        const before = requests.length;
+        assert.equal((await cli('exploration.write-readback', { taskId: f.args.taskId, reviewId: f.args.reviewId }, false)).error.code, 'WRITE_RESULT_ID_UNAVAILABLE');
+        assert.equal(requests.length, before);
+        assert.equal(requests.some(v => v.label === label && v.detail), false);
+      }
+      assert.equal((await cli('exploration.review', { taskId: f.args.taskId }, false)).error.code, 'VALIDATION_REQUIRED');
+    }
+    passed('UI missing/stale/noncanonical IDs never guess resource URLs; wrong ID type or input content blocks installation without replay');
+    for (const label of ['idstopped', 'idrestart']) {
+      const f = await draft(label); await cli('exploration.write-verify', f.args);
+      for (let i = 0; i < 100 && !heldDetails.has(label); i++) await pause();
+      assert.ok(heldDetails.has(label)); assert.equal(count(label), 1);
+      if (label === 'idstopped') await cli('exploration.cancel', { taskId: f.args.taskId });
+      await stopBridge(); await startBridge();
+      const held = heldDetails.get(label); held.res.end(JSON.stringify(held.result));
+      const state = (await cli('exploration.get', { taskId: f.args.taskId })).data;
+      assert.equal(state.writeExecutions[0].status, 'uncertain');
+      await cli('exploration.write-verify', f.args); assert.equal(count(label), 1);
+      assert.equal((await cli('exploration.write-readback', { taskId: f.args.taskId, reviewId: f.args.reviewId })).data.passed, true);
+      assert.equal((await cli('exploration.get', { taskId: f.args.taskId })).data.writeExecutions[0].status, 'uncertain');
+      assert.equal((await cli('exploration.review', { taskId: f.args.taskId }, false)).ok, false);
+    }
+    passed('UI receipt ID is durable before resource GET; cancellation/restart recover with GET only and never promote uncertain writes');
     assert.ok(requests.every(v=>v.authenticated&&!v.hasIdempotency));
   } finally { await record('ui-write-requests',requests); await record('ui-write-mutations',Object.fromEntries(effects)); await new Promise(resolve=>{server.close(resolve);server.closeAllConnections();}); }
 }

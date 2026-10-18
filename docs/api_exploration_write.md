@@ -1,6 +1,6 @@
 # HTTP／Extension 写命令与副作用验证
 
-2026-10-18：独立探索新增 HTTP 写命令闭环。PUBLIC_API/AUTH_API 可在 `mode=http` 中无浏览器运行；COOKIE_API 沿用所选浏览器 profile 的凭据通道。最新增加 PAGE_FETCH 声明式 Extension 写：固定同源主文档、JSON 字符串字段映射、浏览器会话与明确服务端幂等契约。HTTP 与 PAGE_FETCH 现支持公开字符串或显式非负安全整数返回 ID 的资源回查，三种写验证均支持显式 pending 状态的有界 GET 轮询。最新增加 UI_SELECTOR 同文档原生表单单次提交与输入关联 GET 效果验证（见末节）；复杂控件和多步写流程尚未接入，Python 网站探索agent不参与。
+2026-10-18：独立探索新增 HTTP 写命令闭环。PUBLIC_API/AUTH_API 可在 `mode=http` 中无浏览器运行；COOKIE_API 沿用所选浏览器 profile 的凭据通道。最新增加 PAGE_FETCH 声明式 Extension 写：固定同源主文档、JSON 字符串字段映射、浏览器会话与明确服务端幂等契约。HTTP、PAGE_FETCH 与声明了公开回执 ID 的原生 UI 现支持公开字符串或显式非负安全整数 ID 的资源回查，三种写验证均支持显式 pending 状态的有界 GET 轮询。最新增加 UI_SELECTOR 同文档原生表单单次提交与输入关联 GET 效果验证（见末节）；复杂控件和多步写流程尚未接入，Python 网站探索agent不参与。
 
 ## 来源与生成
 
@@ -108,7 +108,7 @@ HTTP 路径不支持任意 UI 写操作、批量/多步写工作流、多 ID/响
 
 ## 写响应 ID 的资源回查
 
-HTTP 与 Extension PAGE_FETCH 写 fixture 可在 effect 中增加 resultReadback；保持原 readback 的 before/after 变化证明，再补一次读取实际资源的 GET。适合“先从固定统计接口验证创建前后变化，再核对新资源”的单次写场景，不能仅凭写响应成功或总数增加通过验证。
+HTTP 与 Extension PAGE_FETCH 写 fixture 可在 effect 中增加 resultReadback；UI 回执 ID 的绑定方式见末节。保持原 readback 的 before/after 变化证明，再补一次读取实际资源的 GET。适合“先从固定统计接口验证创建前后变化，再核对新资源”的单次写场景，不能仅凭写响应成功或总数增加通过验证。
 
 ```json
 {
@@ -232,4 +232,29 @@ UI fixture 专门使用 `expectedSubmission`，不填写 HTTP successResponse/fa
 
 安装后的普通 call 也必须 `__confirmed:true`，返回 `{ok:true,submitted:true,confirmationMatched:true,effectVerified:false}` 只说明页面回执匹配。验证 fixture 不进入安装包，所以普通 call 不附加效果 GET 或持久 review 账本；必须由调用方独立检查实际效果，失败后不得盲目重调。同值旧回执会拒绝，但不是持久幂等机制。
 
-仍未覆盖：触发 input/change 才生效的受控组件、自动保存、click/Enter 手势、原生整页提交导航、hidden CSRF、多步写、UI 写响应 ID、复杂控件/跨 frame、写 repair。既有 HTTP/PAGE_FETCH 的多 ID/header/响应 URL 等回查差距保持；数字 ID 仅覆盖显式非负安全整数。自动化入口为 `exploration-ui-write.test.js`、`extension/test/ui-write.test.mjs`；真实验收 `verify-exploration-browser.mjs --ui-write-only`，加 `--bundled-cli --bundled-bridge` 验证两端 bundle，结果见交接末尾。
+仍未覆盖：触发 input/change 才生效的受控组件、自动保存、click/Enter 手势、原生整页提交导航、hidden CSRF、多步写、任意 UI 网络响应拦截、复杂控件/跨 frame、写 repair。既有 HTTP/PAGE_FETCH 的多 ID/header/响应 URL 等回查差距保持；数字 ID 仅覆盖显式非负安全整数。自动化入口为 `exploration-ui-write.test.js`、`extension/test/ui-write.test.mjs`；真实验收 `verify-exploration-browser.mjs --ui-write-only`，加 `--bundled-cli --bundled-bridge` 验证两端 bundle，结果见交接末尾。
+
+
+## UI 新回执 ID 与资源回查
+
+2026-10-18 增量。原生 UI 单次提交可声明 `uiWrite.result:{attribute:"data-result-id",publicId:true,idType:"integer"}`，要求新能力 `ui_write_result_v1`。它读取同一 confirmation 节点上的明确公开 `data-*` 属性，不能指定另一个选择器、网络响应路径或动态 URL。ID 属性不得与关联属性相同，完整 result 契约计入包摘要和 `ui-write:` 安装权限；旧扩展在验证和普通调用前拒绝，不静默忽略。
+
+提交前记录旧属性值；填写后、提交前再次检查其未变化。新关联回执出现时，同步读取 ID，必须不同于旧属性值。回执更新应一次性提供关联值与 ID；ID 缺失、陈旧、非法或节点/文档变化立即失败，不再次提交，也不等待另一回执来补值。适用于页面明确返回新资源 ID 的提交；同资源更新应继续使用原来的固定资源效果契约。同值拒绝不是服务端幂等或跨调用去重。
+
+DOM 属性本身是文本，因此 result.idType 必须显式指定：string 沿用公开 ID 字符和长度限制，保留前导零/Unicode；integer 只解析规范十进制 `0` 或无前导零正整数，且不超过 Number.MAX_SAFE_INTEGER，拒绝空白、符号、小数、指数和越界值。解析后的 ID 在 Bridge、账本与资源身份比较中保持数值类型。普通调用返回 `resultId`，仍为 `effectVerified:false`。
+
+UI fixture 仍不提供 HTTP successResponse。声明 result 后必须配套 `effect.resultReadback`，responsePath 固定为 `resultId`，idType 与 result 声明一致；使用已有同源单段模板、公开 ID 规则和严格资源身份校验。例如：
+
+```json
+{
+  "url":"https://example.com/items/:id", "publicId":true, "idType":"integer",
+  "responsePath":"resultId", "identityPath":"id",
+  "expect":{"equals":{"item":"example-item","title":"After","marker":"example-operation","state":"ready"}}
+}
+```
+
+保留固定 GET 的 identityPath、before/after、全部 argumentPaths 与改变的关联值证明；固定 GET 可以是稳定标识的结果摘要。动态资源的 expect.equals 还必须按相同 argumentPaths 逐项匹配全部输入，不能仅凭数量、提示或 ID 通过。离线模型仅用内部公开占位 ID 验证契约，实际运行绝不从模型取 ID。新回执仅是页面数据，独立 GET 证明资源的身份、内容与关联值；它不证明网络响应来源、因果唯一性或事务性。
+
+回执成功后、任何效果 GET 前仅将 `{id}` 保存到当前任务私有执行账本。get/list/trace、write-review 执行摘要、知识和安装包不包含真实 ID；普通调用按其输出契约向调用者返回 ID。复用 effect.poll 的 pending/resultPending、原 30 秒总验证和 15 秒恢复预算、同文档身份；资源 ID 类型/值错误即使处于 pending 也立即停止。存储失败不能继续效果 GET。缺失持久 ID 的恢复零 GET、返回 WRITE_RESULT_ID_UNAVAILABLE；已有 ID 的取消/重启只允许独立 GET 恢复，uncertain 不升级、不放行安装。原生输入无 input/change、一次 requestSubmit、不保证一次网络/实际修改均保持。
+
+自动化与隔离源码/双打包入口继续使用 exploration-ui-write 与 ui-write-acceptance。任意网络响应 ID、多个 ID、header/响应 URL、复杂控件、多步写和写 repair 仍待办；验证数量与报告见交接末尾。
