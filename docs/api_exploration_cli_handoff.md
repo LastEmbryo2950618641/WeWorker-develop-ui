@@ -1,5 +1,9 @@
 # API 自动探索 CLI 改造跟进与交接
 
+2026-10-18 PR 交付授权：用户已明确选择“推送源分支与原始基线，创建 PR 到目标分支”，解除本次交付的历史不推送/不建 PR 限制。仓库为 `WeWorker/WeWorker`，源分支 `codex/api-exploration-cli`，目标 `codex/api-exploration-base`；原始基线保持 `baf9f98`，覆盖截至 `ea61385` 的全部 59 个提交，并附交付记录和一处验收脚本行尾空白清理。交付前工作区干净、基线是源分支祖先，远端尚无这两个分支或对应 PR；不先合并基线、不同步新的 develop/dev-1.1.0、不改变最终发布目标。推送及 PR 的最终状态以 GitHub 为准。下文“未推送/未建 PR”均为当时快照；客户端目标已完成、全面对齐暂停及全部欠账保持。
+
+本次交付检查：完整差异 `git diff --check` 与验收脚本 `node --check` 通过；`node webcli/scripts/verify-output-formats.mjs --python=<已有隔离 Python>` 的真实 CLI/HTTP 与独立 YAML/CSV 解析 **5 组检查通过**，未操作用户浏览器或 Bridge。新增差异和全部功能提交历史已在本地完成常见敏感信息模式检查。没有重跑全仓测试或实站生成，下述各阶段功能证据保持其原验证范围。
+
 2026-10-18 最终状态：**客户端简单查询演示独立目标完成，全面 OpenCLI 对齐仍暂停**。空目录单句由客户端实际生成、验证和安装 GLM 两命令；初包耗时 8 分 14 秒，后续客户端补 ISO 时间并通过四组真实后台 cases。关闭任务页后的聊天重复查询、新聊天发现及最终 Bridge 重启后新聊天查询通过，零 GLM 页、无页面回退。生成包 13 项公开占位审查、持久目录真实调用、静态校验及最终 Skill 4 项（PG3qcw）通过。任务客户端/Vite/隔离 Bridge 已停止、8766 占位释放、默认 source Bridge 与原包/Skill 恢复。见 [目标与证据](client_webcli_demo_goal.md) 及 [演示步骤](client_webcli_demo_runbook.md)；早期失败、时间修复和跨环境欠账保留，不承诺每次零修正。当前分支接入 a620191、诊断修复 4aac662、准备守卫 9ab8bea，最终文档检查点以 Git 为准；未 push/PR。
 
 2026-10-18 准备命令校验续进：客户端空安装目录的生成仍错误声明后台准备，已停止且未安装。后台预览现拒绝显式 storage 刷新，不再静默改成缓存读取后假通过；共享 Skill 前置正确顺序。聚焦 49 项、Chromium 1217 CLI＋Bridge 双打包后台 9 项（4NkByV）通过。客户端最终生成、无页/后续聊天/重连验收及环境恢复尚未完成，以 client_webcli_demo_goal.md 为当前目标；全面对齐保持暂停。

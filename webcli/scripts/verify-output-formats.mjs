@@ -39,7 +39,7 @@ try {
   await fs.writeFile(path.join(root, 'expected.json'), JSON.stringify(value));
   const validation = await exec(python, ['-c', `import csv,json,pathlib,sys,yaml
 p=pathlib.Path(sys.argv[1]); value=json.loads((p/'expected.json').read_text())
-for name in ['yaml','yml']: 
+for name in ['yaml','yml']:
  v=yaml.safe_load((p/(name+'.txt')).read_text()); assert v['result'] == value and isinstance(v['trace_id'],str)
 with (p/'csv.txt').open(newline='') as f: rows=list(csv.DictReader(f))
 assert rows[0]['id']=='007' and rows[0]['title']==value[0]['title']
