@@ -1,5 +1,7 @@
 # WebCLI 与 OpenCLI 能力对齐台账
 
+2026-10-18 优先级调整：用户选择先在新对话推进 [客户端自然语言演示目标](client_webcli_demo_goal.md)，本表全面对齐继续 paused。P01 只定义了简单聊天接入与实测范围，尚未实现/验收；不是关闭下方 W/B/A/U/E 的条件，也不缩减其范围。
+
 2026-10-18 最新专项：通用后台 API 探索流程与防退化见 [后台 API 探索](background_api_exploration.md)。GLM 旧页面版已按授权删除并重新探索，后台版 1.0.2 在全部 GLM 标签关闭时通过 4 组真实验证、4 次普通调用与 Bridge 重启后 4 次查询，零新页；首次登录或切换上下文需显式准备。另修复纯用户包卸载后的重新生成及旧命令回退边界，WebCLI 1465 项通过。详见 [GLM 验证](glm_quota_adapter_validation.md)。这只关闭该站点本次查询专项；W/B/A/U/E 原有余项、内部同步与跨环境验收保持，整体目标继续暂停。
 
 更新：2026-10-18。用户要求依据最新台账补齐约定范围内与 OpenCLI 的实际差距；已有能力复用，部分实现只补明确缺口，尚未审计项目先核对。本文件保留完整目标，不把单个阶段或测试站点视为完成标准。分支历史与同步约束见 [CLI 跟进文档](api_exploration_cli_handoff.md)。Python 网站探索agent全程排除。
@@ -38,7 +40,7 @@
 | E02 | 验收欠账 | macOS arm64/x64、Windows 实际安装包；发布/受限配置仍单独授权 |
 | E03 | 验收欠账 | 全新 Codex/Claude 独立对话；当前未授权创建新聊天 |
 | E04 | 验收欠账 | 代表站点与全部认证组合；本任务仅隔离公开 loopback 副作用，真实账户写未授权 |
-| P01 | 独立产品事项 | WeWorker 自有探索/聊天/profile UI，不计入 CLI 对齐完成条件 |
+| P01 | 独立产品事项／简单聊天接入待启动 | WeWorker 自有探索/聊天/profile UI，不计入 CLI 对齐完成条件；当前优先定义客户端聊天复用 WebCLI 的只读演示目标，见 client_webcli_demo_goal.md，尚未实现/验收，不要求先重做完整探索 UI |
 
 R01 审计起点：上游 1.8.8 autofix 使用实际 trace 定位源码、定向修改并复验；本项目 `exploration-service.js` 明确拒绝非 HTTP 写 repair，`existing-site.js` 同时冻结 pageWrite/uiWrite，所以此项为真实实现差距。不能仅放开入口：声明式命令模块固定，实际修复对象是经新计划绑定的 manifest 契约，仍需新效果验证与安装权限审阅。
 

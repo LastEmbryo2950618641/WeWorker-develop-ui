@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-18（优先准备客户端自然语言演示，目标待新对话启动）：用户明确继续暂停 OpenCLI 全面对齐，先完成客户端聊天复用同一套 WebCLI 探索与 Skill。已核对 bf3b22d 干净检查点、GLM 无页证据与已知欠账；简单查询演示无需等待 frame/多步写/外部 CDP 等能力。新目标、客户端入口/指引差异、验收条件和边界见 docs/client_webcli_demo_goal.md；本轮只整理交接，客户端尚未实现或验收，完整 W/B/A/U/E 保留，无 push/PR。
+
 - 2026-10-18（GLM 删除重建与无页验收完成）：按授权清理旧页面版生成物，经 WebCLI 重新观察、显式准备组织/项目上下文、生成并安装后台 `bigmodel.cn@1.0.2`。全部 GLM 标签关闭后 4 组真实验证、4 次普通调用、Bridge 重启后 4 次查询通过，零新页；首次登录/上下文切换仍需一次 prepare-context。修复纯用户 Adapter 卸载后无法重新探索，同时保留禁用旧 legacy 回退；更新生成 Skill。WebCLI 130 文件/1465 项、GLM 离线 11 项、源码/打包真实隔离 CLI 各 4 项通过。详见 docs/glm_quota_adapter_validation.md 和交接末尾。新机器/浏览器冷启动/真实登录恢复/独立 Agent/内部同步仍欠验，整体目标继续暂停；无 push/PR。
 
 - 2026-10-18（后台 API 通用流程改进）：新增 EXTENSION_API 探索策略，复用既有后台 Runner，保留 execution 元数据；按运行时验证、后台 repair 拒绝页面退化，更新共架构约束与两份 WebCLI Skill。最终单测 130 文件/1464 项、扩展相关 53 项、源码后台 7 项、双打包后台 8 项和独立 HTTP 双打包 24 项通过；完整 Chromium 1217 CLI＋Bridge 双打包 **114 项**通过（76lB8i），最终后台专项 **8 项** agzD9n 补齐实际 401/更严格无页断言。当时 GLM 仍为页面版；现已由顶部删除重建专项完成后台实测，整体对齐目标继续暂停。详见 docs/background_api_exploration.md 与交接末尾；无 push/PR。
