@@ -257,7 +257,7 @@ try {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
   browser = await chromium.launchPersistentContext(path.join(root, 'browser-profile'), { channel: 'chromium', executablePath, headless: true, acceptDownloads: true, downloadsPath: path.join(root, 'downloads'),
-    args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`, '--host-resolver-rules=MAP shared-repair.example.org 127.0.0.1'] });
+    args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`, '--host-resolver-rules=MAP shared-repair.example.org 127.0.0.1', '--no-proxy-server'] });
   browser.on('page', current => {
     current.on('framenavigated', frame => { if (frame === current.mainFrame()) browserEvents.push({ at: Date.now(), type: 'navigation', url: frame.url() }); });
     current.on('pageerror', error => browserEvents.push({ type: 'error', message: error.message }));
