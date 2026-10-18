@@ -110,6 +110,8 @@ webcli call <domain>.<action> --args '{"key":"value","arr":[1,2]}'
 
 AdapterHub 的结果、help 和错误也支持显式输出格式，仍须遵守来源/权限变更和发布确认；显示格式不是授权。`adapter status [id]` 展示 v2 包候选、当前选择和失效原因，`adapter validate <directory>` 或 `adapter validate --installed [id]` 只做包/摘要/JavaScript 静态检查。`executed:false` 不能代替实际读取或副作用验证；Toolkit Python 和冻结 legacy 不在此语法检查范围。
 
+编辑内置 v2 包时，`adapter eject <id> --directory <new-directory>` 复制到包名相同的新目录（父目录须存在），不自动激活或覆盖。先静态检查与实际验证，再用 `adapter develop <directory>` 显式选择；`adapter use <id> builtin` 切回且保留编辑文件。eject/develop/use 支持六类输出，不自动删除本地 override。
+
 ```bash
 webcli call open_browser --args '{"url":"<url>"}'
 ```

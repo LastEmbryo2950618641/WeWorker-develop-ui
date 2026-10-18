@@ -2,7 +2,7 @@
 
 `webcli call <namespace>.<command> --output-format=<格式>` 支持 json、markdown（md）、table、plain、csv、yaml（yml）。这不占用业务参数 `--format`。未指定时，业务命令保留终端 markdown、管道 JSON；browser/exploration/profile 管理命令保留默认 JSON。显式格式同样作用于管理结果、错误及帮助，不改变错误退出码。
 
-`list`、`adapter list/info/status/validate`、全局帮助、Adapter 帮助和三级渐进帮助也接受 `--output-format`，返回各自完整数据模型。AdapterHub 的既有 JSON 路径统一接入这些格式，包括结果、help 和错误；未知格式在调用前拒绝，参数错误退出 2、运行错误退出 1，安装来源/权限/发布确认语义保持。其余 Adapter 管理动作暂不接受该选项，会在执行前拒绝；原 `--json` 保持兼容。原始 Skill 文本、进程日志与 shell 补全脚本仍使用自身文本协议。
+`list`、`adapter list/info/status/validate/eject/develop/use`、全局帮助、Adapter 帮助和三级渐进帮助也接受 `--output-format`，返回各自完整数据模型。AdapterHub 的既有 JSON 路径统一接入这些格式，包括结果、help 和错误；未知格式在调用前拒绝，参数错误退出 2、运行错误退出 1，安装来源/权限/发布确认语义保持。其余 Adapter 管理动作暂不接受该选项，会在执行前拒绝；原 `--json` 保持兼容。原始 Skill 文本、进程日志与 shell 补全脚本仍使用自身文本协议。
 
 `skills list` 展示随包的四个 Skill；`skills read <name[/path]> [path]` 默认原样输出 UTF-8 文本（含原 BOM），`--json` 或显式格式返回 skill/path/content。仅允许安装包内的普通文本文件，不遍历用户 Skill，不跟随符号链接，不执行其中指令。
 

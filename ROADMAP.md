@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-18（Adapter 导出编辑流程）：U01 新增 `adapter eject <id> --directory <new-dir>`，完整复制有效 builtin v2 包，禁止覆盖/managed 目录，不执行或激活；复用 develop/use 显式选择，切回保留编辑文件。源码/打包真实隔离 HTTP 各 3 项、聚焦 26 项、WebCLI 125 文件/1401 项、npm pack 624 文件通过。只修改 CLI/文档/Skill，未重新跑浏览器全量；U01 其他差距和整体目标保持 active，继续 R02 共享修复影响范围审计。
+
 - 2026-10-18（持续目标接续，整体进行中）：R01 PAGE_FETCH/UI 契约 repair、R03 有证据知识修订已实现并隔离验证；managed v2 目录刷新改为 clear/reinject，保留页面与不重放边界。WebCLI 124 文件/1398 项、扩展 59 项、Chromium 1217 双打包完整 82 项、UI 专项 12 项、最终修复专项 6 项、HTTP 双打包 22 项通过。U01 新增随包 Skill 原文读取（含 BOM）和 v2 status/静态 validate；U02 六格式/补全及 AdapterHub 输出接通，源码/打包 Skill 各 4、管理各 5、输出各 5、补全各 4 项通过。npm pack 623 文件；完整浏览器 3822 文件隐私检查通过。U03 建立 1366 命令/179 分组逐项候选映射，150 名称候选、36 同包未匹配、1180 历史无映射，全部仍需行为审计，不计为对齐。失败、快照差异与全部剩余边界见交接末尾；整体 active，Python 网站探索agent未动。
 
 - 2026-10-18（HTTP 写命令定向修复）：从 `35cd7f8` 接续，repair 支持已安装 HTTP 单请求写模块，保持 runtime/safety、完整鉴权/权限/共享文件和其他命令；历史 fixture 只作待复验数据，摘要/kind/新来源不匹配明确跳过，不继承执行、实际 ID 或授权。修复审阅绑定任务/范围，派发前复核安装基线，复用数字 ID、有界 GET 轮询和持久消费。WebCLI 117 文件/1355 项、聚焦 139 项、扩展 20 项、源码/双打包 HTTP 各 21 项、构建/配置/语法/npm pack 620 文件通过；Chromium 1217 双打包完整 77 项通过，最终 3238 个日志/任务/安装文件隐私检查通过。修正动态详情证据等待和 pending 夹具时间依赖，失败与复跑证据均保留。PAGE_FETCH/UI 写契约修复、共享文件、多步写及台账欠账保持；Python 网站探索agent未动，未推送/PR，整体目标未完成。

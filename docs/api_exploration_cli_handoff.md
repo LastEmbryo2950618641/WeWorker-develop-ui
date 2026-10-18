@@ -784,3 +784,12 @@ npm run test:exploration:browser --prefix webcli -- \
 - 下一步继续完整台账，不能把本检查点作为停止条件：R02 共享文件、W01–04、B01–04、A01–02、U01 剩余管理、U02 入口、U03 全命令行为/验收、U04 外部 CDP/Electron、U05 external CLI、U06 Worker/流式/持久回放及 E01–04 欠账均保留。已开始读上游 external.js 和 observation/CDP 实现，尚不足关闭审计；静态 trace 导出不等于网络重放。1194/跨平台/实际安装包/独立 Agent/外部真实账户未因此通过；仅隔离公开 loopback 副作用、不操作未授权外部账户。
 
 - 最终检查补录：双打包写修复专项 2D6jSb 6 项及隐私扫描通过；36 个 JS/MJS 语法检查、改动内容常见凭据/私网模式扫描、diff 格式通过。源码扩展与 extension-dist/npm 资源、全部打包 Skill 字节一致，受保护目录未改。此处之后保存本地检查点并继续 U01 剩余管理差距，整体不暂停、不 complete。
+
+
+### 2026-10-18：b49b38c 后继续 U01 Adapter 导出
+
+- 已保存前阶段本地检查点 `b49b38c`（包含 R01/R03/U01/U02/U03 台账），随后继续推进，没有暂停/完成目标。
+- `adapter eject <id> --directory <new-directory>` 从有效 builtin 候选导出完整包，即使 user/development 当前有效仍取 builtin。拒绝已有/符号链接/名字不匹配/managed 目录，父目录必须存在；文件与摘要一致，不执行、不自动激活，不覆盖/删除。失败目录保留供检查。`develop/use` 复用既有权限和来源选择，新增显式六格式与帮助；切回 builtin 保留编辑副本。没有执行删除式 reset。
+- 聚焦 3 文件 **26 项** `/tmp/weworker-eject-focused.log`；源码/打包独立真实 HTTP 各 **3 项** `webcli-export-acceptance-5eEGqe` / `webcli-export-acceptance-RQVmQq`，日志 `/tmp/weworker-eject-source-final.log` / `/tmp/weworker-eject-bundled.log`。实际三次 GET 分别返回 builtin→edited→builtin，复制阶段零请求，原文件及编辑副本保留。首轮 le55gu 误以为对象 call 在 result 字段，修正脚本读取既有顶层对象后通过；未改变生产返回。
+- WebCLI **125 文件/1401 项**通过 `/tmp/weworker-eject-all.log`；CLI 构建、npm prepack/pack dry-run **624 文件**通过（`/tmp/weworker-eject-build.log`、`/tmp/weworker-eject-pack.json`）。这轮没有改 Extension/HTTP 执行或写契约，不重复完整浏览器；沿用上一阶段的对应证据。Python 网站探索agent和受限文件未动，无 push/PR/新聊天/子 Agent。
+- 下一项 R02 已核对现有 writeRepairDraft/verifyRepairRetention：共享文件确实完全冻结，不能靠已有 draft-write 声称可修。拟以显式 sharedFiles 绑定服务 scope，并保守要求该包全部命令进入修复计划/重验，不信任作者声称的依赖子集；默认 validate 仍不实际写，含写命令仍需全部独立效果/新确认，未验证不得安装。实现和实机验证未开始，不标完成。

@@ -24,7 +24,7 @@
 | B04 | 部分实现 | AX/Shadow/子 frame 截图、任意设备模拟恢复 |
 | A01 | 部分实现 | YAML/API 文档发现与更广引用解析 |
 | A02 | 部分实现 | 站点签名/OAuth；按上游和实际站点契约审计，不能把 HMAC 视为全部认证 |
-| U01 | 已审计／部分实现 | 随包 skills list/read、v2 status/目录与已安装静态 validate 已补；源码/打包 Skill 各 4 项、管理各 5 项。统一 verify/evidence、convention-audit、eject、Git/monorepo、legacy 和 Toolkit 诊断仍开放，见管理审计文档 |
+| U01 | 已审计／部分实现 | 随包 skills list/read、v2 status/目录与已安装静态 validate 已补；源码/打包 Skill 各 4 项、管理各 5 项。eject 新目录复制/显式 develop-use 已验（源码/打包各 3 项）；统一 verify/evidence、convention-audit、Git/monorepo、legacy 和 Toolkit 诊断仍开放，见管理审计文档 |
 | U02 | 部分实现／继续核对入口 | 六格式/md/yml、JSONL 和 Bash/Zsh/Fish 补全已验；AdapterHub 复用 JSON 路径输出结果/help/错误，源码/打包管理各 5、输出各 5、补全各 4 项。其他 Adapter/服务管理格式、发布与凭据路径实际验收仍开放 |
 | U03 | 初步映射／行为审计未完成 | 1.8.8 的 1366 命令/179 分组逐项台账见 opencli_command_map_1_8_8.json；当前 33 包，150 名称候选、36 同包未匹配、1180 历史无映射。候选不是对齐，无映射不是已证明不存在；全部留待源码/行为与实机证据复核 |
 | U04 | 待审计 | 外部 CDP/Electron 目标；不开发 OpenCLI 桌面客户端 |

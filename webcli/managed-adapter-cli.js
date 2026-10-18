@@ -1,10 +1,18 @@
 import { resolve } from 'node:path';
 import { managedAdapterViews } from './adapter-views.js';
 import { installAdapter, registerDevelopmentAdapter, removeInstalledAdapter, selectAdapter } from './adapter-install-store.js';
+import { ejectAdapter } from './adapter-export.js';
 
 /** Shared local package operations. Legacy inputs remain explicit migration paths. */
 export function runManagedAdapterCommand(args, options = {}) {
   const [command, ...rest] = args;
+  if (command === 'eject') {
+    const values = rest.filter(value => value !== '--json');
+    if (values.length !== 3 || values[1] !== '--directory' || values[0].startsWith('-') || values[2].startsWith('-')) {
+      throw new Error('Usage: webcli adapter eject <name> --directory <new-directory-named-after-adapter>');
+    }
+    return ejectAdapter(values[0], values[2], options);
+  }
   if (command === 'install' && rest.includes('--directory')) {
     const flags = new Set(['--allow-downgrade', '--allow-permission-change', '--change-source', '--inactive', '--json']);
     let directory;

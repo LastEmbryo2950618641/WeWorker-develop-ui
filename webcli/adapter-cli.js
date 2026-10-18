@@ -82,6 +82,7 @@ export async function adapterHelpJson() {
       { name: "info <id>", usage: "webcli adapter info <id>", description: "查看 adapter 的工具列表" },
       { name: "status", usage: "webcli adapter status [id]", description: "只读检查 v2 包候选、当前选择和失效诊断" },
       { name: "validate", usage: "webcli adapter validate <dir> | --installed [id]", description: "静态检查 v2 包和 JavaScript，不执行命令" },
+      { name: "eject", usage: "webcli adapter eject <id> --directory <new-dir>", description: "复制内置 v2 包到新的编辑目录；用 develop 显式选择" },
       { name: "install", usage: "webcli adapter install <id> | --url <url> | --file <path>", description: "安装 adapter（Hub/URL/本地文件）" },
       { name: "remove <id>", usage: "webcli adapter remove <id>", description: "移除 adapter" },
       { name: "skill <id>", usage: "webcli adapter skill <id> [--generated|--regenerate]", description: "输出/重新生成 SKILL.md" },
@@ -135,6 +136,15 @@ export async function runAdapterCli(args, { outputFormat } = {}) {
   if (['status', 'validate'].includes(args[0])) {
     const { runAdapterDiagnostics } = await import('./adapter-diagnostics.js');
     return runAdapterDiagnostics(args, { outputFormat });
+  }
+  if (['eject', 'develop', 'use'].includes(args[0])) {
+    if (outputFormat !== undefined) resolveOutputFormat(outputFormat);
+    if (args.some(arg => ['--help', '-h'].includes(arg))) {
+      console.log(formatCallOutput({ usage: { eject: 'webcli adapter eject <id> --directory <new-directory-named-after-adapter>',
+        develop: 'webcli adapter develop <directory>', use: 'webcli adapter use <id> <builtin|user|development|disabled>' }[args[0]],
+      scope: 'Eject copies the built-in package without activation. Develop/use explicitly selects a source.' }, outputFormat ?? 'json')); return;
+    }
+    console.log(formatCallOutput(runManagedAdapterCommand(args), outputFormat ?? 'json')); return;
   }
   if (outputFormat !== undefined) {
     resolveOutputFormat(outputFormat);
@@ -238,6 +248,7 @@ ${siteText}
 Commands:
   webcli adapter install --directory <dir>   Install a validated v2 package
   webcli adapter develop <dir>               Register a development package
+  webcli adapter eject <id> --directory <new-dir>  Copy a built-in v2 package for editing
   webcli adapter use <id> <source>           Select builtin/user/development/disabled
   webcli adapter install --url <url>         Install from URL (https only)
   webcli adapter install --file <path>       Install from local file

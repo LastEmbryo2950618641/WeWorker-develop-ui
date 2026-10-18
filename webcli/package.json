@@ -37,6 +37,7 @@
     "stats.js",
     "adapter-cli.js",
     "adapter-diagnostics.js",
+    "adapter-export.js",
     "adapter-registry.js",
     "adapter-package-v2.js",
     "adapter-package-validation.js",
