@@ -5,6 +5,12 @@ description: 通过 WebCLI 探索公开/鉴权 HTTP API，或通过浏览器插�
 
 # API 探索与 Adapter 生成
 
+## 先固定本次业务契约
+
+生成前从本轮用户请求列清：允许的参数值、默认选择范围、返回字段、计算精度和缺失值语义，并用它们检查 manifest、实现和每组 cases。用户明确给出的枚举应原样使用，不沿用历史记忆、旧草稿里的别名或额外分类；观察到接口还含其他业务数据，不代表用户要求把它一起封装。数值计算保留来源精度，只有用户明确要求展示舍入时才舍入。安装前逐项复核当前需求，不能仅以自己写的 cases 全绿作为需求全部满足的证明。
+
+面向聊天展示的时间字段应在 Adapter 内按已确认的源单位转换为带时区的 ISO 8601 字符串，可保留原始时间戳供核对；缺失值保持 null。不要让后续聊天心算时间戳或猜测时区、日期和星期。
+
 ## 简单查询的先后顺序
 
 用户要“准备后无需业务页”且网站请求需要 localStorage 上下文时，必须分成：**页面准备命令 → 真实验证并安装/调用准备 → 后台查询命令 → 真实验证并安装查询**。准备使用页面策略（例如 PAGE_FETCH）及页面 `chrome.runtime.sendMessage` 的 storage_get，读取当前页面并缓存；查询才使用 EXTENSION_API、cookies_get、storage_get(cacheOnly:true)、backend_fetch(browserFallback:false)。两个命令不能都标为后台，也不能把准备改为 cacheOnly:true 来通过验证。`BACKGROUND_PREPARATION_REQUIRES_PAGE` 要求修正准备的运行时，不能关闭守卫或将查询退回页面。仅打开网页、缓存已存在、返回 prepared:true 都不是刷新证据。
