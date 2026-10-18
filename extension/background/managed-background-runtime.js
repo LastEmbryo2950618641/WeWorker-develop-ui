@@ -86,9 +86,9 @@ export function createManagedBackgroundRuntime({ bundle, request, exclusive, api
     try { return await task; } finally { call.pending.delete(task); }
   }
 
-  async function execute(manifest, command, args = {}, context = {}) {
+  async function execute(manifest, command, args = {}, context = {}, previewBundle = null) {
     return exclusive(async () => {
-      const selected = await bundle(manifest);
+      const selected = previewBundle || await bundle(manifest);
       const current = selected.manifest.commands.find((entry) => entry.id === command.id);
       if (current?.runtime !== 'extension' || current.execution?.type !== 'api' || current.execution?.runtime !== 'background') {
         throw new Error('Adapter command does not support background execution.');
@@ -107,11 +107,13 @@ export function createManagedBackgroundRuntime({ bundle, request, exclusive, api
       let ownedDocument = false, attached = false, target;
       const evaluate = async (expression) => {
         if (!call.accepting) throw new Error('Adapter execution has ended.');
+        const remaining = context.previewNoPage ? context.previewDeadline - Date.now() : timeoutMs;
+        if (!(remaining > 0)) throw new Error('Adapter execution timed out.');
         let timer;
         try {
           const result = await Promise.race([
             api.debugger.sendCommand(target, 'Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true, allowUnsafeEvalBlockedByCSP: false }),
-            new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Adapter execution timed out.')), timeoutMs); }),
+            new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Adapter execution timed out.')), remaining); }),
           ]);
           if (result?.exceptionDetails) throw new Error('Adapter background script failed.');
           return result?.result?.value;

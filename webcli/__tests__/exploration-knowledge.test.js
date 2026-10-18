@@ -76,7 +76,16 @@ it('write revisions require independent verified effects and keep only proof met
   expect(() => f.store.save(f.site, bad)).toThrow(/independent effect/);
   const result = f.store.save(f.site, input), history = result.knowledge.fieldRevisions;
   expect(history[0].evidence).toMatchObject({ kind: 'ui_single_submit_v1', fixtureId: 'example-write' });
-  expect(JSON.stringify(history)).not.toContain('007'); expect(JSON.stringify(history)).not.toContain('representativeArgs');
+  // A digest may coincidentally contain the substring 007. Inspect complete
+  // JSON values and forbidden payload keys instead of matching hash fragments.
+  const inspect = value => {
+    expect(value).not.toBe('007');
+    if (value && typeof value === 'object') for (const [key, child] of Object.entries(value)) {
+      expect(['representativeArgs', 'effect', 'fixture', 'resultBinding']).not.toContain(key);
+      inspect(child);
+    }
+  };
+  inspect(history);
 });
 it('preserves every prior revision and refuses to silently trim a full history', () => {
   const f = revisionFixture();

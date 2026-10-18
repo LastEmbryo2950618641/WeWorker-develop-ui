@@ -1,5 +1,7 @@
 # 独立 HTTP Adapter 与探索策略
 
+2026-10-18 流程补充：HTTP Runner 与 Extension 后台 Runner 保持独立。EXTENSION_API 复用已有 Extension cookies_get/storage_get/backend_fetch；不把已有无需业务页的 Adapter 改为 PAGE_FETCH。仅选择 HTTP/后台命令时 validate 不再要求保留原观察页；混合包的页面命令仍须原页身份。见 [后台 API 探索](background_api_exploration.md)。
+
 2026-10-18 边界补充：只读页面 navigate 的 `queryParameters` / `hashNavigation` / 显式 `resultOrigin` 与 workflow 的明确 `origin` 与有界 `when/repeat/collect` 属于 Extension 页面读取契约（见开发设计），不改变 HTTP 鉴权/请求权限、PAGE_FETCH/UI 写 URL 或 effect.resultReadback 限制，不赋予业务写授权。
 
 2026-10-17：v2 包运行时 `http` 支持契约版本 `http.version=1|2`。version 2 增加宿主环境鉴权与 Cookie store/分区；兼容 version 1，旧宿主明确拒绝 version 2。它由 WebCLI 的 Node Worker 执行，与 Extension、Toolkit 各自的 Runner 分开。无需 Python、桌面客户端或模型 Key。

@@ -10,6 +10,7 @@ import { buildAdapterCatalog } from '../adapter-catalog.js';
 import { readPackageDirectory } from '../adapter-package-files.js';
 import { verifyRetainedPackage } from '../generation-harness/existing-site.js';
 import { readGenerationEvidence } from '../generation-harness/package-inspection.js';
+import { createPreviewRuntimeValidator } from '../generation-harness/runtime-validator.js';
 
 const roots = [];
 afterEach(() => { vi.unstubAllEnvs(); for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
@@ -41,6 +42,56 @@ async function draft(service) {
   expect(result).toMatchObject({ ok: true, data: { status: 'draft' } });
   return taskId;
 }
+
+const backgroundPlan = { tools: [{ name: 'background_list', risk: 'read', strategy: 'EXTENSION_API', sourceApiKind: 'list', sourceApiIndexes: [0],
+  readReason: 'Read the observed list', strategyNote: { reason: 'Reuse the browser cookie through the background helper', alternatives: 'No page state is required', limitations: 'Requires valid login cookies' } }] };
+const backgroundCapabilities = () => ({ connected: true, capabilities: ['passive_exploration_v1', 'strict_output_contract_v1', 'background_preview_v1'] });
+async function authoredBackground(f) {
+  const taskId = await start(f.service);
+  const generated = await f.service.execute('generate', { taskId, plan: structuredClone(backgroundPlan) });
+  expect(generated.ok).toBe(true);
+  const run = f.service.runs.get(taskId), file = path.join(run.draft.adapterDir, 'manifest.json');
+  const manifest = JSON.parse(fs.readFileSync(file, 'utf8'));
+  expect(manifest.commands[0].execution).toEqual({ type: 'api', runtime: 'background' });
+  expect(() => f.service.assertPlannedDraft(run)).toThrow(/author the request/);
+  manifest.commands[0].schema['x-webcli-agent-authored'] = true;
+  fs.writeFileSync(file, JSON.stringify(manifest));
+  fs.writeFileSync(path.join(run.draft.adapterDir, manifest.commands[0].module), 'window.__webcliRegisterCommand("background-list",async()=>({items:[]}));');
+  const tool = 'example.com.background-list';
+  const before = (await f.service.execute('verification-read', { taskId, tool })).data;
+  await f.service.execute('verification-write', { taskId, tool, expectedHash: before.hash, cases: [{ id: 'example-list', args: {}, expect: { types: { items: 'array' } } }] });
+  return { taskId, run, manifest, file };
+}
+
+it('preserves background metadata, requires authoring, and validates with the source tab closed', async () => {
+  const f = setup({ capabilities: backgroundCapabilities });
+  const { taskId } = await authoredBackground(f);
+  f.requestExtension.mockClear().mockResolvedValue({ tabs: [] });
+  expect((await f.service.execute('validate', { taskId })).ok).toBe(true); await f.service.jobs.get(taskId);
+  expect((await f.service.execute('get', { taskId })).data.status).toBe('review_ready');
+  expect(f.requestExtension.mock.calls.some(([message]) => message.type === 'exploration_list_tabs')).toBe(false);
+});
+
+it('rejects old extensions before creating a background draft', async () => {
+  const f = setup(); const taskId = await start(f.service);
+  expect((await f.service.execute('generate', { taskId, plan: structuredClone(backgroundPlan) })).error.code).toBe('CAPABILITY_UNAVAILABLE');
+});
+
+it.each(['valid', 'page-result', 'missing-case', 'old-extension'])('dispatches background validation with no tab and rejects incomplete proof: %s', async mode => {
+  const f = setup({ capabilities: backgroundCapabilities });
+  const { run } = await authoredBackground(f);
+  const requestExtension = vi.fn(async message => {
+    expect(message).toMatchObject({ executionMode: 'background', expectedToolNames: ['example.com.background-list'] });
+    expect(message).not.toHaveProperty('tabId');
+    return { passed: true, executionMode: mode === 'page-result' ? 'page' : 'background', pageContextUsed: false,
+      toolResults: mode === 'missing-case' ? [] : message.testCases.map(item => ({ toolName: item.toolName, caseId: item.caseId, attempted: true, passed: true })),
+      executionSummary: { attempted: 1, passed: 1, failed: 0, skipped: 0 } };
+  });
+  const validator = createPreviewRuntimeValidator({ requestExtension, paths: f.paths, capabilities: mode === 'old-extension' ? [] : ['background_preview_v1'] });
+  const result = validator({ run: f.service.facade(run), draft: run.draft, plan: run.plan, memory: run.memory, verification: run.verification });
+  if (mode === 'valid') expect((await result).passed).toBe(true); else await expect(result).rejects.toThrow(/background|Background/);
+  if (mode === 'old-extension') expect(requestExtension).not.toHaveBeenCalled();
+});
 
 it('returns only structural evidence and rejects mutation/cross-origin candidates for generation', async () => {
   const f = setup(); const taskId = await start(f.service);

@@ -29,6 +29,7 @@
     "exploration-extension-write.js",
     "exploration-ui-write.js",
     "exploration-analysis.js",
+    "exploration-background.js",
     "exploration-revisions.js",
     "browser-commands.js",
     "browser-profiles.js",

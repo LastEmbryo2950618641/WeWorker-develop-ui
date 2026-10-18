@@ -32,6 +32,22 @@ function fixture({ source, timeoutMs = 1000, failAttach = false, documents = [] 
 }
 
 describe('managed background execution lifecycle', () => {
+  it('isolates preview source and restores pinned installed source on the next call', async () => {
+    const f = fixture();
+    const preview = { manifest: structuredClone(f.manifest), files: { 'extension/commands/run.js': '__webcliRegisterCommand("run",()=>"example-preview");' } };
+    expect(await f.runtime.execute(f.manifest, f.manifest.commands[0], { __confirmed: true }, { previewNoPage: true, previewDeadline: Date.now() + 1000 }, preview)).toBe('example-preview');
+    expect(f.bundle).not.toHaveBeenCalled();
+    expect(await f.run()).toEqual({ __confirmed: true, count: '007' });
+    expect(f.bundle).toHaveBeenCalledOnce();
+    expect(f.events).toEqual(['create', 'attach', 'detach', 'close', 'create', 'attach', 'detach', 'close']);
+  });
+  it('times out preview code within its budget and closes its owned runner', async () => {
+    const f = fixture();
+    const preview = { manifest: f.manifest, files: { 'extension/commands/run.js': '__webcliRegisterCommand("run",()=>new Promise(()=>{}));' } };
+    await expect(f.runtime.execute(f.manifest, f.manifest.commands[0], { __confirmed: true }, { previewNoPage: true, previewDeadline: Date.now() + 50 }, preview)).rejects.toThrow(/timed out/);
+    expect(f.events.slice(-2)).toEqual(['detach', 'close']);
+    expect(await f.run()).toEqual({ __confirmed: true, count: '007' });
+  });
   it('uses package confirmation policy independently of write classification', async () => {
     const f = fixture();
     await expect(f.run({ requires_confirmation: false })).rejects.toThrow(/confirmation/);

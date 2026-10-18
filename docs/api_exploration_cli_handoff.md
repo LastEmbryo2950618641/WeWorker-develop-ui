@@ -1,5 +1,7 @@
 # API 自动探索 CLI 改造跟进与交接
 
+2026-10-18 最新专项：用户要求修正通用探索流程、保持开源/内部共架构和既有后台 API 能力。EXTENSION_API 与无业务页验证已接通，最终证据和剩余项见本文末尾及 [后台 API 探索](background_api_exploration.md)。GLM 目前仍为页面版；本专项不恢复全面对齐目标，不推送/PR，不操作用户现有 Bridge/Chrome。
+
 > 更新日期：2026-10-18。本阶段已完成，按用户最新要求暂停整体目标，未全部对齐。hash/有界控制 d0e8ea9、跨源 841a412、导航竞态修复 f2f54d8；夹具隔离 a4052b3/c26226a。最终 Chromium 1217 CLI＋Bridge 完整双打包 **109 项** 9ccf6Q、**6291 文件/28 私有绑定**隐私、连续 **102 次**跨源调用、组合 **12 项**通过。frame 基础 1c4d8a9 未接入，替换后解析探针超时仍待修；完整剩余范围及最终检查点说明见末尾。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
 
@@ -925,3 +927,32 @@ WeWorker 自有 UI 仍为 P01 独立产品事项，不计 CLI 对齐。恢复时
 - 最终自动化与打包：WebCLI **129 文件/1439 项**、扩展 **64 项**、frame 声明单测 **3 项**（仅声明，不计 frame 实机）、公共配置 **3 项**、**41 个**本阶段脚本语法、探索 Skill、CLI/Bridge 构建、npm pack **634 文件**及源码/build/npm/Skill 字节一致通过。最终源码扫描 **50 个改动文件**，受保护目录/配置/依赖未变；没有删除仓库文件或执行 Git 回滚。
 - 核对本轮 8 个相关报告目录，任务所属浏览器/Bridge 进程均已退出；失败和成功的隔离目录保留，不清理用户数据。源码与验收修改已分别保存为 f2f54d8、1c4d8a9、a4052b3、c26226a；最后纯文档提交以 `git log -1` 为准，检查点没有未提交的功能改动。
 - **按用户要求暂停，整体目标未完成。** 下一阶段建议先修 frame 替换后身份解析/清理的有界等待，再推进全部声明与工作流接入；不能跳过上表 W/B/A/U/E 任何项。未推送、未创建 PR、未新建对话或子 Agent，Python 网站探索agent与日常浏览器/用户 Bridge 未动。
+
+
+## 2026-10-18 后台 API 通用流程专项
+
+用户指出既有 Adapter 可无需业务页查询，要求修正整个探索流程并保持开源/内部仓库共架构。先核对内部固定源码：旧后台路径确实存在；旧测试不等于最新 v2 包已验收，内部当前包元数据差异须在同步时逐包复核。本轮公开实现/用例不包含内部域名、业务源码或数据。
+
+实际修改见 `docs/background_api_exploration.md`：EXTENSION_API 计划、生成 execution 保留、对应 offscreen 真实验证、后台/页面混合分流、后台 repair 禁止页面策略、预览鉴权失败不开页不重放、缓存限定读取。基础 Skill 去掉“一律打开网站”，探索 Skill 要求先核对鉴权和现有执行方式；AGENTS 明确两仓共架构。保持已有普通调用、HTTP/Toolkit 分离、页面/写验证边界。没有重启用户 Bridge/Chrome，没有改 Python 网站探索agent。
+
+已完成证据（最终完整浏览器结果见下面收尾记录）：
+
+- WebCLI 全量 **130 文件/1464 项**：`/tmp/weworker-background-tests-complete.log`。聚焦 **76 项**：`/tmp/weworker-background-focus.log`；扩展相关 **53 项**：`/tmp/weworker-background-extension-complete.log`。覆盖 source 元数据、旧 capability 拒绝、无 tabId、完整 cases 回执、只读传输/重定向/低风险守卫、普通后台生命周期、预览超时后恢复安装源码、缓存命中与缺失不借页。
+- Chromium 1217 源码后台专项 **7 项**：系统临时根 `webcli-browser-acceptance-RgLVTq/report.json`。双打包后台 **8 项**：`webcli-browser-acceptance-0yl2o1/report.json`，包括缺 Cookie 和实际服务端 401 两种失败；每 case 一次请求、无隐式页面。最终增强断言同时排除网站 origin/API origin 标签，结果见下面收尾记录。
+- 独立 HTTP 源码 **24 项**：`webcli-http-discovery-awmDlM/report.json`；最终双打包 **24 项**：`webcli-http-discovery-7Q3zMI/report.json`。前次误用了浏览器脚本的 --bundled-cli/--bundled-bridge，报告 bundledCliAndBridge=false，因此仅计源码；用该脚本正确的 --bundled 重跑通过。
+- CLI/Bridge 构建与公开 profile/生成配置通过；overlay 五项通过。最终随包 Skill **4 项** `webcli-skills-acceptance-NxyjJW/report.json`；npm pack **636 文件**含新模块，Extension 源码/构建/npm 副本逐字节一致。所有构建产物不提交。
+- 后台专项产品日志/任务/安装文件 **68 文件**中公开 Cookie 占位值零泄漏；浏览器 profile 属于任务临时环境，未纳入产品日志扫描。最终完整回归检查见下面收尾记录。
+
+失败与修正：首轮实机作者夹具缺少一个右花括号，被静态验证拒绝；第二轮对普通结果断言忘记去除 CLI trace_id，产品执行已成功；混合计划使用旧 PAGE_FETCH 生成器不接受的连字符名称，改用 snake_case 计划和生成后的 kebab-case ID。缓存单测旧 stub 不保存 storage，补正确持久 stub 后通过。全量旧隐私测试在随机摘要中遇到子串 007 误报，改为递归检查完整 JSON 值和 representativeArgs/effect/fixture/resultBinding 禁止字段，保持结果隐私边界；最终全量通过。失败报告 m1h0YL/T6t0sJ/zYCA1O 不计成功。
+
+仍需完成/验证：GLM 当前安装的页面版不会因本通用改进自动转成后台版；需要实站确认 Authorization 的获取与生命周期、选定 profile 登录态来源、迁移并重新真实验证 5h/week 和关闭任务自有业务页后的普通调用。用户现有 Bridge/插件没有新 background_preview_v1，本轮未擅自重启升级。活动演示需准备本分支 CLI/Bridge/扩展的匹配分发入口，npm 1.0.4 版本号不能证明支持探索。内部同步尚未执行；逐包核对 v2 execution 及普通调用，不能仅引用 legacy 测试。storage 冷启动、浏览器重启、外部复杂签名/OAuth、其他系统和独立 Agent 新对话仍未证明。
+
+原 OpenCLI 整体目标继续暂停；本次专项不关闭 W/B/A/U/E 余项，不展开下一阶段，不推送、不创建 PR。最新检查点以 Git 日志为准。
+
+
+### 本专项最终收尾与暂停
+
+- 最终 Chromium 1217 CLI＋Bridge 完整双打包 **114 项全部通过**：系统临时根 `webcli-browser-acceptance-76lB8i/report.json`，日志 `/tmp/weworker-background-bundled-full.log`。覆盖本次最终生产运行代码，以及原有页面查询/导航/profile/HTTP/写操作/共享修复与后台混合包调用。该完整快照早于最后基础 Skill 文案和两条验收断言增强；运行代码一致，不能称其覆盖最后新增断言。
+- 最后基础 Skill 已重新打包并通过 **4 项**字节一致性/读取/格式检查 NxyjJW；增强的后台专项 **8 项**通过 `webcli-browser-acceptance-agzD9n/report.json`，日志 `/tmp/weworker-background-bundled-final.log`。同时排除网站/API origin 标签；实际服务端 401 每 case 一次请求，无页面/传输回退；缺 Cookie 零 API 请求。此最终专项产品 **68 文件**中公开占位凭据值零命中。
+- 完整回归产品日志/任务/安装文件 **6354 文件**扫描本次后台 Cookie 占位值零命中（不是浏览器 profile 清理，也不替代其他隐私项验收）。全部测试只用自有隔离浏览器、Bridge、loopback 与公开数据，正常退出；用户会话未改。Git 工作区仅包含本次通用修改、相应文档与前轮已授权的 GLM 页面版报告。
+- 本阶段完成，按用户要求保持整体目标 paused；不继续展开 GLM 迁移或 OpenCLI 下一阶段。当前 GLM 页面版、匹配版本演示部署、内部同步后的逐包回归，以及完整台账 W/B/A/U/E 未完成项均明确保留；不缩减范围。仅保存本地检查点，不推送、不建 PR。

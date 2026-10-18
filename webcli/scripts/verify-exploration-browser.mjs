@@ -28,6 +28,7 @@ import { verifyUiWrites } from './ui-write-acceptance.mjs';
 import { verifyExtensionWrites } from './extension-write-acceptance.mjs';
 import { verifyPageWriteRepairs } from './page-write-repair-acceptance.mjs';
 import { verifyPageSharedRepair } from './page-shared-repair-acceptance.mjs';
+import { verifyBackgroundApi } from './background-api-acceptance.mjs';
 
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'webcli-browser-acceptance-'));
@@ -257,7 +258,7 @@ try {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
   browser = await chromium.launchPersistentContext(path.join(root, 'browser-profile'), { channel: 'chromium', executablePath, headless: true, acceptDownloads: true, downloadsPath: path.join(root, 'downloads'),
-    args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`, '--host-resolver-rules=MAP shared-repair.example.org 127.0.0.1', '--no-proxy-server'] });
+    args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`, '--host-resolver-rules=MAP shared-repair.example.org 127.0.0.1,MAP background.example.org 127.0.0.1', '--no-proxy-server'] });
   browser.on('page', current => {
     current.on('framenavigated', frame => { if (frame === current.mainFrame()) browserEvents.push({ at: Date.now(), type: 'navigation', url: frame.url() }); });
     current.on('pageerror', error => browserEvents.push({ type: 'error', message: error.message }));
@@ -274,6 +275,11 @@ try {
     throw new Error('Extension did not connect');
   }
   await connected(); passed('standalone extension connected');
+  const backgroundApi = () => verifyBackgroundApi({ browser, cli, record, passed,
+    stopBridge: async () => { const closed = new Promise(resolve => bridge.once('exit', resolve)); bridge.kill('SIGTERM'); await closed; },
+    startBridge: async () => { await startBridge(); await connected(); },
+  });
+  if (process.argv.includes('--background-only')) { await backgroundApi(); return; }
   const profiles = () => verifyBrowserProfiles({ browser, cliEntry, env, record, passed,
     launchSecond: () => chromium.launchPersistentContext(path.join(root, 'browser-profile-second'), { channel: 'chromium', executablePath, headless: true,
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] }),
@@ -1051,6 +1057,7 @@ try {
   await uiWrites();
   await pageRepairs();
   await sharedRepair();
+  await backgroundApi();
   })();
 } catch (error) {
   await record('failure', { message: error.message, stack: error.stack, browserEvents });

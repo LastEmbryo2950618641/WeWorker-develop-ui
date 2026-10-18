@@ -7,6 +7,7 @@ import { isPackageDraft, packageDraftBundle, readGenerationEvidence } from './pa
 import { verifyRetainedPackage } from './existing-site.js';
 import { applyVerificationCases } from '../exploration-verification.js';
 import { verifyHttpDraft } from '../http-preview.js';
+import { isBackgroundCommand } from '../exploration-background.js';
 
 const MAX_PREVIEW_SCRIPT_CHARS = 1_000_000;
 const SAFE_PREVIEW_SCRIPT_RE = /^[a-zA-Z0-9][a-zA-Z0-9._/-]*\.js$/;
@@ -79,6 +80,42 @@ export function createPreviewRuntimeValidator({ requestExtension, restrictToExpe
       transport: 'inline_bundle',
     };
     const previewBundle = buildInlinePreviewBundle(draft.adapterDir);
+    const backgroundNames = (previewBundle.manifest.commands || []).filter(command => isBackgroundCommand(command) && draft.toolNames.includes(previewBundle.manifest.name + '.' + command.id)).map(command => previewBundle.manifest.name + '.' + command.id);
+    if (backgroundNames.length) {
+      const available = typeof capabilities === 'function' ? capabilities() : capabilities;
+      if (!(Array.isArray(available) ? available : available?.capabilities || []).includes('background_preview_v1')) throw new Error('The selected extension needs background_preview_v1; page preview is not a substitute.');
+      if (previewBundle.packageDigest && validation?.packageDigest && previewBundle.packageDigest !== validation.packageDigest) throw new Error('Draft changed after static validation.');
+      const evidence = readGenerationEvidence(draft.adapterDir);
+      verifyRetainedPackage(packageDraftBundle(draft.adapterDir).pkg, evidence, { paths, repairScope: run.snapshot.repairScope });
+      const testCases = applyVerificationCases(buildRuntimeTestCases({
+        registeredTools: previewBundle.manifest.commands.filter(command => backgroundNames.includes(previewBundle.manifest.name + '.' + command.id)).map(command => ({
+          name: previewBundle.manifest.name + '.' + command.id, parameters: command.schema,
+          generationSource: evidence.commands[command.id]?.generationSource })), plan, memory,
+        repairedToolNames: backgroundNames,
+      }), verification);
+      const results = [];
+      // One bounded background lifecycle per message, with cancellation checked
+      // before the next case. Already dispatched reads are never replayed.
+      for (let offset = 0; offset < testCases.length; offset += 1) {
+        if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
+        const batch = testCases.slice(offset, offset + 1);
+        const result = await requestExtension({ type: 'validate_generation_preview', executionMode: 'background',
+          previewAdapterId: createPreviewAdapterId(run.id), previewBundle, siteKey: memory.siteHost || run.snapshot.siteKey,
+          expectedToolNames: backgroundNames, testCases: batch }, 60000);
+        if (result?.executionMode !== 'background' || result.pageContextUsed !== false
+          || result.toolResults?.length !== batch.length || batch.some(item => !item.caseId
+            || !result.toolResults.some(row => row.toolName === item.toolName && row.caseId === item.caseId && row.attempted))) {
+          throw new Error('Background preview did not execute every authored case without a website page.');
+        }
+        results.push(result);
+      }
+      const otherNames = draft.toolNames.filter(name => !backgroundNames.includes(name));
+      if (otherNames.length) results.push(await createPreviewRuntimeValidator({ requestExtension, restrictToExpectedTools: true, paths, capabilities })({
+        run, draft: { ...draft, toolNames: otherNames }, signal, plan, memory, validation, verification }));
+      return { passed: results.length > 0 && results.every(result => result.passed),
+        errors: results.flatMap(result => result.errors || []),
+        executionSummary: Object.fromEntries(['attempted', 'passed', 'failed', 'skipped'].map(key => [key, results.reduce((sum, result) => sum + (result.executionSummary?.[key] || 0), 0)])) };
+    }
     const repairScope = run.snapshot.repairScope;
     if (previewBundle.packageDigest && validation?.packageDigest && previewBundle.packageDigest !== validation.packageDigest) throw new Error('Draft changed after static validation.');
     run.setArtifact('previewAdapter', { ...preview, packageDigest: previewBundle.packageDigest || null });

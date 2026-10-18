@@ -11,6 +11,7 @@ import { pageSourceEvidence } from './exploration-page.js';
 import { isHttpStrategy, httpToolContract } from './exploration-http.js';
 import { buildExtensionWriteTool } from './exploration-extension-write.js';
 import { buildUiWriteTool } from './exploration-ui-write.js';
+import { isBackgroundCommand } from './exploration-background.js';
 
 export function repairTarget(site, paths) {
   textArg(site, 'site', 128);
@@ -44,6 +45,7 @@ export function writeRepairDraft({ site, expectedDigest, plan, memory, candidate
   for (const tool of plan.tools) {
     const command = pkg.commands.find(item => item.id === tool.name);
     if (!command || command.safety !== tool.risk) throw fail('REPAIR_SCOPE_CHANGED', 'Repair must preserve the selected command and its read/write safety.');
+    if (isBackgroundCommand(command) !== (tool.strategy === 'EXTENSION_API')) throw fail('REPAIR_EXECUTION_MISMATCH', 'Repair must preserve background/page execution. Use EXTENSION_API for an installed background command; do not replace it with a page strategy.');
     if (command?.runtime === 'http' ? command.http.strategy !== tool.strategy : isHttpStrategy(tool.strategy)) throw fail('REPAIR_RUNTIME_MISMATCH', 'Repair must preserve the installed command runtime and strategy.');
     if (tool.risk === 'write') {
       if (command.runtime === 'http') {

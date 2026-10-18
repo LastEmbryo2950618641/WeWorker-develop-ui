@@ -48,6 +48,7 @@ import { buildApiSourceEvidence, normalizeRequestBodyEvidence, normalizeResponse
 import { buildPreviousFailureContext } from './generation-harness/failure-attribution.js';
 import { modelOutputErrorDetails } from './generation-harness/model-output-policy.js';
 import { TabOperationLocks } from './tab-operation-locks.js';
+import { assertReadRequest } from './exploration-host.js';
 
 const execFileAsync = promisify(execFile);
 const WS_PORT = 3711;
@@ -146,6 +147,21 @@ export async function handleBackendRuntimeFetch(payload = {}, traceID = null) {
   const requestBody = requestOptions.bodyEncoding === 'base64'
     ? Buffer.from(String(requestOptions.body || ''), 'base64')
     : requestOptions.body != null ? String(requestOptions.body) : undefined;
+  if (payload.backgroundPreviewRead === true) {
+    if (parsed.username || parsed.password || parsed.hash || requestOptions.bodyEncoding === 'base64'
+      || Object.keys(headers || {}).some(key => /method.override|^x-http-method$/i.test(key))) throw new Error('Background preview request is not a supported read.');
+    assertReadRequest({ url, method: method === 'HEAD' ? 'GET' : method, headers, body: requestBody }, parsed.origin, []);
+    const normalized = normalizeReplayRequest({ url, method, headers, body: requestBody, redirect: 'manual',
+      timeoutMs: 30000, responseEncoding: 'base64', maxResponseBytes: 4 * 1024 * 1024 });
+    // One bounded request, no curl/browser retry, no credential/body traces.
+    const result = await performApiReplayRequestViaFetch(normalized, fetch);
+    if (!result.ok) throw new Error('Background preview request failed; no retry was sent.');
+    const response = result.response;
+    if (response.status >= 300 && response.status < 400) throw new Error('Background preview does not follow redirects.');
+    return { status: response.status, ok: response.status >= 200 && response.status < 300,
+      headers: response.headers, body: Buffer.from(response.body, 'base64').toString('utf8'), url,
+      redirected: false, replay: response.replay };
+  }
   writeTrace(traceID, `[BridgeRuntime] backend_fetch request ${JSON.stringify({
     method,
     url,

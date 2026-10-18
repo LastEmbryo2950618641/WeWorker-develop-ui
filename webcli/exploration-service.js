@@ -6,6 +6,7 @@ import { workflowParameters } from './exploration-workflow.js';
 import { analyzeApiCandidate, analyzeExploration, normalizeStrategyNote } from './exploration-analysis.js';
 import { explorationDraftHash, archiveExplorationDraft, explorationRevisionView, readExplorationRevision } from './exploration-revisions.js';
 import fs from 'node:fs';
+import { buildBackgroundTool, isBackgroundCommand } from './exploration-background.js';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { explorationCommands, explorationHelp, explorationError as fail, integerArg, textArg } from './exploration-commands.js';
@@ -511,8 +512,13 @@ export class ExplorationService {
         continue;
       }
       if (tool.risk !== 'read' || tool.sourceApiKind !== 'list' || !candidate || !candidates.some(item => item.id === candidate.id)) throw fail('INVALID_PLAN', 'Each tool must reference a successful observed read query by index.');
-      if (tool.strategy !== undefined && tool.strategy !== 'PAGE_FETCH' && !isHttpStrategy(tool.strategy)) throw fail('STRATEGY_UNSUPPORTED', 'Choose PAGE_FETCH, PUBLIC_API, COOKIE_API or AUTH_API for observed API sources.');
+      if (tool.strategy !== undefined && !['PAGE_FETCH', 'EXTENSION_API'].includes(tool.strategy) && !isHttpStrategy(tool.strategy)) throw fail('STRATEGY_UNSUPPORTED', 'Choose EXTENSION_API, PAGE_FETCH, PUBLIC_API, COOKIE_API or AUTH_API for observed API sources.');
       tool.strategy ||= 'PAGE_FETCH';
+      if (tool.strategy === 'EXTENSION_API') {
+        if (!this.capabilities().capabilities.includes('background_preview_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'The selected extension must support background_preview_v1; do not substitute a page preview.');
+        textArg(tool.readReason, 'readReason');
+        if (!tool.strategyNote) throw fail('STRATEGY_PLAN_REQUIRED', 'Explain the background authentication source, alternatives and limitations.');
+      }
       if (isHttpStrategy(tool.strategy)) {
         httpToolContract(tool, candidate);
         textArg(tool.readReason, 'readReason');
@@ -548,8 +554,9 @@ export class ExplorationService {
     }
     run.plan = allocateGenerationPlan(run.memory, plan);
     const outputRoot = path.join(this.root, run.taskId, randomUUID());
-    const apiTools = run.plan.tools.filter(tool => tool.risk !== 'write' && !tool.sourcePageId && !isHttpStrategy(tool.strategy));
+    const apiTools = run.plan.tools.filter(tool => tool.risk !== 'write' && !tool.sourcePageId && !isHttpStrategy(tool.strategy) && tool.strategy !== 'EXTENSION_API');
     const pageTools = [
+      ...run.plan.tools.filter(tool => tool.strategy === 'EXTENSION_API').map(tool => buildBackgroundTool(run.siteKey, tool, run.candidates[tool.sourceApiIndexes[0]])),
       ...run.plan.tools.filter(tool => tool.risk === 'write' && tool.strategy === 'UI_SELECTOR').map(tool => buildUiWriteTool(run.siteKey, tool, run.candidates[tool.sourceApiIndexes[0]], run.origin)),
       ...run.plan.tools.filter(tool => tool.sourcePageId).map(tool => buildPageTool(run.siteKey, tool, run.pageSources.find(item => item.id === tool.sourcePageId))),
       ...run.plan.tools.filter(tool => isHttpStrategy(tool.strategy)).map(tool => buildHttpTool(run.siteKey, tool, run.candidates[tool.sourceApiIndexes[0]])),
@@ -579,6 +586,13 @@ export class ExplorationService {
     const pkg = readPackageDirectory(run.draft.adapterDir);
     const retained = verifyRetainedPackage(pkg, readGenerationEvidence(run.draft.adapterDir), { paths: this.paths, repairScope: run.repairScope });
     const writes = plannedWrites(run);
+    for (const tool of run.plan?.tools || []) {
+      const command = pkg.commands.find(item => item.name === `${run.siteKey}.${tool.name.replace(/_/g, '-')}`);
+      if (tool.strategy === 'EXTENSION_API' || isBackgroundCommand(command)) {
+        if (tool.strategy !== 'EXTENSION_API' || !isBackgroundCommand(command) || command.pageRoute || command.pageWorkflow || command.pageStrategy
+          || command.schema?.['x-webcli-agent-authored'] !== true) throw fail('BACKGROUND_CONTRACT_REQUIRED', 'Preserve background execution, author the request/authentication, and validate without a page route.');
+      }
+    }
     for (const tool of run.plan?.tools || []) if (tool.risk === 'write') {
       const command = pkg.commands.find(item => item.name === `${run.siteKey}.${tool.name.replace(/_/g, '-')}`);
       if (!command || (tool.strategy === 'UI_SELECTOR' ? !command.uiWrite : tool.strategy === 'PAGE_FETCH' ? !command.pageWrite : command.runtime !== 'http')) throw fail('WRITE_RUNTIME_REQUIRED', 'Write runtime must match the explicit plan.');
@@ -625,8 +639,9 @@ export class ExplorationService {
     if ((run.pageSources || []).some(item => usesWorkflowControl(item.source)) && !this.capabilities().capabilities.includes('page_workflow_control_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating conditional or repeated page workflows.');
     if ((run.pageSources || []).some(item => usesNavigationHash(item.source)) && !this.capabilities().capabilities.includes('page_navigation_hash_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating hash navigation.');
     if ((run.pageSources || []).some(item => usesNavigationQuery(item.source)) && !this.capabilities().capabilities.includes('page_navigation_query_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating public URL query navigation.');
-    const pageTools = (run.plan?.tools || []).filter(tool => tool.risk !== 'write' && (tool.sourcePageId || isHttpStrategy(tool.strategy))).map(tool => `${run.siteKey}.${tool.name.replace(/_/g, '-')}`);
+    const pageTools = (run.plan?.tools || []).filter(tool => tool.risk !== 'write' && (tool.sourcePageId || isHttpStrategy(tool.strategy) || tool.strategy === 'EXTENSION_API')).map(tool => `${run.siteKey}.${tool.name.replace(/_/g, '-')}`);
     for (const command of readPackageDirectory(run.draft.adapterDir).commands.filter(command => run.draft.toolNames.includes(command.name))) {
+      if (isBackgroundCommand(command) && !this.capabilities().capabilities.includes('background_preview_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension for real background validation; page preview is not equivalent.');
       if (command.uiWrite && !this.capabilities().capabilities.includes('ui_write_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating UI writes.');
       if (command.uiWrite?.result && !this.capabilities().capabilities.includes('ui_write_result_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating UI receipt IDs.');
       if (command.pageWrite && !this.capabilities().capabilities.includes('page_write_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating page writes.');
@@ -637,12 +652,14 @@ export class ExplorationService {
     if (run.plan?.tools?.some(tool => tool.sourcePageId) && !this.capabilities().capabilities.includes('page_sources_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating page sources.');
     if ((run.repairScope ? run.draft.toolNames.filter(tool => !plannedWrites(run).includes(tool)) : pageTools).some(tool => !run.verification?.[tool]?.length)) throw fail('VERIFICATION_REQUIRED', 'Every repaired read or page-based command needs authored verification cases; write commands require independent write fixtures.');
     if (Object.keys(run.verification || {}).length && !this.capabilities().capabilities.includes('strict_output_contract_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating authored assertions.');
-    if (run.mode !== 'http') this.assertTabAvailable(run.tabId, run.taskId);
+    const selectedCommands = readPackageDirectory(run.draft.adapterDir).commands.filter(command => run.draft.toolNames.includes(command.name));
+    const needsPage = selectedCommands.some(command => command.runtime === 'extension' && !isBackgroundCommand(command));
+    if (run.mode !== 'http' && needsPage) this.assertTabAvailable(run.tabId, run.taskId);
     run.review = null; run.runtimeDigest = null; run.runtimeSummary = null; run.preWriteDigest = null;
     const pageIds = new Set((run.plan?.tools || []).filter(tool => tool.risk === 'read').map(tool => tool.sourcePageId));
     const readTargets = (run.pageSources || []).filter(item => pageIds.has(item.id) && usesWorkflowOrigins(item.source)).flatMap(item => pageSourceOriginTargets(item.source, item.expectedOrigin, item.expectedPath));
     return this.launch(run, 'validating', async signal => {
-      await this.checkTab(run, readTargets);
+      if (needsPage) await this.checkTab(run, readTargets);
       if (signal.aborted) return;
       run.validation = validateAdapterDraft({ adapterDir: run.draft.adapterDir, expectedSiteKey: run.siteKey, expectedToolNames: run.draft.toolNames, paths: this.paths, repairScope: run.repairScope });
       if (!run.validation.passed) { this.update(run, 'draft', 'Static validation failed; inspect validation errors.'); return; }
@@ -661,7 +678,7 @@ export class ExplorationService {
       const runtime = readDraft.toolNames.length ? await this.runtimeValidator({ run: this.facade(run), draft: readDraft, signal, plan: run.plan, memory: run.memory, validation: run.validation, verification: run.verification })
         : { passed: true, executionSummary: { attempted: 0, passed: 0, failed: 0, skipped: 0 } };
       if (signal.aborted) return;
-      await this.checkTab(run, readTargets);
+      if (needsPage) await this.checkTab(run, readTargets);
       if (signal.aborted) return;
       // Persist only verifier summaries, never observed result bodies/test inputs.
       const counts = runtime.executionSummary;

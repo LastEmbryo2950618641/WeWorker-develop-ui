@@ -1,5 +1,7 @@
 # API 自动探索 CLI 开发设计与首版实现
 
+2026-10-18 通用流程修正：新增 EXTENSION_API 探索策略，复用既有 Extension 后台 Runner；生成保留 execution，验证按实际运行时分流，后台 repair 禁止退化到页面策略。登录态与业务页依赖分开判断，详见 [后台 API 探索](background_api_exploration.md)。最终证据见交接末尾，整体对齐仍暂停。
+
 ## 显式共享文件修复（2026-10-18）
 
 `repair` 可带 `sharedFiles`，仅选择当前包已有 `extension/internal/...` 或 `http/internal/...` 文本文件（最多 50 个、每个 250000 字节、合法 UTF-8 且无 NUL）。选中共享文件后，该包全部命令必须进入新计划，服务保存 `impact:all-package-commands` 和精确文件/命令集合；不接受作者声明的依赖子集。不能新增、删除文件或改变包权限/运行时，未选文件逐字节保留。仍适用每任务最多 50 命令的限制；更大包不会被部分通过。

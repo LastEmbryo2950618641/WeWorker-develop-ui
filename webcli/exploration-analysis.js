@@ -33,7 +33,8 @@ export function analyzeApiCandidate(candidate, index) {
   if (!executable) reasons.push('request_method_or_body_not_supported');
   const eligible = ['likely_data', 'maybe_data'].includes(verdict) && candidate.risk?.level === 'read' && executable;
   return { id: candidate.id, sourceApiIndex: index, url: candidate.url, method: candidate.method, status: candidate.status,
-    verdict, reasons, samplePaths: paths, eligible, strategy: eligible ? 'PAGE_FETCH' : null,
+    verdict, reasons, samplePaths: paths, eligible, strategy: null,
+    ...(eligible ? { strategyCandidates: ['PUBLIC_API', 'COOKIE_API', 'AUTH_API', 'EXTENSION_API', 'PAGE_FETCH'], needsExecutionAssessment: true } : {}),
     ...(candidate.risk?.level === 'write' ? { writeEligible: ['POST', 'PUT', 'PATCH', 'DELETE'].includes(candidate.method)
       && (candidate.declared === true || (candidate.status >= 200 && candidate.status < 300)), declaredOnly: candidate.declared === true } : {}),
     contract: 'unverified', ...(pathname.includes(':id') ? { requiresPathParameters: true } : {}) };
@@ -46,7 +47,7 @@ export function normalizeStrategyNote(tool, strategy) {
   const reason = textArg(note.reason, 'strategy reason', 2000);
   const result = { reason };
   for (const key of ['alternatives', 'limitations']) if (note[key] !== undefined) result[key] = textArg(note[key], key, 2000);
-  if (['PAGE_FETCH', 'INTERCEPT'].includes(strategy) && !result.alternatives) throw fail('INVALID_STRATEGY_NOTE', 'Explain why public/official API or visible page sources do not meet the target before choosing an internal endpoint.');
+  if (['PAGE_FETCH', 'INTERCEPT', 'EXTENSION_API'].includes(strategy) && !result.alternatives) throw fail('INVALID_STRATEGY_NOTE', 'Explain why the alternatives do not meet the target, including host HTTP and the existing Extension background runtime; authentication alone does not require a website tab.');
   return result;
 }
 
@@ -69,7 +70,7 @@ export function analyzeExploration(run, capabilities = []) {
     reason: 'A write may already have occurred. Inspect its effect with the independent GET; do not repeat the write.' });
   if (run.status === 'write_review_ready') nextActions.push({ action: 'exploration.write-review', reason: 'Mocks and reads passed; inspect each exact write and its before/after assertions before explicitly authorizing execution.' });
   if (!run.draft && candidates.some(item => item.writeEligible)) nextActions.push({ action: 'exploration.generate', reason: 'Explicit HTTP action plans may bind a declared or observed write. A declaration is not proof of execution; author mocks and real effect assertions.' });
-  if (auth) nextActions.push({ action: 'restore_session', automaticFallback: false, reason: 'Resolve login or access before switching sources; a different strategy does not grant access.' });
+  if (auth) nextActions.push({ action: 'restore_session', automaticFallback: false, reason: 'Distinguish expired/denied access from missing credential transport. Inspect the observed request authentication and existing background helpers without exporting credential values. Authentication alone does not require a page; never switch sources to bypass denied access.' });
   else if (codes.length) {
     if (codes.includes('INTERCEPT_DOCUMENT_CHANGED')) nextActions.push({ action: 'exploration.query', reason: 'The read control replaces the document. Observe its same-origin result route and DOM/state before replanning.' });
     else if (codes.some(code => /PAGE_(QUERY|SOURCE|FIELD)|INTERCEPT_(TARGET|TIMEOUT|AMBIGUOUS)/.test(code))) nextActions.push({ action: 'browser.state', reason: 'Inspect the current target and result semantics before choosing another observed source.' });
@@ -85,6 +86,7 @@ export function analyzeExploration(run, capabilities = []) {
   const selected = (run.plan?.tools || []).map(tool => ({ name: tool.name, strategy: tool.strategy || 'PAGE_FETCH',
     contract: ['UI_SELECTOR', 'DOM_STATE'].includes(tool.strategy) ? 'visible-ui' : 'internal-unstable',
     sourceApiIndexes: tool.sourceApiIndexes, sourcePageId: tool.sourcePageId,
+    requiresWebsitePage: !['PUBLIC_API', 'COOKIE_API', 'AUTH_API', 'EXTENSION_API'].includes(tool.strategy),
     strategyNote: tool.strategyNote || null, needsRationale: !tool.strategyNote }));
   const actions = ['created', 'collecting', 'validating', 'installing', 'verifying_write'].includes(run.status)
     ? [{ action: 'exploration.get', reason: 'Wait for the active operation before changing the draft or evidence.' }]
@@ -96,7 +98,9 @@ export function analyzeExploration(run, capabilities = []) {
       { strategy: 'PUBLIC_API', available: true, reason: 'Independent host HTTP. Requires explicit rationale and authored cases proving credential-free execution.' },
       { strategy: 'AUTH_API', available: true, reason: 'Independent host HTTP with declared environment credentials (Bearer/header/Basic/HMAC). Host environment must supply the values; authored cases required.' },
       { strategy: 'COOKIE_API', available: capabilities.includes('http_credentials_v1'), reason: 'Independent host HTTP with explicitly named browser cookies and optional CSRF mapping. Requires http_credentials_v1 and authored cases.' },
+      { strategy: 'EXTENSION_API', available: run.mode !== 'http' && capabilities.includes('background_preview_v1'), runtimeAvailable: capabilities.includes('adapter_background_v1'),
+        requiresWebsitePage: false, requiresBrowser: true, reason: 'Existing Extension background runner and credential/backend helpers. Author the observed authentication contract, then validate without page helpers. Older background adapters keep their normal execution even if preview capability is absent.' },
       ...['UI_SELECTOR', 'DOM_STATE', 'PAGE_FETCH', 'INTERCEPT'].map(strategy => ({ strategy, available: run.mode !== 'http' })),
     ],
-    guidance: 'Recommendations are structural hints, not semantic proof. Choose by the task and verified contract, not API count. No source is executed or silently substituted by analyze.' };
+    guidance: 'Inspect installed execution metadata and request authentication before choosing a strategy. Prefer an evidenced API path without a business page when it meets the task; explain actual page dependencies. Browser login state is not a website-tab requirement. Preserve existing background execution during repair. Recommendations are structural hints, not semantic proof; no strategy is executed or silently substituted.' };
 }

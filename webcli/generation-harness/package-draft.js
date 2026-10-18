@@ -54,6 +54,7 @@ export function writePackageDraft({ memory, adapterDir, supportBundle, paths }) 
     // Evidence belongs to the generation task; it never participates in package installation.
     evidence.commands[id] = { originalName: tool.name, safety: tool.access === 'write' ? 'write' : 'read', generationSource: tool.generationSource || null };
     return { id, ...(local !== id ? { aliases: [local] } : {}), runtime, module,
+      ...(tool.execution ? { execution: tool.execution } : {}),
       ...(tool.http ? { http: tool.http } : {}),
       ...(tool.uiWrite ? { uiWrite: tool.uiWrite } : {}),
       ...(tool.pageWrite ? { pageWrite: tool.pageWrite } : {}),

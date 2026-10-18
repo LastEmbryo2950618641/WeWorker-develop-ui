@@ -4,7 +4,8 @@ const candidate = { id: 'example', url: 'https://example.com/api/search?q=%3Cval
   responseEvidence: { bodyKind: 'json', bodyShape: { type: 'object', properties: { data: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, title: { type: 'string', example: 'example-private-value' } } } } } } } };
 it('describes data shapes without values or inferred official API contracts', () => {
   const result = analyzeApiCandidate(candidate, 3);
-  expect(result).toMatchObject({ sourceApiIndex: 3, eligible: true, verdict: 'likely_data', contract: 'unverified', strategy: 'PAGE_FETCH' });
+  expect(result).toMatchObject({ sourceApiIndex: 3, eligible: true, verdict: 'likely_data', contract: 'unverified', strategy: null, needsExecutionAssessment: true });
+  expect(result.strategyCandidates).toContain('EXTENSION_API');
   expect(result.samplePaths).toContainEqual({ path: '$.data.*.title', type: 'string' });
   expect(JSON.stringify(result)).not.toContain('example-private-value');
 });

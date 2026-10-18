@@ -3,6 +3,7 @@ import { browserContextId } from './browser-profile.js';
 import { readHttpCookies } from './http-credentials.js';
 import { executePageRequest, pageWriteRequest } from './page-write.js';
 import { scopedGenerationPreviewScripts } from './generation-preview-bundle.js';
+import { validateBackgroundPreview, backgroundPreviewRequest } from './generation-background-preview.js';
 import { buildV2Bootstrap, v2InjectionFiles } from "./v2-loader.js";
 import { injectAdapterSources } from './adapter-script-loader.js';
 import { createHostAdapterClient } from './host-adapter-client.js';
@@ -41,6 +42,7 @@ const WS_URL = "ws://localhost:3711";
 const EXTENSION_CAPABILITIES = [
   'adapter_catalog_v1',
   'adapter_background_v1',
+  'background_preview_v1',
   'passive_exploration_v1',
   'safe_api_probe_v1',
   'api_replay_v1',
@@ -7055,6 +7057,10 @@ function getManagedBackgroundRuntime() {
       try { return await task(); } finally { directRuntimeContext = previous; }
     }),
     request: async (action, payload, context) => {
+      if (context.previewNoPage) {
+        if (Date.now() >= context.previewDeadline || ++context.previewRequests > 50) throw new Error('Background preview read budget exceeded.');
+        payload = backgroundPreviewRequest(action, payload);
+      }
       assertManagedRuntimeRequest(action, payload, context);
       return handleDirectRuntimeRequest(action, payload);
     },
@@ -7817,11 +7823,23 @@ async function callGenerationPreviewTool(tabId, token, toolName, args, timeoutMs
 
 const generationPreviewGrants = new Map();
 
-async function validateGenerationPreview({ previewAdapterId, previewBundle = null, siteKey, tabId, expectedToolNames = [], testCases = [], operationId } = {}) {
+async function validateGenerationPreview({ previewAdapterId, previewBundle = null, siteKey, tabId, expectedToolNames = [], testCases = [], operationId, executionMode } = {}) {
   if (!SAFE_ADAPTER_ID_RE.test(String(previewAdapterId || '')) || !String(previewAdapterId).startsWith('generation_preview_')) {
     throw new Error('invalid generation preview adapter id');
   }
   if (!SAFE_ADAPTER_ID_RE.test(String(siteKey || ''))) throw new Error('invalid generation preview siteKey');
+  if (executionMode === 'background') {
+    const normalized = normalizeGenerationPreviewBundle(previewBundle);
+    if (!normalized) throw new Error('Background preview requires an inline package.');
+    const bundle = { manifest: normalized.manifest, files: Object.fromEntries(normalized.scripts.map(script => [script.path, script.source])) };
+    return validateBackgroundPreview({ bundle, expectedToolNames, testCases, execute: (manifest, command, args, selected) => {
+      const routeDomain = manifest.match[0].replace(/^\*\./, '');
+      const declaredHosts = [...manifest.match, ...(manifest.runtime_allowed_hosts || [])];
+      return getManagedBackgroundRuntime().execute(manifest, command, args, { adapterId: manifest.name, routeDomain, tabDomain: routeDomain,
+        declaredHosts, allowedHosts: declaredHosts.map(host => host.replace(/^\*\./, '')), previewNoPage: true,
+        previewDeadline: Date.now() + 30000, previewRequests: 0 }, selected);
+    } });
+  }
   const routeCommands = previewBundle?.manifest?.commands || [];
   const explicitOrigins = routeCommands.some(command => usesWorkflowOrigins(command.pageRoute?.navigation) || usesWorkflowOrigins(command.pageRoute?.workflow));
   let targetTab;
@@ -8670,6 +8688,10 @@ async function getDirectRuntimeStorageValue(payload) {
       return { value: entry.value };
     }
   }
+
+  // Preview may prove a cached credential works without opening or consulting
+  // a website tab. Cache initialization belongs to explicit login preparation.
+  if (payload.cacheOnly === true) throw createStorageContextRequiredError(storageScope, area, key);
 
   const tabs = await findStorageContextTabs(
     directRuntimeContext?.routeDomain || host,
