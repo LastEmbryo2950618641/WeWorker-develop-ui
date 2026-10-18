@@ -16,11 +16,11 @@
 4. 子 frame 内读取与动作复用已验证的文档/原生操作基础，保持父文档和每层 frame 身份；循环内不得重新选择另一个 frame。跨源与 frame 的结果关联、新鲜度、超时与取消仍分别有证据。
 5. 自动化和隔离实机须覆盖两个公开 loopback origin、重复相同 URL frame、嵌套跨源、父/子导航、重定向、选择歧义、取消/重启、权限变化与提取修复。上游的 context 重解析/旧 target 重试策略不自动迁入本项目的不重放契约。
 
-尚未编写此上下文扩展的实现。B01 跨 origin/frame 仍开放，W01–04、B02–04、A01–02、U01–06 与 E01–04 全部范围保留；Python 网站探索agent、日常浏览器、真实账户与未知调试端口均未操作。
+以上为源码审计时的起点。后续跨 origin 实现及 frame 基础状态见下文；B01 frame 仍开放，W01–04、B02–04、A01–02、U01–06 与 E01–04 全部范围保留；Python 网站探索agent、日常浏览器、真实账户与未知调试端口均未操作。
 
 ## 跨源主文档实现进展（2026-10-18）
 
-已增加固定 navigate.resultOrigin、workflow step.origin 链、start.allowedOrigins 门禁、完整 manifest match/pageRoute 权限、精确源与路径组合选择、固定任务 tab 预览和 page_navigation_origin_v1 派发前检查。单步 query 和多步 A→B 的源码 Chromium 首轮通过（5GCrtt），包括生成/作者验证/安装/重复调用/知识/提取 repair/重定向拒绝/取消/重启不重放。跨源 hash、A→B→A、重启后验证和作者取消正在扩展验收，尚不计为最终通过；完整打包/隐私和回归待本阶段最终证据。frame 工作流暂无实现。
+已增加固定 navigate.resultOrigin、workflow step.origin 链、start.allowedOrigins 门禁、完整 manifest match/pageRoute 权限、精确源与路径组合选择、固定任务 tab 预览和 page_navigation_origin_v1 派发前检查。单步 query 和多步 A→B 的源码 Chromium 首轮通过（5GCrtt），包括生成/作者验证/安装/重复调用/知识/提取 repair/重定向拒绝/取消/重启不重放。跨源 hash、A→B→A、重启后验证和作者取消的源码/双打包专项各 11 项已通过（2zWcqF/r9KzgD），实现检查点 841a412。完整双打包 cmPIYq 暴露下述 tabs 快照竞态，修复后的完整回归仍在运行。frame 工作流暂无接入。
 
 ## frame 身份方案探针（不是工作流验收）
 
@@ -29,3 +29,18 @@
 首次探针在 ServiceWorker 内使用动态 import，被规范拒绝；改为仅临时副本静态导入。第二次直接 attach 没有进入本项目事件状态，因此找不到上下文；改为复用 ensureCdpAttached 后通过。没有修改生产文件绕过身份检查。这验证选择器到真实 owner/document 的可行性，不证明生成、动作、导航、新鲜度、权限或取消链路已完成。
 
 后续声明按嵌套 owner 选择器逐层固定 origin/path，不保存临时 frameId/documentId。每次调用只解析一次，之后按真实 documentId/uniqueContextId 与 owner 身份复核；相同 URL 替换或歧义失败。主文档及所有祖先须保持，子文档显式导航采用独立身份迁移，不以重新选中 frame 冒充连续动作。frame 仍开放。
+
+
+## 跨源导航事件与 tabs 快照竞态
+
+完整双打包 `webcli-browser-acceptance-cmPIYq` 在 workflow 第 6 次普通调用的首步返回 `PAGE_QUERY_ORIGIN_CHANGED`，当时从目的源返回入口；失败日志 `/tmp/weworker-origins-bundled-full.log`。随后仅在隔离扩展副本中使用 841a412 旧导航代码增加失败诊断，连续调用在第 38 次复现（`webcli-browser-acceptance-Zl8HbX`，`/tmp/weworker-origins-race-proof-fixed.log`）：`navigated:true`、`oldSnapshot:true`，当前 origin 等于初始 origin 而不同于目的 origin。这直接证明 CDP 文档提交已先发生、tabs URL 仍是完整旧快照的时序；不依靠从错误码猜根因。早期 BcTHOC 没有保留实际 error，不能追溯证明该次也是同因。
+
+普通与 hash 导航只等待精确初始 href 在既有预算内更新；等待时不提取数据。完整目的 href、新文档/loader、300ms 稳定结果、hash 关联/刷新、CDP 重定向拒绝和一次派发保持。单测覆盖滞后两次轮询、永久旧快照超时、旧快照期间错误 origin 事件立即拒绝，均零重放。最终完整/连续调用结果见交接末尾。
+
+## frame 基础保存点与已知失败（未接入）
+
+暂停前已有 `webcli/page-workflow-frames.js`、`extension/background/page-workflow-frames.js`、`extension/background/page-frame-context.js`、对应 3 项主机单测和 `webcli/scripts/verify-page-frame-context.mjs`。两端声明规范化字节一致；没有生产导入、生成 schema、capability、权限、workflow 执行或修复接入。扩展的两个文件随目录复制进入构建资源，但没有加载它们的生产入口；主机 helper 不在 npm files 白名单中。不能把这些文件或基础探针当作 B01 frame 支持。
+
+初期 `weworker-frame-identity-0L9shG` 的真实探针验证选定叶节点读取、歧义拒绝、无关 frame 替换保持、所选同 URL frame 替换拒绝；该报告只保存 rows，checks 属性未被数组 JSON 序列化，不能宣称报告包含检查细节。后续仓库探针 `1jewHF` 挂起，由核实 PID/PPID 和独立 profile 后只停止本任务 Chromium，Node 随 finally 退出。加宿主 45 秒截止、失败报告和阶段标记后的 `LufBqx/report.json` 明确 `passed:false`，停在 `resolve after selected replacement`；正常关闭自身浏览器和 loopback 服务。换用 tabs.reload 并未解决该阶段，父文档替换/取消新增断言尚未到达。
+
+resolver 的 30 秒 active 检查尚未约束每个正在等待的 sendCommand/executeScript，不能把它当作可靠总超时。恢复后先定位替换后的上下文解析/释放挂起，并对等待与清理建立有界保证，再接入声明、读取、动作、导航、循环、权限、修复与隔离实机验收。本次依用户要求在跨源阶段收尾后暂停，不继续 frame 集成。
