@@ -687,3 +687,69 @@ it.each([false, true])('requires query capability and independent author values 
   expect((await f.service.execute('validate', { taskId })).ok).toBe(true); await f.service.jobs.get(taskId);
   expect((await f.service.execute('get', { taskId })).data.status).toBe('review_ready');
 });
+
+it.each([false, true])('requires hash capability and independent author values without retaining observation values (workflow=%s)', async workflow => {
+  const capabilities = ['passive_exploration_v1', 'page_sources_v1', 'page_query_v1', 'page_navigation_v1', 'page_workflow_v1', 'strict_output_contract_v1'];
+  const f = setup({ capabilities: () => ({ connected: true, capabilities }) });
+  const taskId = await start(f.service), result = { strategy: 'DOM_STATE', path: ['publicRows'] };
+  const navigate = { mode: 'navigate', resultPathname: '/items', hashNavigation: { template: 'items', queryParameters: [{ name: 'keyword', queryKey: 'q', description: 'Public query' }, { name: 'category', queryKey: 'category', description: 'Public category' }], matchResult: { keyword: 'keyword', category: 'category' }, freshnessPath: 'revision', sameTarget: 'reload' }, result };
+  const source = workflow ? { mode: 'workflow', steps: [
+    { pathname: '/list', query: { mode: 'navigate', resultPathname: '/list', result } },
+    { pathname: '/list', query: navigate },
+  ] } : navigate;
+  const args = { taskId, source, values: { keyword: 'example-unretained-query', category: 'example-unretained-category' }, reason: 'Explicit public query' };
+  expect((await f.service.execute('query', args)).error.code).toBe('CAPABILITY_UNAVAILABLE');
+  expect(f.requestExtension.mock.calls.some(([message]) => message.type === 'exploration_page_query')).toBe(false);
+  capabilities.push('page_navigation_hash_v1');
+  const original = f.requestExtension.getMockImplementation();
+  f.requestExtension.mockImplementation(message => message.type === 'exploration_page_query' ? { ok: true, shape: { type: 'object' } } : original(message));
+  expect((await f.service.execute('query', args)).ok).toBe(true); await f.service.jobs.get(taskId);
+  expect(fs.readFileSync(path.join(f.options.rootDir, `${taskId}.json`), 'utf8')).not.toContain('example-unretained');
+  const evidence = (await f.service.execute('evidence', { taskId })).data;
+  const generated = await f.service.execute('generate', { taskId, plan: { tools: [{ name: 'query_navigation', risk: 'read', strategy: 'UI_SELECTOR', sourcePageId: evidence.pageSources[0].id, readReason: 'Read public query pages' }] } });
+  expect(generated.ok).toBe(true); const tool = generated.data.toolNames[0];
+  const writeCases = async categories => {
+    const before = (await f.service.execute('verification-read', { taskId, tool })).data;
+    expect((await f.service.execute('verification-write', { taskId, tool, expectedHash: before.hash, cases: categories.map((category, i) => ({ id: 'case-' + i, args: { keyword: 'example-' + i, category }, expect: { requiredPaths: ['data'] } })) })).ok).toBe(true);
+  };
+  await writeCases(['books', 'books']);
+  expect((await f.service.execute('validate', { taskId })).error.code).toBe('VERIFICATION_REQUIRED');
+  await writeCases(['books', 'music']);
+  capabilities.pop();
+  expect((await f.service.execute('validate', { taskId })).error.code).toBe('CAPABILITY_UNAVAILABLE');
+  expect(f.runtimeValidator).not.toHaveBeenCalled();
+  capabilities.push('page_navigation_hash_v1');
+  f.runtimeValidator.mockResolvedValue({ passed: true, executionSummary: { attempted: 2, passed: 2, failed: 0, skipped: 0 } });
+  expect((await f.service.execute('validate', { taskId })).ok).toBe(true); await f.service.jobs.get(taskId);
+  expect((await f.service.execute('get', { taskId })).data.status).toBe('review_ready');
+});
+
+
+it('requires control capability before observation and validation with no fallback dispatch', async () => {
+  const capabilities = ['passive_exploration_v1', 'page_sources_v1', 'page_query_v1', 'page_workflow_v1', 'strict_output_contract_v1'];
+  const f = setup({ capabilities: () => ({ connected: true, capabilities }) });
+  const taskId = await start(f.service), result = { strategy: 'DOM_STATE', path: ['publicRows'] };
+  const source = { mode: 'workflow', steps: [
+    { pathname: '/list', query: { mode: 'navigate', resultPathname: '/list', result } },
+    { pathname: '/list', when: { path: 'hasNext', equals: true }, repeat: { maxIterations: 3, until: { path: 'hasNext', equals: false } },
+      query: { mode: 'filter', resultPathname: '/list', trigger: { kind: 'pagination', selector: '#next' }, result } },
+  ] };
+  const args = { taskId, source, reason: 'Explicit public conditional pagination' };
+  expect((await f.service.execute('query', args)).error.code).toBe('CAPABILITY_UNAVAILABLE');
+  expect(f.requestExtension.mock.calls.some(([message]) => message.type === 'exploration_page_query')).toBe(false);
+  capabilities.push('page_workflow_control_v1');
+  const original = f.requestExtension.getMockImplementation();
+  f.requestExtension.mockImplementation(message => message.type === 'exploration_page_query' ? { ok: true, shape: { type: 'object' } } : original(message));
+  expect((await f.service.execute('query', args)).ok).toBe(true); await f.service.jobs.get(taskId);
+  const evidence = (await f.service.execute('evidence', { taskId })).data;
+  const generated = await f.service.execute('generate', { taskId, plan: { tools: [{ name: 'read_pages', risk: 'read', strategy: 'UI_SELECTOR', sourcePageId: evidence.pageSources[0].id, readReason: 'Read public pages' }] } });
+  expect(generated.ok).toBe(true); const tool = generated.data.toolNames[0];
+  const before = (await f.service.execute('verification-read', { taskId, tool })).data;
+  expect((await f.service.execute('verification-write', { taskId, tool, expectedHash: before.hash, cases: [{ id: 'page-case', args: {}, expect: { equals: { 'data.hasNext': false } } }] })).ok).toBe(true);
+  capabilities.pop();
+  expect((await f.service.execute('validate', { taskId })).error.code).toBe('CAPABILITY_UNAVAILABLE');
+  expect(f.runtimeValidator).not.toHaveBeenCalled();
+  capabilities.push('page_workflow_control_v1');
+  expect((await f.service.execute('validate', { taskId })).ok).toBe(true); await f.service.jobs.get(taskId);
+  expect((await f.service.execute('get', { taskId })).data.status).toBe('review_ready');
+});

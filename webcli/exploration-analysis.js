@@ -1,5 +1,6 @@
+import { usesWorkflowControl } from './page-workflow-control.js';
 import { explorationError as fail, textArg } from './exploration-commands.js';
-import { usesNavigationQuery } from './page-navigation-parameters.js';
+import { usesNavigationQuery, usesNavigationHash } from './page-navigation-parameters.js';
 
 /** Inspect structural evidence only. A successful response is not proof of a stable API. */
 export function analyzeApiCandidate(candidate, index) {
@@ -53,7 +54,7 @@ export function analyzeExploration(run, capabilities = []) {
   if (run.mode === 'http') for (const candidate of candidates) if (candidate.eligible) candidate.strategy = run.http.strategy;
   const pages = (run.pageSources || []).map(item => {
     const strategy = item.source.strategy;
-    const requiredCapability = usesNavigationQuery(item.source) ? 'page_navigation_query_v1' : item.source.mode === 'workflow' ? 'page_workflow_v1' : item.source.mode === 'navigate' ? 'page_navigation_v1' : item.source.mode === 'query' ? 'page_query_v1' : strategy === 'INTERCEPT' ? 'intercept_read_v1' : 'page_sources_v1';
+    const requiredCapability = usesWorkflowControl(item.source) ? 'page_workflow_control_v1' : usesNavigationHash(item.source) ? 'page_navigation_hash_v1' : usesNavigationQuery(item.source) ? 'page_navigation_query_v1' : item.source.mode === 'workflow' ? 'page_workflow_v1' : item.source.mode === 'navigate' ? 'page_navigation_v1' : item.source.mode === 'query' ? 'page_query_v1' : strategy === 'INTERCEPT' ? 'intercept_read_v1' : 'page_sources_v1';
     return { id: item.id, strategy, mode: item.source.mode || 'read', contract: strategy === 'INTERCEPT' ? 'internal-unstable' : 'visible-ui',
       route: { origin: item.expectedOrigin, pathname: item.expectedPath }, observedAt: item.observedAt, requiredCapability,
       available: capabilities.includes(requiredCapability), reason: item.reason };

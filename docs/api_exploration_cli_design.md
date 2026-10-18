@@ -61,19 +61,37 @@ Chromium 在响应丢失时会自动重发请求，不能以一次 fetch 声称�
 
 ## 多步只读页面流程：已实现，验收记录见交接末尾
 
-`exploration.query source.mode=workflow` 声明 2–8 个 `{pathname, query}` 步骤。query 复用现有跨文档查询/参数化导航，并新增仅工作流内可用的固定路径 filter；步骤必须按前一步 resultPathname 串联，不支持循环、分支或任意 JS。工作流内的 navigate 可用无参数静态路径作为可重复入口；只有首步是 navigate 时，才允许从其他步骤的目标页显式从头运行。
+`exploration.query source.mode=workflow` 声明 2–8 个 `{pathname, query}` 步骤。query 复用现有跨文档查询/参数化导航，并新增仅工作流内可用的固定路径 filter；步骤必须按前一步 resultPathname 串联；有界分支/循环见下段，不支持任意 JS。工作流内的 navigate 可用无参数静态路径作为可重复入口；只有首步是 navigate 时，才允许从其他步骤的目标页显式从头运行。
 
 filter 只操作已有 search/filter/pagination 读控件，保持同 origin/path/document。参数筛选通过 matchResult 将 result.data 的标量路径与调用参数精确关联，观察 300ms 稳定结果；无参数翻页要求数据变化。同值参数允许已满足关联的结果，作者必须选能证明业务结果的公开字段。所有参数在首步前校验，每个参数至少两组不同值的作者 cases。每次仅派发一次动作，最后一步返回数据；失败带 stepIndex/completedSteps，后续不执行，已完成动作不撤销。每步成功时保留完整 URL/main frame/loader 的内部快照，下一步核对同一文档，不能以同一路由模板接受另一 ID 或同 URL 新文档；快照不进入调用输出或持久证据。
 
 page_workflow_v1 在观察/验证/调用前检查；manifest.pageRoute.workflow 固定动作顺序、选择器、参数、关联条件和路由，总预算最多 30 秒，纳入 page-workflow 权限。结果提取声明不属于动作授权，可在 scoped repair 中修复并重跑历史断言；改动作、参数或顺序须重新生成和审阅。预览与普通调用复用同一后台序列及 manifest 检查，仍只续接一次映射结果。
 
-观察与作者验证分配临时 operationId；cancel 发往绑定 profile，扩展记录取消并在下一动作/读取前检查。验证一次发送一个 workflow case，避免五个长流程共用一次传输时限；取消不会开始下一 case。Bridge 断线使当前工作流失效，重启任务保留 interrupted，不自动续跑。已派发动作可能完成；普通调用暂无独立取消入口。持久化仅存结构与作者明确提交的 cases，观察 values 不保存。仍限同源主 frame 原生读控件，写操作、副作用验证、动态 hash 模板、自定义组件和跨 frame 流程待做。
+观察与作者验证分配临时 operationId；cancel 发往绑定 profile，扩展记录取消并在下一动作/读取前检查。验证一次发送一个 workflow case，避免五个长流程共用一次传输时限；取消不会开始下一 case。Bridge 断线使当前工作流失效，重启任务保留 interrupted，不自动续跑。已派发动作可能完成；普通调用暂无独立取消入口。持久化仅存结构与作者明确提交的 cases，观察 values 不保存。仍限同源主 frame 原生读控件，写操作、副作用验证、自定义组件和跨 origin/frame 流程待做；显式 hash 见下节。
+
+## 有界读取控制（B01，2026-10-18）
+
+workflow 步骤可声明 when（上个已执行结果的公开 path/精确 scalar equals）与 repeat（2–8 次 maxIterations、每轮完成后的 until）。条件/循环步骤只能保持同 pathname，条件不能是首步；静态数据声明无脚本、无动态动作、无隐式重试。参数在所有步骤派发前验证，仍共享 30 秒预算、每轮精确 href/frame/loader 和底层新鲜结果守卫。
+
+repeat.collect 可声明公开数组 path、string/number identityPath、1–1000 maxItems、includePrevious 初始页。输出 collections 保留每步集合和轮数，data 保持末个执行结果；条件跳过时可保留初始页。相同 ID 不同字段、无新增页、未到 until 的轮数耗尽、数量或所有集合总计 1000000 UTF-8 字节上限均失败且不返回部分结果。错误包含 stepIndex/iteration/completedSteps；受控流程另含 skippedSteps/executedActions。普通线性流程输出保持兼容。
+
+共享两端规范化 helper 校验声明，page_workflow_control_v1 在观察、验证与普通调用前检查固定 profile。完整控制字段进入 manifest 权限、知识及修复边界，结果提取修复不修改动作/条件/停止/收集规则。metadataOnly 仅返回形状和计数，不保存分支读取值、观察参数或集合。作者验收覆盖两种分支、逐轮请求、重复调用、上限/冲突/无进展、取消/重启不重放与修复闭环；证据以交接末尾为准。
+
+## 显式 hash 导航（B01，2026-10-18）
+
+`mode=navigate` 可增加 `hashNavigation`；外层 resultPathname/pathParameters/queryParameters 保留原契约。片段单独声明 `template`（例如 `items/:id` 或 `/items/:id`）、`pathParameters`（segmentIndex/name/description）、可选 `queryParameters`（name/queryKey/description）、`matchResult`、`freshnessPath` 和明确的 `sameTarget:"reload"`。每个片段至少一个参数；所有外层和片段参数名称唯一，必须逐个映射到不同的公开业务结果路径（相对于 result.data）。freshnessPath 是独立的公开刷新字段，不得与关联字段相同；必须是非空字符串或有限数字。不要把输入框、URL 回显或无关计数当业务数据刷新证明。
+
+目标 URL 包含完整外层路径、查询串与编码后的片段，不沿用未声明查询串。片段固定段为公开 ASCII 路由，路径值保持前导零/Unicode并逐段编码；片段查询值按 URLSearchParams 编码，字面分隔符不成为其他参数。拒绝凭据/动作键和明显写路由，具体只读业务语义仍须依据实际站点确认。每个参数需要至少两个不同作者值及业务断言；观察值不保存为默认值或 cases。
+
+运行时使用独立 hash 执行器，原 path/query 的新文档守卫不变。不同片段同文档导航前读取 freshnessPath 基线，只派发一次 Page.navigate；随后必须收到精确片段事件、全部业务字段关联匹配、刷新字段变化，且完整结果至少稳定 300ms。没有基线则在派发前拒绝；缺新标记/旧结果/错参数超时失败。首次跨文档进入 hash 页面要求新 loader 和业务关联。目标完整 href 已等于当前页时，按作者明确声明只派发一次 Page.reload(ignoreCache:true)，必须取得新文档及不同于重载前的刷新标记；不切去其他页面、不合成 hashchange、不回放导航。新文档证明本次页面加载，不能保证站点后端没有业务缓存。
+
+完整 href、主 frame/loader 和导航事件版本在读取前后复核，额外导航、重定向、下载、取消、断线和超时均停止且不重放。workflow 复用总预算及步骤间精确页面身份。`page_navigation_hash_v1` 在观察/验证/普通调用前检查固定选定 profile，旧插件不派发也不换 profile。全部片段、关联、刷新及重载策略绑定 manifest 安装权限；scoped repair 只改结果提取并重验历史 cases。源码专项与最终双打包结果见交接末尾；未记录通过前不宣称验收完成。有界循环/分支见上节，跨源/frame 仍开放。
 
 ## 动态查询参数导航（B01 增量）
 
 navigate 可声明 `queryParameters`，每项 name/queryKey/description，1–16 个公开唯一键；与 pathParameters 合并生成必填字符串 Schema、workflow 参数和 pageRoute.navigation 权限。宿主与扩展使用字节一致的参数规范化模块，禁止凭据/动作/重定向键；非空有效 Unicode 字符串至多 512 字符，由 URLSearchParams 逐值编码，保留前导零和字面分隔符。观察 values 不保存，也不作为默认值。
 
-`page_navigation_query_v1` 在观察、作者验证、普通调用前检查所选 profile。每个 query 参数需至少两个不同作者值；workflow 复用逐参数要求。扩展仍一次 Page.navigate、等待新文档、完整 href 相等与稳定数据；查询串被改写即失败，不重放。manifest/权限绑定完整映射，repair 只允许结果提取修复。hash 导航通常不替换文档，需要独立新鲜度方案，仍开放；循环/分支和跨源/frame 不由本增量解决。
+`page_navigation_query_v1` 在观察、作者验证、普通调用前检查所选 profile。每个 query 参数需至少两个不同作者值；workflow 复用逐参数要求。扩展仍一次 Page.navigate、等待新文档、完整 href 相等与稳定数据；查询串被改写即失败，不重放。manifest/权限绑定完整映射，repair 只允许结果提取修复。hash 导航的独立新鲜度与重复重载契约见上节；循环/分支和跨源/frame 不由本增量解决。
 
 ## 参数化页面导航：已实现
 
@@ -83,7 +101,7 @@ navigate 可声明 `queryParameters`，每项 name/queryKey/description，1–16
 
 普通调用从入口或目标模板匹配页中选择唯一页/唯一活动页，缺失/歧义不换页或新开。preview 与普通调用复用同一 manifest 路由检查和续接机制，结果映射只在续接后执行。旧插件缺能力时在派发前拒绝；每命令至少两组不同路径参数的作者 cases，保留失败不安装。知识保存来源；scoped repair 保留既有路由/绑定/权限并重新运行历史断言。
 
-限制：同源主文档单次导航读取；动态 hash 模板、跨源详情和任意路径正则尚未覆盖。动态 query 见上节，多步只读操作复用 workflow；写契约另行审阅验证。取消后丢弃迟到结果，已派发导航可能继续完成。验收覆盖实际公开占位详情、前导零/中文 ID、同 URL 重复调用、错误 ID 重定向和结构漂移修复；详见交接末尾。
+限制：同源主文档单次导航读取；跨源详情和任意路径正则尚未覆盖，显式 hash 见上节。动态 query 见上节，多步只读操作复用 workflow；写契约另行审阅验证。取消后丢弃迟到结果，已派发导航可能继续完成。验收覆盖实际公开占位详情、前导零/中文 ID、同 URL 重复调用、错误 ID 重定向和结构漂移修复；详见交接末尾。
 
 ## 多浏览器 profile：已实现
 

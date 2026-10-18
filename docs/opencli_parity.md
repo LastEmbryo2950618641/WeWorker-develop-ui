@@ -4,7 +4,7 @@
 
 ## 持续执行清单（从 6420583 接续）
 
-当前执行状态：查询导航阶段验证完毕，按用户最新请求暂停，待新对话恢复；整体对齐未完成。代码检查点 53acae7，最终文档检查点以 Git 日志为准。
+当前执行状态：2026-10-18 用户明确恢复，整体目标 active；核对干净分支 codex/api-exploration-cli、HEAD 498ba61（代码 53acae7）。复用 V/R 已验证项，完整 W/B/A/U/E 清单保持；B01 hash 最终专项 9 项、有界循环/分支源码专项 7 项通过；WebCLI 1427 项/扩展 53 项。完整回归发现断线目录刷新误重载，修复后完整双打包复跑中，不提前计通过。
 
 状态含义：已验证仅覆盖列出的契约；部分实现的剩余项保持开放；待审计须核对上游与本项目实现后再定差距；验收欠账不能用其他环境结果替代。阶段检查点不停止整体目标。上游仍以已核查的 1.8.8 发布包为对照，本机 1.8.6；版本更新提示不是未经审计扩大或缩减范围的依据。
 
@@ -20,7 +20,7 @@
 | W02 | 部分实现 | hidden CSRF、click/Enter、整页提交导航、Shadow/frame 写生成契约 |
 | W03 | 部分实现 | 多步/批量写、结果传递、部分成功恢复、多组写用例 |
 | W04 | 部分实现 | 多 ID、Header/响应 URL、任意 UI 网络响应 ID、任意精度/负数 ID |
-| B01 | 部分实现 | 动态 queryParameters 已接通纯查询/路径组合/workflow、旧 profile 拒绝和精确 href/新文档；源码 Chromium 导航专项 8 项、双打包 Chromium 1217 完整 87 项、WebCLI 1416 项及双打包 HTTP 24 项通过（RENsHF/heIeNv），4450 文件隐私检查通过。hash、读取流程循环/分支、跨 origin/frame 编排仍开放 |
+| B01 | 部分实现 | 动态 queryParameters 已接通纯查询/路径组合/workflow、旧 profile 拒绝和精确 href/新文档；源码 Chromium 导航专项 8 项、双打包 Chromium 1217 完整 87 项、WebCLI 1416 项及双打包 HTTP 24 项通过（RENsHF/heIeNv），4450 文件隐私检查通过。hash 已实现独立新鲜度/同目标新文档＋刷新标记变化契约，最终双打包专项 9 项 c4GzcD 通过；when/repeat/until/collect 与冲突/无进展/限额拒绝源码专项 7 项 dZJaoz 通过，完整双打包回归修复后运行中；跨 origin/frame 编排仍开放；已核对真实源码与需要扩展的权限/身份/continuation 边界，见 opencli_workflow_context_audit.md |
 | B02 | 部分实现 | 自定义日期/选项、目录/file chooser/自定义上传 |
 | B03 | 部分实现 | 跨 frame/DataTransfer 拖拽 |
 | B04 | 部分实现 | AX/Shadow/子 frame 截图、任意设备模拟恢复 |

@@ -1,11 +1,11 @@
 # API 自动探索 CLI 改造跟进与交接
 
-> 更新日期：2026-10-18。本阶段已验证，按用户明确请求暂停，整体对齐未完成。代码检查点 53acae7（最终文档检查点见 Git 日志）；WebCLI 1416 项、源码导航专项 8 项、双打包 HTTP 24 项、最终双打包 Chromium 1217 完整 87 项通过，4450 文件隐私检查通过。U04/U05/U06 审计与全部余项见台账和文末；hash 实现尚未开始。新对话恢复后从最新剩余清单继续，不重复已验能力。
+> 更新日期：2026-10-18。用户在本对话明确恢复持续目标，当前 active；498ba61 干净起点与 53acae7 代码检查点已核对。下文暂停为历史结束状态。完整余项以能力台账为准，B01 hash/有界循环与分支已实现，完整回归修复后复跑中，未验证前不计完成。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
 
 ## 新会话从这里接手
 
-- 暂停来自用户当前明确请求，覆盖上文历史“阶段后不停”要求。此轮已完成查询导航最终回归与交接，未启动 hash 新实现。新对话明确恢复目标后继续余项；先核对 Git/工作区和本文末尾，勿重复已验能力。
+- 当前用户已明确恢复目标，阶段通过后继续；此前暂停不是本次停止条件。已按要求核对 Git 并阅读最新台账，B01 hash 进入实现，验证结果后续追加。
 
 - 范围澄清：用户明确不需要 OpenCLI 桌面客户端。只对齐 CLI、浏览器扩展与相关工具能力；WeWorker API 探索 UI/内置聊天/profile 选择界面单列产品集成，不作为 CLI 对齐完成条件。多步 UI 指目标网站操作，CDP/Electron 指 CLI 控制外部目标，不是开发桌面客户端。
 - 继续当前分支 `codex/api-exploration-cli`，本次持续目标起点 `6420583`；检查点 SHA 见 Git 最新提交。先核对工作区/日志，不重建分支或重复实现 profile/HTTP Runner/宿主探索/参数化详情导航/声明式只读 workflow/单请求 HTTP 写验证/声明式 Extension 幂等写。根 AGENTS.md、ROADMAP.md、本文末尾、[开发设计](api_exploration_cli_design.md)、[HTTP 契约](http_adapter_runtime.md)、[写命令契约](api_exploration_write.md) 和 [能力台账](opencli_parity.md) 为接手入口。
@@ -835,3 +835,34 @@ npm run test:exploration:browser --prefix webcli -- \
 - 全部自建服务、隔离 Chromium 与本次 Bridge 随验收正常退出，核对没有残留本次验收进程。工作区只保留跟进文档更新，随后提交。未 push、未 PR、未新建对话/子 Agent；未操作日常 Chrome/用户 Bridge、真实账户、Python 网站探索agent、CI/CD/发布/数据库 schema/.env/密钥，也未删除仓库文件。
 - 恢复时先核对分支 `codex/api-exploration-cli` 的最新日志及工作区，再按 AGENTS → ROADMAP → 本文顶部/末尾 → opencli_parity → design/http/write → exploration Skill 顺序读取。最新台账 W01–04、B01 hash/循环/分支/跨源/frame、B02–04、A01–02、U01/U02 余项、U03 全命令行为、U04/U05 实现、U06 行为与诊断导出、E01–04 验收欠账全部仍开放。代码没有半成品 hash 改动。
 - 建议下一项仍为 B01 hash：已核对上游 Gmail 通过明确 fragment 跳转读取，需在本项目绑定固定主路径、显式片段参数和返回业务字段关联，并核对 loader/完整 URL/300ms 稳定数据。同一片段重复读取的新鲜度需独立方案，不直接放宽 query 的“新文档”守卫、不临时跳去任意页面、不用当前旧数据充当效果。实现、聚焦测试、隔离实机、文档/Skill 后继续台账；该设计方向尚未实现或验收。
+
+
+### 2026-10-18：498ba61 后恢复持续目标，B01 hash（active）
+
+- 已核对当前分支与干净起点，按指定顺序读规范/最新台账/契约/Skill；用户本次明确恢复，历史暂停不再生效。完整 W01–04、B01–04、A01–02、U01–06 和 E01–04 保持，不推送/PR/新聊天/子 Agent。
+- 上游实际读取 1.8.8 `clis/gmail/utils.js:571–609`：明确片段读取存在，重复片段临时切 inbox 的做法不迁入。本项目现有 query 的新文档守卫不放宽；新增独立 hash 执行器与显式 hashNavigation，含片段 path/query、所有内外参数业务关联、独立 freshnessPath 和 sameTarget=reload。不同片段需基线刷新标记改变，同目标只重载准确当前 URL 一次并取新文档；不 detour、不合成 hashchange、不重放。
+- 规范化 helper 两端字节一致，manifest/安装权限绑定完整 hash/关联/刷新/重载，workflow 复用总预算和步骤间身份，旧选定 profile 在观察/验证/普通调用前拒绝。每参数至少两种作者值；来源观察只存结构。修复只能改结果提取，历史 cases 全部重跑。
+- 源码 Chromium 1217 hash 专项 **8 项通过**，报告 `webcli-browser-acceptance-Xjf552/report.json`，日志 `/tmp/weworker-hash-browser-source-final.log`；包含 single、混合 path+外层 query+fragment path/query、workflow、精确重载/新鲜度、错误/陈旧/重定向拒绝、生成→作者验证→安装→普通调用→知识→提取修复，以及取消和真实 Bridge 重启。**57 文件**隐私扫描通过，观察 hash/category 标记未持久化，无真实响应 ID 绑定。
+- 检查取消链路发现单步 hash 未分配 operationId，已补观察与作者预览；单步 hash 按一组 case 分批，取消可停止剩余 case。最后 WebCLI **127 文件/1424 项** `/tmp/weworker-hash-all-final.log`、聚焦 **5 文件/69 项** `/tmp/weworker-hash-focused-cancel.log`，扩展导航/query/workflow **16 项** `/tmp/weworker-hash-extension-final.log` 通过。完整双打包 Chromium 运行中 `webcli-browser-acceptance-SpVEmj`，日志 `/tmp/weworker-hash-browser-bundled-full.log`；尚不提前计通过。
+- CLI/Bridge 构建、公开配置及 **3 项**配置测试、**21 JS/MJS** 语法、探索 Skill quick_validate、npm prepack/pack **628 文件**（新增扩展 helper）通过。源码/build/npm 扩展与 bundled Skill 字节一致。双打包 HTTP 回归运行中，最终结果另补。通用 Skill 既有 version 校验限制不变。
+- 失败记录：首次 dYUT8c 把普通参数错误的旧字符串输出误断言为 ok:false，改验 error 文案与零请求，未改生产返回。OId3hq 为前一脚本快照 5 项通过，未含 mixed/取消/重启，不能替代 Xjf552。初版 profile 测试有对象括号和能力/错误文案配置问题，修正后 69 项通过；单测跨源事件诊断补明确 ORIGIN_CHANGED。根目录 npm/配置脚本路径以及 pack 前导构建日志解析的调用错误已修正，不计验证通过。未削弱新鲜度/文档身份或动作计数断言。
+- 本阶段未改 Python 网站探索agent、CI/CD、发布、数据库 schema、.env、密钥或依赖；无仓库文件删除。所有实机动作在任务拥有的隔离 Chromium/Bridge/临时 loopback 中运行。hash 需要站点可公开读取刷新标记，重载不证明后端无缓存；跨 origin/frame、循环/分支和完整台账均继续开放。
+
+- 追加自审：同片段重复读取除新 loader 外，也要求 freshnessPath 不同于重载前；否则站点从缓存恢复相同旧状态仍可能误认新鲜。已收紧为“新文档＋刷新标记变化”，新增单测和实机冻结标记反例；不放宽其他守卫。SpVEmj/TWa1K8 属于收紧前快照，最终实机另跑，未混称最终代码全通过。
+
+- 下一余项审计已读取 1.8.8 Gmail `queryThreads`（utils.js:479–543）：按 limit 算有界页数，首轮搜索/后续 next 分支、缺 next 或短页结束、重复页零新增明确报错；这是实际页面循环与分支，不把仅解析数组的 for 当浏览器能力。本项目 normalizePageWorkflow 只接收线性 2–8 步、executePageWorkflow 仅顺序执行并返回末步，未提供生成包内数据驱动循环/分支，调用 Agent 自行发多次 CLI 不等价。待 hash 最终验收后继续该 B01 缺口；尚无新循环实现。
+
+### 2026-10-18：hash 完整回归诊断与有界读取控制（active）
+
+- 最后 hash 新文档＋刷新标记变化契约双打包专项 **9 项** c4GzcD 通过（包含 frozen-result 和作者验证取消下一 case 零派发）；双打包 HTTP **24 项** C0k8DN 通过，390 文件/14 私有绑定检查通过。前一全量 1424 项早于循环/分支改动，不混称覆盖当前代码。
+- SpVEmj 完整回归 hash 重启 48≠43，补请求/文档诊断后 I4bcQi 再现 51≠46：五个 owned hash 页面均在断线后、重连前重载，当前 slow-result/restart 也再次请求，是真实重放缺口而非可放宽的计数。refreshAdapterTabBatch 在断线期间拿不到 manifest 时，旧条件把 null 当作非 managed legacy 而 reload；现只对明确非 v2 且无 _hostSnapshot 的 manifest 重载。null/未解析 v2 仍 clear/reinject，绝不借目录不可用授权导航。聚焦 tool-route 33 项、相关扩展全套 53 项通过；完整双打包 XoGPDg 正在复跑。
+- 有界读取控制已实现：when 对上一执行结果的公开标量精确比较，repeat 2–8 次、每轮 until、collect 初始页/新页公开 ID 去重；相同 ID 不同字段、零新增、数量/全部集合 1000000 UTF-8 字节/轮数上限均失败，不返回部分结果。每轮精确文档和全局 30 秒预算，无隐式重试；取消/断线不派发下一轮。完整控制纳入权限/知识/repair，page_workflow_control_v1 在旧选定 profile 观察/验证/普通调用派发前拒绝。
+- 源码 Chromium 1217 控制专项 **7 项** dZJaoz 通过，日志 /tmp/weworker-control-source-final.log：执行/跳过分支、多页/单页集合、逐页精确请求、生成→cases→验证→安装→调用→知识→提取修复，四类失败边界，取消与实际 Bridge 重启零后续动作/重载。28 个产品文件隐私及控制观察标记检查通过。最终双打包控制专项 4FVrEL 运行中；不计完成前结果。
+- 当前 WebCLI **127 文件/1427 项** /tmp/weworker-control-all.log、聚焦 **4 文件/69 项**、扩展 **53 项**通过。CLI/Bridge build、公开配置与 3 项配置测试、28 JS/MJS 语法、探索 Skill quick_validate、npm pack **630 文件**与源码/build/npm 扩展及 Skill 一致性通过。双打包 HTTP **24 项** uL2N25 通过，390 文件/14 私有绑定检查通过。无依赖新增。
+- 新验收首次 hIwt5W 把 favicon 响应计为 document（12≠11）；夹具收紧为仅 /control 计文档，其他 404，完整断言保持。单测首版 manifest guard fixture 缺 version:1 已修；一次 npm 重复 --run 调用无效，修正后通过，不算生产失败或通过证据。
+- Skill 与 design/http/write 边界已同步。源码控制专项与早期完整诊断的顶层测试请求报告可能含公开观察占位串（不在产品 data/user/builtin/日志）；随后脚本在诊断输出中省略这些观察串，产品隐私断言始终未放宽。XoGPDg 早于最后诊断脱敏/知识计数断言更新，但生产代码相同；最终专项覆盖最后脚本。
+- 下一 B01 跨源/frame 正在对照上游 page.goto、frames/evaluateInFrame 和本项目 browser-frames 的真实代码：已有单条 browser frame 能力不能当作生成 workflow 已具备，先审计再设计。所有 W/B/A/U/E 余项保持，整体 active，无 push/PR/新聊天/子 Agent，Python 网站探索agent与受限配置未动。
+
+- 补充：最终双打包控制专项 **7 项** 4FVrEL 已通过，28 文件隐私检查通过。随后给验收脚本增加“作者验证在重复步骤取消，下一轮和下一 case 均零派发”实机断言，最终专项再次运行；生产实现未变。B01 跨源/frame 已完成固定源码摘要核对与差距/实现边界审计，见 opencli_workflow_context_audit.md；该部分尚无半成品实现。
+
+- 追加最终控制专项：Y3nbGm **8 项通过**，日志 /tmp/weworker-control-bundled-cancel-final.log；新增作者预览取消覆盖正在执行的重复步骤和下一条作者 case，均零后续派发。33 产品文件/0 私有绑定隐私检查通过，产品与诊断观察串均未持久化。完整 XoGPDg 已越过此前 hash 重启失败点并通过线性/受控 workflow，后续回归仍在运行。

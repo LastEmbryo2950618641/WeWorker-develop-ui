@@ -25,7 +25,7 @@ export async function executePageQuery({ chrome, ensureCdpAttached, tabId, paylo
   const epoch = connectionEpoch;
   const assertRunning = () => {
     assertPageWorkflowActive(tabId, payload.operationId);
-    if (payload.source?.mode === 'workflow' && epoch !== connectionEpoch) throw fail('PAGE_WORKFLOW_CANCELLED', 'Bridge disconnected; remaining workflow steps were not dispatched.');
+    if ((payload.source?.mode === 'workflow' || payload.source?.hashNavigation) && epoch !== connectionEpoch) throw fail('PAGE_WORKFLOW_CANCELLED', 'Bridge disconnected; remaining workflow steps were not dispatched.');
   };
   try { return await executeSinglePageQuery({ chrome, ensureCdpAttached, tabId, payload, now, sleep, assertRunning }); }
   finally { busy.delete(tabId); }

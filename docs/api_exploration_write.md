@@ -1,6 +1,6 @@
 # HTTP／Extension 写命令与副作用验证
 
-2026-10-18 边界补充：只读页面 navigate 的 `queryParameters` 属于 Extension 页面导航契约（见开发设计），不改变 HTTP 鉴权/请求权限、PAGE_FETCH/UI 写 URL 或 effect.resultReadback 限制，不赋予业务写授权。
+2026-10-18 边界补充：只读页面 navigate 的 `queryParameters` / `hashNavigation` 与 workflow 的有界 `when/repeat/collect` 属于 Extension 页面读取契约（见开发设计），不改变 HTTP 鉴权/请求权限、PAGE_FETCH/UI 写 URL 或 effect.resultReadback 限制，不赋予业务写授权。
 
 ## 共享文件修复与写授权
 

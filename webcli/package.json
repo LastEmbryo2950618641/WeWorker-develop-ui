@@ -21,6 +21,7 @@
     "exploration-query.js",
     "page-navigation-parameters.js",
     "exploration-workflow.js",
+    "page-workflow-control.js",
     "exploration-write.js",
     "exploration-write-result.js",
     "exploration-write-poll.js",

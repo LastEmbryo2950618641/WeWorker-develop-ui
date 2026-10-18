@@ -1,12 +1,13 @@
 import { matchesPagePath, resolvePageDestination } from './page-navigation.js';
+import { normalizeWorkflowControl, workflowConditionMatches, workflowValue, usesWorkflowControl } from './page-workflow-control.js';
 import { navigationParameters } from './page-navigation-parameters.js';
 
 const fail = (code, message) => Object.assign(new Error(message), { code });
 const namesFor = query => query.mode === 'navigate' ? navigationParameters(query).map(binding => binding.name) : query.trigger?.parameter ? [query.trigger.parameter] : [];
 export function pageWorkflowContract(source) {
-  return { steps: source.steps.map(({ pathname, query }) => {
+  return { steps: source.steps.map(({ pathname, query, ...control }) => {
     const { result, ...action } = query;
-    return { pathname, query: action };
+    return { pathname, query: action, ...control };
   }), timeoutMs: source.timeoutMs };
 }
 export function pageRoutePaths(route) {
@@ -25,6 +26,7 @@ export async function executePageWorkflow(options, executeStep) {
   // Validate every parameter before dispatching the first action.
   for (let i = 0; i < source.steps.length; i++) {
     const { pathname, query } = source.steps[i];
+    try { normalizeWorkflowControl(source.steps[i], i); } catch (error) { throw fail('INVALID_PAGE_WORKFLOW', error.message); }
     if (!['navigate', 'query', 'filter'].includes(query?.mode) || !query.result || (i && pathname !== source.steps[i - 1].query.resultPathname)) throw fail('INVALID_PAGE_WORKFLOW', 'Workflow paths and steps must form an ordered chain.');
     const argumentsForStep = Object.fromEntries(namesFor(query).filter(name => Object.hasOwn(values, name)).map(name => [name, values[name]]));
     if (query.mode === 'navigate') resolvePageDestination(expectedOrigin, query, argumentsForStep, true);
@@ -39,29 +41,94 @@ export async function executePageWorkflow(options, executeStep) {
     options.assertRunning();
     if (now() >= deadline) throw fail('PAGE_WORKFLOW_TIMEOUT', 'Workflow deadline reached; remaining steps were not dispatched.');
   };
-  let completedSteps = 0, output, previousPage;
-  for (const step of source.steps) {
-    options.assertRunning();
-    const index = completedSteps;
-    const remaining = deadline - now();
-    if (remaining < 1000) return { ok: false, error: { code: 'PAGE_WORKFLOW_TIMEOUT', message: 'Workflow deadline reached; remaining steps were not dispatched.', stepIndex: index, completedSteps } };
-    const current = new URL((await chrome.tabs.get(tabId)).url);
-    if (previousPage) {
-      const frame = (await chrome.debugger.sendCommand({ tabId }, 'Page.getFrameTree'))?.frameTree?.frame;
-      if (current.href !== previousPage.url || frame?.id !== previousPage.frameId || frame?.loaderId !== previousPage.loaderId) return {
-        ok: false, error: { code: 'PAGE_QUERY_ROUTE_CHANGED', message: 'The previous step document was replaced; remaining actions were not dispatched.', stepIndex: index, completedSteps },
+  let completedSteps = 0, output, previousPage, skippedSteps = 0, executedActions = 0, collectionBytes = 0;
+  const collections = [], controlled = usesWorkflowControl(source);
+  const canonical = value => JSON.stringify(value, (_, item) => item && typeof item === 'object' && !Array.isArray(item)
+    ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b))) : item);
+  const condition = (data, expected) => {
+    try { return workflowConditionMatches(data, expected); }
+    catch (error) { throw fail('PAGE_WORKFLOW_CONDITION', error.message); }
+  };
+  for (const [index, step] of source.steps.entries()) {
+    let iterations = 0;
+    try {
+      assertRunning();
+      const current = new URL((await chrome.tabs.get(tabId)).url);
+      const assertPage = async url => {
+        if (!previousPage) return;
+        const frame = (await chrome.debugger.sendCommand({ tabId }, 'Page.getFrameTree'))?.frameTree?.frame;
+        if (url.href !== previousPage.url || frame?.id !== previousPage.frameId || frame?.loaderId !== previousPage.loaderId) {
+          throw fail('PAGE_QUERY_ROUTE_CHANGED', 'The completed document was replaced; remaining actions were not dispatched.');
+        }
       };
+      await assertPage(current);
+      const startPath = index === 0 && step.query.mode === 'navigate' ? initial.pathname : step.pathname;
+      if (current.origin !== expectedOrigin || !matchesPagePath(current.pathname, startPath)) throw fail('PAGE_QUERY_ROUTE_CHANGED', 'Page changed between workflow steps.');
+      const collected = [], identities = new Map();
+      const collect = result => {
+        const spec = step.repeat?.collect;
+        if (!spec) return { rows: 0, added: 0 };
+        let rows;
+        try { rows = workflowValue(result?.data, spec.path); } catch (error) { throw fail('PAGE_WORKFLOW_COLLECTION', error.message); }
+        if (!Array.isArray(rows)) throw fail('PAGE_WORKFLOW_COLLECTION', 'The collection result must be an array.');
+        let added = 0;
+        for (const row of rows) {
+          let id;
+          try { id = workflowValue(row, spec.identityPath); } catch (error) { throw fail('PAGE_WORKFLOW_COLLECTION', error.message); }
+          if (!(typeof id === 'string' && id.length > 0 || typeof id === 'number' && Number.isFinite(id))) throw fail('PAGE_WORKFLOW_COLLECTION', 'Every collected row needs a public scalar identity.');
+          const key = JSON.stringify([typeof id, id]), serialized = canonical(row);
+          if (identities.has(key)) {
+            if (identities.get(key) !== serialized) throw fail('PAGE_WORKFLOW_IDENTITY_CONFLICT', 'A repeated identity returned different fields; partial rows were not returned.');
+            continue;
+          }
+          if (collected.length >= spec.maxItems) throw fail('PAGE_WORKFLOW_COLLECTION_LIMIT', 'Collection limit reached; partial rows were not returned.');
+          collectionBytes += new TextEncoder().encode(serialized).byteLength;
+          if (collectionBytes > 1000000) throw fail('PAGE_WORKFLOW_COLLECTION_LIMIT', 'Workflow collections exceed one million bytes; partial rows were not returned.');
+          identities.set(key, serialized); collected.push(row); added++;
+        }
+        return { rows: rows.length, added };
+      };
+      if (step.repeat?.collect?.includePrevious) collect(output);
+      const shouldRun = !step.when || condition(output?.data, step.when);
+      if (!shouldRun) skippedSteps++;
+      let finished = !shouldRun;
+      for (; shouldRun && iterations < (step.repeat?.maxIterations || 1);) {
+        assertRunning();
+        const currentUrl = new URL((await chrome.tabs.get(tabId)).url);
+        await assertPage(currentUrl);
+        const budget = deadline - now();
+        if (budget < 1000) throw fail('PAGE_WORKFLOW_TIMEOUT', 'Workflow deadline reached before the next action.');
+        const query = { ...step.query, timeoutMs: Math.min(step.query.timeoutMs, budget) };
+        output = await executeStep({ ...options, assertRunning, payload: { source: query, values: Object.fromEntries(namesFor(query).map(name => [name, values[name]])),
+          expectedOrigin, expectedPath: currentUrl.pathname, metadataOnly: !controlled && payload.metadataOnly && index === source.steps.length - 1 }, allowStaticNavigation: true, captureWorkflowPage: true });
+        executedActions++; iterations++;
+        if (!output?.ok) throw fail(output?.error?.code || 'PAGE_QUERY_FAILED', output?.error?.message || 'Later steps were not dispatched.');
+        assertRunning();
+        previousPage = output.internalWorkflowPage;
+        if (!previousPage?.frameId || !previousPage.loaderId) throw fail('PAGE_QUERY_ROUTE_CHANGED', 'Workflow step did not retain its completed document identity.');
+        const progress = collect(output);
+        const done = !step.repeat || condition(output.data, step.repeat.until);
+        if (step.repeat?.collect && progress.added === 0 && (progress.rows > 0 || !done)) throw fail('PAGE_WORKFLOW_NO_PROGRESS', 'The repeated page added no new identities; partial results were not returned.');
+        if (done) { finished = true; break; }
+      }
+      if (!finished) throw fail('PAGE_WORKFLOW_ITERATION_LIMIT', 'The declared stop condition was not reached; no further action or partial result was returned.');
+      if (step.repeat?.collect) collections.push({ stepIndex: index, iterations, path: step.repeat.collect.path, items: collected });
+      completedSteps++;
+    } catch (error) {
+      return { ok: false, error: { code: error.code || 'PAGE_WORKFLOW_FAILED', message: error.code ? error.message : 'Unable to complete the declared workflow.',
+        stepIndex: index, iteration: iterations, completedSteps, ...(controlled ? { skippedSteps, executedActions } : {}) } };
     }
-    const startPath = index === 0 && step.query.mode === 'navigate' ? initial.pathname : step.pathname;
-    if (current.origin !== expectedOrigin || !matchesPagePath(current.pathname, startPath)) return { ok: false, error: { code: 'PAGE_QUERY_ROUTE_CHANGED', message: 'Page changed between workflow steps.', stepIndex: index, completedSteps } };
-    const query = { ...step.query, timeoutMs: Math.min(step.query.timeoutMs, remaining) };
-    output = await executeStep({ ...options, assertRunning, payload: { source: query, values: Object.fromEntries(namesFor(query).map(name => [name, values[name]])),
-      expectedOrigin, expectedPath: current.pathname, metadataOnly: payload.metadataOnly && index === source.steps.length - 1 }, allowStaticNavigation: true, captureWorkflowPage: true });
-    if (!output?.ok) return { ok: false, error: { ...output?.error, stepIndex: index, completedSteps, message: `Workflow step ${index + 1} failed after ${completedSteps} completed steps. ${output?.error?.message || 'Later steps were not dispatched.'}` } };
-    completedSteps++;
-    previousPage = output.internalWorkflowPage;
-    if (!previousPage?.frameId || !previousPage.loaderId) throw fail('PAGE_QUERY_ROUTE_CHANGED', 'Workflow step did not retain its completed document identity.');
   }
   const { internalWorkflowPage, ...result } = output;
-  return { ...result, workflow: { completedSteps } };
+  if (controlled && payload.metadataOnly) {
+    const shape = (value, depth = 0) => {
+      const type = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value === 'number' && Number.isInteger(value) ? 'integer' : typeof value;
+      if (depth >= 8) return { type };
+      if (type === 'array') return { type, length: value.length, items: value.length ? shape(value[0], depth + 1) : { type: 'unknown' } };
+      if (type === 'object') return { type, properties: Object.fromEntries(Object.entries(value).filter(([key]) => /^[a-zA-Z_$][a-zA-Z0-9_$-]{0,99}$/.test(key)).map(([key, child]) => [key, shape(child, depth + 1)])) };
+      return { type };
+    };
+    return { ok: true, shape: shape(result.data), workflow: { completedSteps, skippedSteps, executedActions, collectedCounts: collections.map(item => item.items.length) } };
+  }
+  return { ...result, workflow: { completedSteps, ...(controlled ? { skippedSteps, executedActions, collections } : {}) } };
 }

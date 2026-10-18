@@ -79,7 +79,8 @@ export function buildPageTool(site, tool, observation) {
     pageRoute: { origin: observation.expectedOrigin, pathname: observation.expectedPath,
       ...(workflow ? { workflow: pageWorkflowContract(observation.source) }
         : navigation ? { navigation: { pathname: observation.source.resultPathname, pathParameters: observation.source.pathParameters,
-          ...(observation.source.queryParameters ? { queryParameters: observation.source.queryParameters } : {}) } }
+          ...(observation.source.queryParameters ? { queryParameters: observation.source.queryParameters } : {}),
+          ...(observation.source.hashNavigation ? { hashNavigation: observation.source.hashNavigation } : {}) } }
         : query && observation.source.resultPathname !== observation.expectedPath ? { additionalPaths: [observation.source.resultPathname] } : {}) },
     ...(query ? { pageWorkflow: true } : {}),
     pageStrategy: observation.source.strategy,

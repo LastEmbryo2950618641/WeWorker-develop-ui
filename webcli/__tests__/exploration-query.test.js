@@ -82,3 +82,73 @@ it('validates and permission-binds query navigation manifests and refuses ambigu
     expect(() => validateV2Manifest(bad)).toThrow();
   }
 });
+
+const hashInput = { mode: 'navigate', resultPathname: '/app', result: { strategy: 'DOM_STATE', path: ['publicResult'] },
+  hashNavigation: { template: 'items/:id', pathParameters: [{ segmentIndex: 1, name: 'itemId', description: 'Public item ID' }],
+    matchResult: { 'item.id': 'itemId' }, freshnessPath: 'revision', sameTarget: 'reload' } };
+it('normalizes hash route/correlation/freshness into generated permissions and exact values', async () => {
+  const { validateV2Manifest } = await import('../adapter-package-validation.js');
+  const { adapterPermissions } = await import('../adapter-catalog.js');
+  const { resolvePageDestination, assertPageQueryRoute } = await import('../../extension/background/page-navigation.js');
+  const source = normalizePageQuery(hashInput);
+  for (const itemId of ['007', '示例', 'x?#&']) {
+    expect(pageQueryValues(source, { itemId })).toEqual({ itemId });
+    expect(resolvePageDestination('https://example.com', source, { itemId }).hash).toBe('#items/' + encodeURIComponent(itemId));
+  }
+  const generated = buildPageTool('example', { name: 'hash' }, pageObservation({ source, url: 'https://example.com/entry', shape: {}, reason: 'Public hash result' }));
+  const command = { id: 'hash', description: 'Public hash', runtime: 'extension', module: 'extension/commands/hash.js', schema: generated.toolDefinition.parameters, safety: 'read', pageWorkflow: true, pageStrategy: 'UI_SELECTOR', pageRoute: generated.toolDefinition.pageRoute };
+  const manifest = { schema_version: 2, name: 'example', version: '1.0.0', description: 'Public example', match: ['example.com'], commands: [command] };
+  expect(() => validateV2Manifest(manifest)).not.toThrow();
+  expect(generated.toolDefinition.parameters.required).toEqual(['itemId']);
+  expect(adapterPermissions(manifest).join(' ')).toContain('freshnessPath');
+  const payload = { version: 1, source, expectedOrigin: 'https://example.com', expectedPath: '/entry', values: { itemId: '007' } };
+  expect(assertPageQueryRoute(payload, command)).toBe('https://example.com/app#items/007');
+  const changed = structuredClone(payload); changed.source.hashNavigation.freshnessPath = 'other';
+  expect(() => assertPageQueryRoute(changed, command)).toThrow();
+  manifest.commands[0].pageRoute.navigation.hashNavigation.matchResult = {};
+  expect(() => validateV2Manifest(manifest)).toThrow();
+});
+it('rejects unsafe hash templates, missing correlation/freshness and invalid values before dispatch', () => {
+  for (const extra of [{ sameTarget: 'read-current' }, { freshnessPath: 'token' }, { matchResult: {} }, { matchResult: { 'item.id': 'other' } },
+    { template: 'delete/:id' }, { template: '//example.com/:id' }, { template: 'items/:other' }, { template: 'items/%2e/:id' }, { template: 'items/:id?q=x' },
+    { pathParameters: [] }, { pathParameters: [{ segmentIndex: 1, name: 'token', description: 'Bad' }] }]) {
+    expect(() => normalizePageQuery({ ...hashInput, hashNavigation: { ...hashInput.hashNavigation, ...extra } })).toThrow();
+  }
+  const source = normalizePageQuery(hashInput);
+  for (const itemId of [7, '', '.', '..', '%2f', 'a/b', '\u0000', '\ud800']) expect(() => pageQueryValues(source, { itemId })).toThrow();
+});
+it('supports independently correlated fragment query, URL query and path bindings in a workflow', async () => {
+  const { pageWorkflowContract, validatePageWorkflowContract, workflowParameters } = await import('../exploration-workflow.js');
+  const { resolvePageDestination } = await import('../../extension/background/page-navigation.js');
+  const query = { ...hashInput, resultPathname: '/groups/:id', pathParameters: [{ segmentIndex: 1, name: 'groupId', description: 'Public group' }],
+    queryParameters: [{ name: 'locale', queryKey: 'lang', description: 'Public locale' }], hashNavigation: { ...hashInput.hashNavigation,
+      queryParameters: [{ name: 'category', queryKey: 'category', description: 'Public category' }],
+      matchResult: { group: 'groupId', locale: 'locale', 'item.id': 'itemId', category: 'category' } } };
+  const source = normalizePageQuery({ mode: 'workflow', steps: [{ pathname: '/entry', query: { mode: 'navigate', resultPathname: '/entry', result: hashInput.result } }, { pathname: '/entry', query }] });
+  expect(validatePageWorkflowContract(pageWorkflowContract(source))).toEqual(source);
+  expect(workflowParameters(source).map(item => item.name)).toEqual(['groupId', 'locale', 'itemId', 'category']);
+  const values = { groupId: '007', locale: 'zh', itemId: '示例', category: 'a&+?#%' };
+  expect(pageQueryValues(source, values)).toEqual(values);
+  const url = resolvePageDestination('https://example.com', source.steps[1].query, values);
+  expect(url.pathname).toBe('/groups/007'); expect(url.search).toBe('?lang=zh');
+  expect(new URLSearchParams(url.hash.split('?')[1]).get('category')).toBe(values.category);
+});
+
+it('normalizes bounded workflow controls, binds permission changes and shares the exact validation code', async () => {
+  const { normalizePageWorkflow, pageWorkflowContract, validatePageWorkflowContract } = await import('../exploration-workflow.js');
+  const { readFileSync } = await import('node:fs');
+  expect(readFileSync(new URL('../page-workflow-control.js', import.meta.url), 'utf8')).toBe(readFileSync(new URL('../../extension/background/page-workflow-control.js', import.meta.url), 'utf8'));
+  const query = { mode: 'filter', resultPathname: '/items', result: { strategy: 'DOM_STATE', path: ['publicResults'] }, trigger: { kind: 'pagination', selector: '#next' } };
+  const raw = { mode: 'workflow', steps: [{ pathname: '/items', query }, { pathname: '/items', query, when: { path: 'hasNext', equals: true }, repeat: { maxIterations: 3, until: { path: 'hasNext', equals: false }, collect: { path: 'items', identityPath: 'id', maxItems: 100, includePrevious: true } } }] };
+  const source = normalizePageWorkflow(raw), contract = pageWorkflowContract(source);
+  expect(pageWorkflowContract(validatePageWorkflowContract(contract))).toEqual(contract);
+  const { adapterPermissions } = await import('../adapter-catalog.js');
+  const manifest = { commands: [{ runtime: 'extension', pageRoute: { origin: 'https://example.com', pathname: '/items', workflow: contract } }] };
+  const permissions = adapterPermissions(manifest);
+  const changed = structuredClone(manifest); changed.commands[0].pageRoute.workflow.steps[1].repeat.maxIterations = 4;
+  expect(adapterPermissions(changed)).not.toEqual(permissions);
+  for (const mutate of [x => x.steps[0].when = { path: 'hasNext', equals: true }, x => x.steps[1].when.path = 'auth.secret', x => x.steps[1].repeat.maxIterations = 99,
+    x => x.steps[1].repeat.collect.maxItems = 0, x => x.steps[1].repeat.until.equals = {}, x => x.steps[1].repeat.code = 'example', x => x.steps[1].pathname = '/other']) {
+    const bad = structuredClone(raw); mutate(bad); expect(() => normalizePageWorkflow(bad)).toThrow();
+  }
+});

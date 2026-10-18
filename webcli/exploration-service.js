@@ -1,5 +1,6 @@
+import { usesWorkflowControl } from './page-workflow-control.js';
 import { normalizePageQuery, pageQueryValues } from './exploration-query.js';
-import { navigationParameters, usesNavigationQuery } from './page-navigation-parameters.js';
+import { navigationParameters, usesNavigationQuery, usesNavigationHash } from './page-navigation-parameters.js';
 import { workflowParameters } from './exploration-workflow.js';
 import { analyzeApiCandidate, analyzeExploration, normalizeStrategyNote } from './exploration-analysis.js';
 import { explorationDraftHash, archiveExplorationDraft, explorationRevisionView, readExplorationRevision } from './exploration-revisions.js';
@@ -298,13 +299,15 @@ export class ExplorationService {
       if (query && args.source?.mode === 'workflow' && !this.capabilities().capabilities.includes('page_workflow_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension to execute ordered page workflows.');
       if (intercept && !this.capabilities().capabilities.includes('intercept_read_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension to observe intercepted page queries.');
       const source = query ? normalizePageQuery(args.source) : intercept ? normalizeInterceptSource(args.source, run.candidates) : normalizePageSource(args.source), reason = textArg(args.reason, 'reason');
+      if (query && usesWorkflowControl(source) && !this.capabilities().capabilities.includes('page_workflow_control_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before conditional or repeated page workflows.');
+      if (query && usesNavigationHash(source) && !this.capabilities().capabilities.includes('page_navigation_hash_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before hash navigation.');
       if (query && usesNavigationQuery(source) && !this.capabilities().capabilities.includes('page_navigation_query_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before navigating public URL query parameters.');
       const values = query ? pageQueryValues(source, args.values) : intercept ? interceptValues(source, args.values) : undefined;
       return this.launch(run, 'collecting', async signal => {
         const tab = await this.checkTab(run);
         if (signal.aborted) return;
         const page = new URL(tab.url);
-        const operationId = source.mode === 'workflow' ? randomUUID() : undefined;
+        const operationId = source.mode === 'workflow' || usesNavigationHash(source) ? randomUUID() : undefined;
         const cancel = () => { this.request({ type: 'exploration_cancel_workflow', tabId: run.tabId, operationId }, 5000).catch(() => {}); };
         if (operationId) signal.addEventListener('abort', cancel, { once: true });
         let result;
@@ -608,11 +611,14 @@ export class ExplorationService {
         || new Set(pathValues.map(values => JSON.stringify(values))).size < 2) {
         throw fail('VERIFICATION_REQUIRED', 'Dynamic paths require at least two authored cases with distinct path argument combinations.');
       }
+      if (source?.hashNavigation && navigationParameters(source).some(binding => new Set(cases.map(item => item.args[binding.name])).size < 2)) throw fail('VERIFICATION_REQUIRED', 'Each hash navigation parameter needs two distinct authored values.');
       if (source?.queryParameters?.some(binding => new Set(cases.map(item => item.args[binding.name])).size < 2)) throw fail('VERIFICATION_REQUIRED', 'Each navigation query parameter needs two distinct authored values.');
     }
     if ((run.pageSources || []).some(item => ['query', 'navigate', 'workflow'].includes(item.source.mode)) && !this.capabilities().capabilities.includes('page_query_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating navigation-aware page queries.');
     if ((run.pageSources || []).some(item => item.source.mode === 'workflow') && !this.capabilities().capabilities.includes('page_workflow_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating ordered page workflows.');
     if ((run.pageSources || []).some(item => item.source.mode === 'navigate') && !this.capabilities().capabilities.includes('page_navigation_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating parameterized page routes.');
+    if ((run.pageSources || []).some(item => usesWorkflowControl(item.source)) && !this.capabilities().capabilities.includes('page_workflow_control_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating conditional or repeated page workflows.');
+    if ((run.pageSources || []).some(item => usesNavigationHash(item.source)) && !this.capabilities().capabilities.includes('page_navigation_hash_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating hash navigation.');
     if ((run.pageSources || []).some(item => usesNavigationQuery(item.source)) && !this.capabilities().capabilities.includes('page_navigation_query_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating public URL query navigation.');
     const pageTools = (run.plan?.tools || []).filter(tool => tool.risk !== 'write' && (tool.sourcePageId || isHttpStrategy(tool.strategy))).map(tool => `${run.siteKey}.${tool.name.replace(/_/g, '-')}`);
     for (const command of readPackageDirectory(run.draft.adapterDir).commands.filter(command => run.draft.toolNames.includes(command.name))) {

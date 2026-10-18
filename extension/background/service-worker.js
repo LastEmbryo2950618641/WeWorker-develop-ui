@@ -67,7 +67,9 @@ const EXTENSION_CAPABILITIES = [
   'page_query_v1',
   'page_navigation_v1',
   'page_navigation_query_v1',
+  'page_navigation_hash_v1',
   'page_workflow_v1',
+  'page_workflow_control_v1',
   'page_write_v1',
   'ui_write_v1',
   'ui_write_result_v1',
@@ -8127,7 +8129,12 @@ async function refreshAdapterTabBatch(adapterIds) {
       // when a command selects a newer digest. Refresh that same way; a page
       // reload would interrupt independent effect reads and erase user inputs.
       // Legacy scripts still require a new realm for top-level declarations.
-      if (!tab.matchingIds.every(id => manifests[ids.indexOf(id)]?._hostSnapshot)) {
+      // A missing manifest can mean catalog loss/removal, never proof of a
+      // legacy script. Reload only positively identified legacy packages.
+      if (tab.matchingIds.some(id => {
+        const manifest = manifests[ids.indexOf(id)];
+        return manifest && manifest.schema_version !== 2 && !manifest._hostSnapshot;
+      })) {
         await chrome.tabs.reload(tab.id);
         await waitForTabLoad(tab.id, 15000);
       }

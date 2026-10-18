@@ -19,6 +19,8 @@ import { verifyBrowserUploads } from './browser-upload-acceptance.mjs';
 import { verifyBrowserProfiles } from './browser-profile-acceptance.mjs';
 import { verifyHostHttp } from './http-acceptance.mjs';
 import { verifyPageNavigation } from './page-navigation-acceptance.mjs';
+import { verifyWorkflowControl } from './workflow-control-acceptance.mjs';
+import { verifyHashNavigation } from './hash-navigation-acceptance.mjs';
 import { verifyQueryNavigation } from './query-navigation-acceptance.mjs';
 import { verifyPageWorkflow } from './page-workflow-acceptance.mjs';
 import { verifyUiWrites } from './ui-write-acceptance.mjs';
@@ -283,6 +285,16 @@ try {
       args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] }),
   });
   if (process.argv.includes('--http-only')) { await hostHttp(); return; }
+  const hashNavigation = () => verifyHashNavigation({ cli, record, passed,
+    stopBridge: async () => { const closed = new Promise(resolve => bridge.once('exit', resolve)); bridge.kill('SIGTERM'); await closed; },
+    startBridge: async () => { await startBridge(); await connected(); },
+  });
+  const workflowControl = () => verifyWorkflowControl({ cli, record, passed,
+    stopBridge: async () => { const closed = new Promise(resolve => bridge.once('exit', resolve)); bridge.kill('SIGTERM'); await closed; },
+    startBridge: async () => { await startBridge(); await connected(); },
+  });
+  if (process.argv.includes('--control-only')) { await workflowControl(); return; }
+  if (process.argv.includes('--hash-only')) { await hashNavigation(); return; }
   if (process.argv.includes('--navigation-only')) { await verifyPageNavigation({ cli, record, passed }); await verifyQueryNavigation({ cli, record, passed }); return; }
   const pageWorkflow = () => verifyPageWorkflow({ cli, record, passed,
     stopBridge: async () => { const closed = new Promise(resolve => bridge.once('exit', resolve)); bridge.kill('SIGTERM'); await closed; },
@@ -944,7 +956,9 @@ try {
   passed('full-document search survives navigation in observation, two strict preview cases, installation and repeated ordinary calls on the result route');
   await verifyPageNavigation({ cli, record, passed });
   await verifyQueryNavigation({ cli, record, passed });
+  await hashNavigation();
   await pageWorkflow();
+  await workflowControl();
 
   const fallbackTab = (await cli('browser.open', { session: 'fallback', url: origin + '/fallback-only' })).data.tabId;
   const fallbackTask = (await cli('exploration.start', { tabId: fallbackTab, goal: 'Read public items despite an unstable API', requestId: 'example-strategy-fallback' })).data.taskId;
@@ -1004,10 +1018,13 @@ try {
   const restoredKnowledge = (await cli('exploration.knowledge-read', { site: review.name })).data;
   assert.equal(restoredKnowledge.knowledge.commands[verificationTool].cases.length, 6);
   assert.equal(restoredKnowledge.stale, false);
-  assert.equal(restoredKnowledge.knowledge.pages.length, 13);
+  assert.equal(restoredKnowledge.knowledge.pages.length, 17);
+  assert.equal(restoredKnowledge.knowledge.pages.filter(page => page.source.mode === 'navigate' && page.source.hashNavigation).length, 2);
+  assert.equal(restoredKnowledge.knowledge.pages.filter(page => page.source.mode === 'workflow' && page.source.steps.some(step => step.query.hashNavigation)).length, 1);
   assert.equal(restoredKnowledge.knowledge.pages.filter(page => page.source.mode === 'navigate' && page.source.queryParameters?.length === 2).length, 2);
   assert.equal(restoredKnowledge.knowledge.pages.filter(page => page.source.mode === 'workflow' && page.source.steps.some(step => step.query.queryParameters?.length === 2)).length, 1);
   assert.ok(restoredKnowledge.knowledge.pages.some(page => page.source.mode === 'navigate'));
+  assert.equal(restoredKnowledge.knowledge.pages.filter(page => page.source.mode === 'workflow' && page.source.steps.some(step => step.repeat)).length, 1);
   assert.ok(restoredKnowledge.knowledge.pages.some(page => page.source.mode === 'workflow'));
   const restoredAttempt = (await cli('exploration.revision-read', { taskId: fallbackTask, revision: 1 })).data;
   assert.equal(restoredAttempt.runtimeValidation.passed, false);

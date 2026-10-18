@@ -126,11 +126,11 @@ export function createPreviewRuntimeValidator({ requestExtension, restrictToExpe
       // Extension previews bound each batch to five calls. Every planned case
       // must be sent, including plans larger than the historical two-tool limit.
       const executions = [];
-      const workflow = previewBundle.manifest.commands?.some(command => command.pageRoute?.workflow);
-      const batchSize = workflow ? 1 : 5;
+      const cancellableQuery = previewBundle.manifest.commands?.some(command => command.pageRoute?.workflow || command.pageRoute?.navigation?.hashNavigation);
+      const batchSize = cancellableQuery ? 1 : 5;
       for (let offset = 0; offset < Math.max(testCases.length, 1); offset += batchSize) {
         if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
-        const operationId = workflow ? randomUUID() : undefined;
+        const operationId = cancellableQuery ? randomUUID() : undefined;
         const cancel = () => { requestExtension({ type: 'exploration_cancel_workflow', tabId: run.snapshot.input?.tabId, operationId }, 5000).catch(() => {}); };
         if (operationId) signal?.addEventListener('abort', cancel, { once: true });
         try { executions.push(await requestExtension({

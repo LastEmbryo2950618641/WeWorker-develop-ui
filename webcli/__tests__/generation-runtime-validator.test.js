@@ -104,9 +104,9 @@ describe('preview runtime validator', () => {
   });
 });
 
-it.each([false, true])('executes every case and accumulates later failures, workflow=%s', async workflow => {
+it.each([false, 'workflow', 'hash'])('executes every case and accumulates later failures, workflow=%s', async workflow => {
   const dir = makeTmpDir('example-batched-preview-');
-  fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ id: 'example.com', match: ['example.com'], support_files: [], ...(workflow ? { commands: [{ pageRoute: { workflow: {} } }] } : {}) }));
+  fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({ id: 'example.com', match: ['example.com'], support_files: [], ...(workflow ? { commands: [{ pageRoute: workflow === 'hash' ? { navigation: { hashNavigation: {} } } : { workflow: {} } }] } : {}) }));
   fs.writeFileSync(path.join(dir, 'index.js'), 'window.__webmcpRegister({tools: []});');
   const toolNames = Array.from({ length: 7 }, (_, i) => `example.com.query_${i}`);
   const registration = { passed: true, tools: toolNames.map(name => ({ name, parameters: { type: 'object', properties: {} } })) };

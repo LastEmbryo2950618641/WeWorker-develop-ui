@@ -271,7 +271,7 @@ test('batch refresh reserves later tab queues before waiting on the first tab', 
   const worker = loadServiceWorker({ tabs: [7, 8].map(id => ({ id, url: 'https://example.com/', status: 'complete' })) });
   const runtime = createHostAdapterRuntime({}), order = [];
   worker.context.getHostAdapterRuntime = () => runtime;
-  worker.context.loadAdapterManifestAnywhere = async () => null;
+  worker.context.loadAdapterManifestAnywhere = async () => ({ id: 'example.com', match: ['example.com'] });
   worker.context.sendTabMessage = async () => ({});
   worker.context.waitForTabLoad = async () => {};
   worker.context.injectAdapters = async () => {};
@@ -348,6 +348,21 @@ test('managed refresh preserves documents, skips current snapshots and reinjects
   assert.equal((await worker.context.refreshAdapterTabs('example')).refreshedTabs, 1);
   assert.deepEqual(reloads, []);
   assert.deepEqual(injections, [7, 8]);
+});
+
+test('missing or unresolved v2 catalog manifests never authorize document reload', async () => {
+  for (const manifest of [null, { name: 'example.com', schema_version: 2, match: ['example.com'] }]) {
+    const worker = loadServiceWorker({ tabs: [{ id: 7, url: 'https://example.com/', status: 'complete' }] });
+    worker.context.loadAdapterManifestAnywhere = async () => manifest;
+    worker.context.chrome.tabs.get = async () => ({ id: 7, url: 'https://example.com/', status: 'complete' });
+    const effects = [];
+    worker.context.chrome.tabs.reload = async () => effects.push('reload');
+    worker.context.sendTabMessage = async () => effects.push('clear');
+    worker.context.injectAdapters = async () => effects.push('inject');
+    worker.context.waitForDomainTools = async () => null;
+    assert.equal((await worker.context.refreshAdapterTabs('example.com')).refreshedTabs, 1);
+    assert.deepEqual(effects, ['clear', 'inject']);
+  }
 });
 
 test('same catalog fingerprint does not suppress a distinct package notification', async () => {

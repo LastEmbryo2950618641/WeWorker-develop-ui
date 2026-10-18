@@ -1,14 +1,15 @@
 import { explorationError as fail } from './exploration-commands.js';
 import { normalizePageQuery, pageQueryValues } from './exploration-query.js';
+import { normalizeWorkflowControl } from './page-workflow-control.js';
 import { navigationParameters } from './page-navigation-parameters.js';
 
 const invalid = message => { throw fail('INVALID_PAGE_WORKFLOW', message); };
 // Kept data-only to match the extension's manifest guard; result extraction may
 // be repaired independently, but actions, arguments and routes stay fixed.
 export function pageWorkflowContract(source) {
-  return { steps: source.steps.map(({ pathname, query }) => {
+  return { steps: source.steps.map(({ pathname, query, ...control }) => {
     const { result, ...action } = query;
-    return { pathname, query: action };
+    return { pathname, query: action, ...control };
   }), timeoutMs: source.timeoutMs };
 }
 export function validatePageWorkflowContract(contract) {
@@ -41,7 +42,7 @@ export function normalizePageWorkflow(input) {
   const timeoutMs = input.timeoutMs ?? 30000;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 30000) invalid('Workflow timeoutMs must be 1000–30000 for the entire sequence.');
   const steps = input.steps.map((step, index) => {
-    if (!step || typeof step !== 'object' || Array.isArray(step) || Object.keys(step).some(key => !['pathname', 'query'].includes(key))) invalid('Each step declares its starting pathname and query.');
+    if (!step || typeof step !== 'object' || Array.isArray(step) || Object.keys(step).some(key => !['pathname', 'query', 'when', 'repeat'].includes(key))) invalid('Each step declares its starting pathname and query.');
     let url;
     try { url = new URL(step.pathname, 'https://example.com'); } catch {}
     if (typeof step.pathname !== 'string' || !/^\/(?!\/)/.test(step.pathname) || !url || url.origin !== 'https://example.com'
@@ -50,7 +51,8 @@ export function normalizePageWorkflow(input) {
     const query = normalizePageQuery(step.query, { allowStaticNavigation: true });
     if (query.mode === 'filter' && query.resultPathname !== step.pathname) invalid('A filter must stay on its declared starting pathname.');
     if (index === 0 && step.pathname.includes(':id')) invalid('Begin the workflow on an exact entry pathname.');
-    return { pathname: step.pathname, query };
+    let control; try { control = normalizeWorkflowControl({ ...step, query }, index); } catch (error) { invalid(error.message); }
+    return { pathname: step.pathname, query, ...control };
   });
   for (let i = 1; i < steps.length; i++) if (steps[i].pathname !== steps[i - 1].query.resultPathname) invalid('Each step must start on the preceding destination path.');
   const result = steps.at(-1).query.result;
