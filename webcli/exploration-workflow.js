@@ -1,3 +1,4 @@
+import { normalizeWorkflowOrigin } from './page-workflow-origins.js';
 import { explorationError as fail } from './exploration-commands.js';
 import { normalizePageQuery, pageQueryValues } from './exploration-query.js';
 import { normalizeWorkflowControl } from './page-workflow-control.js';
@@ -42,7 +43,7 @@ export function normalizePageWorkflow(input) {
   const timeoutMs = input.timeoutMs ?? 30000;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 30000) invalid('Workflow timeoutMs must be 1000–30000 for the entire sequence.');
   const steps = input.steps.map((step, index) => {
-    if (!step || typeof step !== 'object' || Array.isArray(step) || Object.keys(step).some(key => !['pathname', 'query', 'when', 'repeat'].includes(key))) invalid('Each step declares its starting pathname and query.');
+    if (!step || typeof step !== 'object' || Array.isArray(step) || Object.keys(step).some(key => !['pathname', 'origin', 'query', 'when', 'repeat'].includes(key))) invalid('Each step declares its starting pathname and query.');
     let url;
     try { url = new URL(step.pathname, 'https://example.com'); } catch {}
     if (typeof step.pathname !== 'string' || !/^\/(?!\/)/.test(step.pathname) || !url || url.origin !== 'https://example.com'
@@ -51,8 +52,9 @@ export function normalizePageWorkflow(input) {
     const query = normalizePageQuery(step.query, { allowStaticNavigation: true });
     if (query.mode === 'filter' && query.resultPathname !== step.pathname) invalid('A filter must stay on its declared starting pathname.');
     if (index === 0 && step.pathname.includes(':id')) invalid('Begin the workflow on an exact entry pathname.');
+    let origin; try { if (step.origin !== undefined) origin = normalizeWorkflowOrigin(step.origin); } catch (error) { invalid(error.message); }
     let control; try { control = normalizeWorkflowControl({ ...step, query }, index); } catch (error) { invalid(error.message); }
-    return { pathname: step.pathname, query, ...control };
+    return { pathname: step.pathname, ...(origin ? { origin } : {}), query, ...control };
   });
   for (let i = 1; i < steps.length; i++) if (steps[i].pathname !== steps[i - 1].query.resultPathname) invalid('Each step must start on the preceding destination path.');
   const result = steps.at(-1).query.result;

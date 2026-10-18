@@ -67,7 +67,17 @@ filter 只操作已有 search/filter/pagination 读控件，保持同 origin/pat
 
 page_workflow_v1 在观察/验证/调用前检查；manifest.pageRoute.workflow 固定动作顺序、选择器、参数、关联条件和路由，总预算最多 30 秒，纳入 page-workflow 权限。结果提取声明不属于动作授权，可在 scoped repair 中修复并重跑历史断言；改动作、参数或顺序须重新生成和审阅。预览与普通调用复用同一后台序列及 manifest 检查，仍只续接一次映射结果。
 
-观察与作者验证分配临时 operationId；cancel 发往绑定 profile，扩展记录取消并在下一动作/读取前检查。验证一次发送一个 workflow case，避免五个长流程共用一次传输时限；取消不会开始下一 case。Bridge 断线使当前工作流失效，重启任务保留 interrupted，不自动续跑。已派发动作可能完成；普通调用暂无独立取消入口。持久化仅存结构与作者明确提交的 cases，观察 values 不保存。仍限同源主 frame 原生读控件，写操作、副作用验证、自定义组件和跨 origin/frame 流程待做；显式 hash 见下节。
+观察与作者验证分配临时 operationId；cancel 发往绑定 profile，扩展记录取消并在下一动作/读取前检查。验证一次发送一个 workflow case，避免五个长流程共用一次传输时限；取消不会开始下一 case。Bridge 断线使当前工作流失效，重启任务保留 interrupted，不自动续跑。已派发动作可能完成；普通调用暂无独立取消入口。持久化仅存结构与作者明确提交的 cases，观察 values 不保存。仍限主 frame 原生读控件；显式跨 origin 见下节，frame、自定义组件和多步写待做。显式 hash 见下节。
+
+## 显式跨源主文档读取（page_navigation_origin_v1）
+
+navigate 可声明固定 `resultOrigin`；省略时保持步骤原 origin。workflow 每步可声明 `origin`，省略时指任务入口 origin；首步必须是入口，后一步 origin 必须等于前一步明确目的源。只有 navigate 能跨源；when/repeat 步骤必须保持 origin 和 pathname。所有 origin 必须是无凭据、路径、查询或片段的 canonical HTTP(S) origin，端口属于精确身份。不能传动态目标、从重定向推导目的源或拼接任意 URL。
+
+任务在 `start.allowedOrigins` 预声明所有额外目的源；source 声明不能扩大任务权限。生成包 match 增加明确目的 hostname，pageRoute 权限绑定精确 origin/端口与对应 pathname，不能把不同源的路径交叉使用。作者 cases 对每个参数仍需至少两个不同值；生成、安装、知识和结果提取 repair 保留完整目的源，修复不改变动作或权限。
+
+观察从任务原源开始；成功后及作者验证只允许当前已选择读取来源的明确目的路由。跨源预览只使用任务原 tab，不从其他标签补位；普通调用按精确 origin/path 选择，歧义仍拒绝。首步为 navigate 的 workflow 可从任一声明结果页重新开始，显式回到入口，支持 A→B→A；其他 observe/collect/write 不因此获准跨源。
+
+导航保留完整 href、新文档/loader 与稳定结果守卫；hash 保留独立业务关联、刷新标记和同目标一次 reload。重定向到未声明目标失败，不补导航、不重放。旧选定 profile 在观察、验证、普通调用前拒绝新 capability，不切换 profile。作者验证每次一个 case，取消/断线不派发后续动作或 case；已发导航可能完成，迟到结果不保存。实现与验收证据以交接末尾为准，frame 不在本增量内。
 
 ## 有界读取控制（B01，2026-10-18）
 
@@ -85,7 +95,7 @@ repeat.collect 可声明公开数组 path、string/number identityPath、1–100
 
 运行时使用独立 hash 执行器，原 path/query 的新文档守卫不变。不同片段同文档导航前读取 freshnessPath 基线，只派发一次 Page.navigate；随后必须收到精确片段事件、全部业务字段关联匹配、刷新字段变化，且完整结果至少稳定 300ms。没有基线则在派发前拒绝；缺新标记/旧结果/错参数超时失败。首次跨文档进入 hash 页面要求新 loader 和业务关联。目标完整 href 已等于当前页时，按作者明确声明只派发一次 Page.reload(ignoreCache:true)，必须取得新文档及不同于重载前的刷新标记；不切去其他页面、不合成 hashchange、不回放导航。新文档证明本次页面加载，不能保证站点后端没有业务缓存。
 
-完整 href、主 frame/loader 和导航事件版本在读取前后复核，额外导航、重定向、下载、取消、断线和超时均停止且不重放。workflow 复用总预算及步骤间精确页面身份。`page_navigation_hash_v1` 在观察/验证/普通调用前检查固定选定 profile，旧插件不派发也不换 profile。全部片段、关联、刷新及重载策略绑定 manifest 安装权限；scoped repair 只改结果提取并重验历史 cases。源码专项与最终双打包结果见交接末尾；未记录通过前不宣称验收完成。有界循环/分支见上节，跨源/frame 仍开放。
+完整 href、主 frame/loader 和导航事件版本在读取前后复核，额外导航、重定向、下载、取消、断线和超时均停止且不重放。workflow 复用总预算及步骤间精确页面身份。`page_navigation_hash_v1` 在观察/验证/普通调用前检查固定选定 profile，旧插件不派发也不换 profile。全部片段、关联、刷新及重载策略绑定 manifest 安装权限；scoped repair 只改结果提取并重验历史 cases。源码专项与最终双打包结果见交接末尾；未记录通过前不宣称验收完成。有界循环/分支见上节，显式跨源见下节，frame 仍开放。
 
 ## 动态查询参数导航（B01 增量）
 
@@ -101,7 +111,7 @@ navigate 可声明 `queryParameters`，每项 name/queryKey/description，1–16
 
 普通调用从入口或目标模板匹配页中选择唯一页/唯一活动页，缺失/歧义不换页或新开。preview 与普通调用复用同一 manifest 路由检查和续接机制，结果映射只在续接后执行。旧插件缺能力时在派发前拒绝；每命令至少两组不同路径参数的作者 cases，保留失败不安装。知识保存来源；scoped repair 保留既有路由/绑定/权限并重新运行历史断言。
 
-限制：同源主文档单次导航读取；跨源详情和任意路径正则尚未覆盖，显式 hash 见上节。动态 query 见上节，多步只读操作复用 workflow；写契约另行审阅验证。取消后丢弃迟到结果，已派发导航可能继续完成。验收覆盖实际公开占位详情、前导零/中文 ID、同 URL 重复调用、错误 ID 重定向和结构漂移修复；详见交接末尾。
+限制：主文档单次导航读取；跨源需下述显式声明，任意路径正则尚未覆盖，显式 hash 见上节。动态 query 见上节，多步只读操作复用 workflow；写契约另行审阅验证。取消后丢弃迟到结果，已派发导航可能继续完成。验收覆盖实际公开占位详情、前导零/中文 ID、同 URL 重复调用、错误 ID 重定向和结构漂移修复；详见交接末尾。
 
 ## 多浏览器 profile：已实现
 
@@ -326,6 +336,6 @@ browser_upload_target_v1 统一上传到主/子 frame 的实际原生文件节�
 
 验收脚本为 `webcli/scripts/verify-exploration-browser.mjs`；使用临时副本改变连接端口及 CLI 配置目录，生产协议和默认端口未改。只启动/停止脚本自己创建的服务和浏览器，Adapter 安装、任务和浏览器配置均隔离。Playwright 用于测试浏览器启动、示例导航及下载取消刺激/诊断；下载观察、探索/生成/验证/安装和业务调用均经过真实 CLI 与插件，不 mock 扩展传输、fetch 或验证器。隔离浏览器显式允许下载并使用临时目录；日常 Chrome 另行验收，不把该测试设置当成用户浏览器的默认策略。
 
-当前待做：复杂 UI/多步写、动态 query/hash、任意站点签名/OAuth、知识冲突修订、共享文件与 PAGE_FETCH/UI 写契约修复；Codex/Claude 各一次全新独立对话验收、各平台安装包；API 探索 UI/旧聊天入口统一，以及能力台账中的其他差距。当前由调用 Agent 通过 analyze/replan 明确切换策略，没有运行时静默回退。当前证据不代表任意 Agent 在任意站点上的生成质量已验证。
+早期 38 项快照的后续缺口已按阶段补齐，最新已验证与待办以能力台账及交接末尾为准。当前仍待：复杂 UI/多步写、frame 工作流、任意站点签名/OAuth、YAML/更广文档解析；Codex/Claude 各一次全新独立对话验收、各平台安装包；API 探索 UI/旧聊天入口统一，以及能力台账中的其他差距。当前由调用 Agent 通过 analyze/replan 明确切换策略，没有运行时静默回退。当前证据不代表任意 Agent 在任意站点上的生成质量已验证。
 
 跨文档查询真实增量：用户 Chrome 的新页面搜索命令以 excel/spreadsheet 两组严格预览通过；安装后普通调用分别读取 24/27 张视频卡片，标题与链接逐项等于当前页面，结果随关键词变化。旧 API 三组返回 17/20/20 视频、DOM 24 张、INTERCEPT 下一页返回 38 视频，均通过。B 站相同关键词不会触发新查询，命令明确 PAGE_QUERY_TIMEOUT，不能用同词搜索重置页码；已通过切换词恢复 excel 第一页。该限制写入本地知识，不作通用多步流程完成结论。

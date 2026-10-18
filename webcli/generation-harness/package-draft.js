@@ -1,3 +1,4 @@
+import { workflowOriginTargets } from '../page-workflow-origins.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -66,6 +67,11 @@ export function writePackageDraft({ memory, adapterDir, supportBundle, paths }) 
   const manifest = { ...(retained?.manifest || {}), schema_version: 2, name, version,
     description: retained?.manifest.description || memory.scaffoldSemanticHints?.manifestDescription || `Adapter for ${name}`,
     match: [...new Set([...(retained?.manifest.match || []), memory.siteHost || name])], commands: [...(retained?.manifest.commands || []), ...commands] };
+  for (const command of commands) {
+    const route = command.pageRoute;
+    const targets = route?.workflow ? workflowOriginTargets(route.workflow, route.origin) : route?.navigation?.resultOrigin ? [{ origin: route.navigation.resultOrigin }] : [];
+    for (const target of targets) { const host = new URL(target.origin).hostname; if (!manifest.match.includes(host)) manifest.match.push(host); }
+  }
   // API origins are explicit package grants; only structurally reviewed source endpoints contribute.
   const hosts = new Set();
   for (const command of Object.values(evidence.commands)) {

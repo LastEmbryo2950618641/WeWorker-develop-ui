@@ -1,3 +1,4 @@
+import { workflowOriginRoutes, workflowOriginTargets } from './page-workflow-origins.js';
 import { matchesPagePath, resolvePageDestination } from './page-navigation.js';
 import { normalizeWorkflowControl, workflowConditionMatches, workflowValue, usesWorkflowControl } from './page-workflow-control.js';
 import { navigationParameters } from './page-navigation-parameters.js';
@@ -15,12 +16,21 @@ export function pageRoutePaths(route) {
     ...(route.workflow?.steps || []).map(step => step.query.resultPathname)];
 }
 
+export function pageRouteTargets(route) {
+  if (route.workflow) return workflowOriginTargets(route.workflow, route.origin);
+  return [{ origin: route.origin, pathname: route.pathname },
+    ...(route.additionalPaths || []).map(pathname => ({ origin: route.origin, pathname })),
+    ...(route.navigation ? [{ origin: route.navigation.resultOrigin || route.origin, pathname: route.navigation.pathname }] : [])];
+}
+
 /** A sequence has one owner and one deadline. Only observations are polled. */
 export async function executePageWorkflow(options, executeStep) {
   const { chrome, tabId, payload, now } = options;
   const { source, values = {}, expectedOrigin, expectedPath } = payload;
   if (!Array.isArray(source.steps) || source.steps.length < 2 || source.steps.length > 8
     || !Number.isSafeInteger(source.timeoutMs) || source.timeoutMs < 1000 || source.timeoutMs > 30000) throw fail('INVALID_PAGE_WORKFLOW', 'Invalid workflow steps or total deadline.');
+  let originRoutes;
+  try { originRoutes = workflowOriginRoutes(source, expectedOrigin); } catch (error) { throw fail('INVALID_PAGE_WORKFLOW', error.message); }
   const names = new Set(source.steps.flatMap(step => namesFor(step.query)));
   if (!values || typeof values !== 'object' || Array.isArray(values) || Object.keys(values).some(name => !names.has(name))) throw fail('INVALID_PAGE_QUERY_ARGUMENT', 'Unexpected workflow parameter.');
   // Validate every parameter before dispatching the first action.
@@ -29,13 +39,13 @@ export async function executePageWorkflow(options, executeStep) {
     try { normalizeWorkflowControl(source.steps[i], i); } catch (error) { throw fail('INVALID_PAGE_WORKFLOW', error.message); }
     if (!['navigate', 'query', 'filter'].includes(query?.mode) || !query.result || (i && pathname !== source.steps[i - 1].query.resultPathname)) throw fail('INVALID_PAGE_WORKFLOW', 'Workflow paths and steps must form an ordered chain.');
     const argumentsForStep = Object.fromEntries(namesFor(query).filter(name => Object.hasOwn(values, name)).map(name => [name, values[name]]));
-    if (query.mode === 'navigate') resolvePageDestination(expectedOrigin, query, argumentsForStep, true);
+    if (query.mode === 'navigate') resolvePageDestination(originRoutes[i].origin, query, argumentsForStep, true);
     else if (namesFor(query).some(name => typeof values[name] !== 'string' || !values[name].trim() || values[name].length > 1000)) throw fail('INVALID_PAGE_QUERY_ARGUMENT', 'Provide every declared workflow parameter.');
   }
   const initial = new URL((await chrome.tabs.get(tabId)).url);
   const entry = source.steps[0];
-  const entryPaths = entry.query.mode === 'navigate' ? [expectedPath, ...source.steps.map(step => step.query.resultPathname)] : [entry.pathname];
-  if (initial.origin !== expectedOrigin || !entryPaths.some(path => matchesPagePath(initial.pathname, path))) throw fail('PAGE_QUERY_ROUTE_CHANGED', 'Open a declared workflow entry page.');
+  const entryTargets = entry.query.mode === 'navigate' ? workflowOriginTargets(source, expectedOrigin) : [{ origin: expectedOrigin, pathname: entry.pathname }];
+  if (!entryTargets.some(target => initial.origin === target.origin && matchesPagePath(initial.pathname, target.pathname))) throw fail('PAGE_QUERY_ROUTE_CHANGED', 'Open a declared workflow entry page.');
   const deadline = now() + source.timeoutMs;
   const assertRunning = () => {
     options.assertRunning();
@@ -63,7 +73,8 @@ export async function executePageWorkflow(options, executeStep) {
       };
       await assertPage(current);
       const startPath = index === 0 && step.query.mode === 'navigate' ? initial.pathname : step.pathname;
-      if (current.origin !== expectedOrigin || !matchesPagePath(current.pathname, startPath)) throw fail('PAGE_QUERY_ROUTE_CHANGED', 'Page changed between workflow steps.');
+      const startOrigin = index === 0 && step.query.mode === 'navigate' ? initial.origin : originRoutes[index].origin;
+      if (current.origin !== startOrigin || !matchesPagePath(current.pathname, startPath)) throw fail('PAGE_QUERY_ROUTE_CHANGED', 'Page changed between workflow steps.');
       const collected = [], identities = new Map();
       const collect = result => {
         const spec = step.repeat?.collect;
@@ -98,9 +109,9 @@ export async function executePageWorkflow(options, executeStep) {
         await assertPage(currentUrl);
         const budget = deadline - now();
         if (budget < 1000) throw fail('PAGE_WORKFLOW_TIMEOUT', 'Workflow deadline reached before the next action.');
-        const query = { ...step.query, timeoutMs: Math.min(step.query.timeoutMs, budget) };
+        const query = { ...step.query, ...(step.query.mode === 'navigate' && currentUrl.origin !== originRoutes[index].resultOrigin ? { resultOrigin: originRoutes[index].resultOrigin } : {}), timeoutMs: Math.min(step.query.timeoutMs, budget) };
         output = await executeStep({ ...options, assertRunning, payload: { source: query, values: Object.fromEntries(namesFor(query).map(name => [name, values[name]])),
-          expectedOrigin, expectedPath: currentUrl.pathname, metadataOnly: !controlled && payload.metadataOnly && index === source.steps.length - 1 }, allowStaticNavigation: true, captureWorkflowPage: true });
+          expectedOrigin: currentUrl.origin, expectedPath: currentUrl.pathname, metadataOnly: !controlled && payload.metadataOnly && index === source.steps.length - 1 }, allowStaticNavigation: true, captureWorkflowPage: true });
         executedActions++; iterations++;
         if (!output?.ok) throw fail(output?.error?.code || 'PAGE_QUERY_FAILED', output?.error?.message || 'Later steps were not dispatched.');
         assertRunning();

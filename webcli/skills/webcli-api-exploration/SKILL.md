@@ -151,7 +151,7 @@ webcli call exploration.query --args '{"taskId":"example-task","source":{"mode":
 - 首次观察可从明确的同源入口页或同一详情路由开始；已有数值 ID 会归一化为 :id，必须使用匹配模板。manifest.pageRoute.navigation 固定目标模板及参数映射，进入安装权限审阅；普通调用只选入口或模板匹配页，多页选唯一活动页，否则歧义报错；没有匹配页不另开或导航其他页。
 - 每次只派发一次 Page.navigate。即使目标 URL 等于当前 URL，也等待新的主文档以及至少 300ms 稳定结果；读取后再核对 URL/文档。跨源、跳到其他 ID、下载、超时或导航中断失败，不重放。浏览器可能已经访问重定向目标，失败不回退到旧页或旧数据。
 - 观察只保存模板、字段结构和来源理由。生成后至少两组不同路径参数的 cases，精确核对返回 ID/标题等业务含义；每组都实际导航，不能用当前页的旧数据代替。通过后 review/install、普通 call、知识保存。后续 scoped repair 保留已安装路由/参数映射/权限，带入历史 cases 重新验证。
-- 当前限同源主文档的单次导航与读取，跨源详情和任意路径正则尚未支持，显式 hash 见下节；多步只读导航使用下面的 workflow。取消后丢弃迟到结果，已派发的浏览器导航可能继续完成。
+- 当前限主文档单次导航与读取，跨源详情需下节显式声明，任意路径正则尚未支持，显式 hash 见下节；多步只读导航使用下面的 workflow。取消后丢弃迟到结果，已派发的浏览器导航可能继续完成。
 
 动态查询串使用同一个 navigate 的 `queryParameters:[{"name":"keyword","queryKey":"q","description":"公开搜索词"}]`，values 明确传 `{"keyword":"007"}`。可单独用于 `/items`，也可与 pathParameters 组合；不要把 `?q=` 写进 resultPathname。需要 `page_navigation_query_v1`，观察、验证、普通调用均在旧选定插件派发前拒绝，不切换 profile。workflow 的 navigate 步骤也可声明相同字段。
 
@@ -164,7 +164,7 @@ navigate 可加 `hashNavigation:{template:"items/:id",pathParameters:[{segmentIn
 
 需要 page_navigation_hash_v1。不同片段同文档调用前必须有可读刷新基线，导航一次后等准确 href、所有关联字段、刷新标记改变和至少 300ms 稳定结果；无新数据失败。同一完整 URL 重复调用按显式 sameTarget=reload 重载当前准确页面一次并等新文档和相对重载前变化的刷新标记，可能丢失页面未保存输入，先核对目标。不得临时跳去其他页面、合成事件、忽略文档守卫或使用旧结果。首次跨文档打开片段要求新 loader 和业务字段匹配；这不证明后端无缓存。
 
-片段模板用公开 ASCII 固定段和 :id，可带起始 /；路径参数保留前导零/Unicode、单段编码，片段查询逐值编码。每参数至少两个不同作者值，并精确验证业务结果；观察值不持久保存。manifest 绑定模板/关联/刷新/重载策略，结果提取修复仍保持全部权限并重跑 cases；workflow 可使用同一 navigate 契约。取消/断线/重定向/超时不重放、不切换 profile。有界循环/分支见下节，跨源/frame 仍未覆盖。
+片段模板用公开 ASCII 固定段和 :id，可带起始 /；路径参数保留前导零/Unicode、单段编码，片段查询逐值编码。每参数至少两个不同作者值，并精确验证业务结果；观察值不持久保存。manifest 绑定模板/关联/刷新/重载策略，结果提取修复仍保持全部权限并重跑 cases；workflow 可使用同一 navigate 契约。取消/断线/重定向/超时不重放、不切换 profile。有界循环/分支见下节；跨源须明确声明，frame 仍未覆盖。
 
 ### HTTP／Extension 写命令与效果回查
 
@@ -201,7 +201,7 @@ navigate 可加 `hashNavigation:{template:"items/:id",pathParameters:[{segmentIn
 
 ### 多步只读网站流程（UI_SELECTOR workflow）
 
-用 `exploration.query` 的 `source.mode=workflow` 显式组合 2–8 个已观察步骤。每步声明开始 `pathname` 和 `query`；后一步 pathname 必须等于前一步 resultPathname。插件需要 `page_workflow_v1`，选择的 profile 不支持时直接失败。固定同源主文档；有界循环/分支须另声明下列控制字段，不接受任意脚本步骤。
+用 `exploration.query` 的 `source.mode=workflow` 显式组合 2–8 个已观察步骤。每步声明开始 `pathname` 和 `query`；后一步 pathname 必须等于前一步 resultPathname。插件需要 `page_workflow_v1`，选择的 profile 不支持时直接失败。默认同源主文档，显式跨源见下节；有界循环/分支须另声明下列控制字段，不接受任意脚本步骤。
 
 ```json
 {
@@ -242,6 +242,16 @@ navigate 可加 `hashNavigation:{template:"items/:id",pathParameters:[{segmentIn
 - 所有参数合并为必填字符串；每个参数都至少需要两组不同值的作者 cases，精确验证最终业务结果。作者验证逐 case 发往扩展，避免多条长流程堆在一个传输超时内。无参数流程也须至少一组作者断言。
 - manifest.pageRoute.workflow 记录动作、参数、关联条件、顺序与路由，整体纳入安装权限；源码不能跳步或改变动作而保留旧权限。结果读取选择器可通过 scoped repair 修改，动作选择器/顺序/参数变化需要重新生成、验证和审阅。知识保存完整来源，观察 values 不自动保存为默认值。
 - 仍不支持写动作、跨源/子 frame 工作流、任意自定义控件、任意脚本控制与动态步骤生成。不得把只读流程通过当作写操作或任意网站流程通过。
+
+### 明确目的源的只读导航
+
+需要 `page_navigation_origin_v1`。在 start.allowedOrigins 先声明所有额外精确 origin（例如 `https://example.org`），再在 navigate 中加 `resultOrigin:"https://example.org"`。不要把 origin 写入 resultPathname，不接受动态主机、凭据、路径/查询/hash 或非 canonical origin。端口必须一致；只写 source 不会扩大任务授权。
+
+workflow 的后续步骤若留在目的源，逐步写 `origin:"https://example.org"`；省略仍表示任务入口 origin。前一步 resultOrigin 与后一步 origin 必须衔接，首步必须属于任务入口。只有 navigate 能跨源，when/repeat 必须保持 origin/path。A→B→A 的返回步骤显式写入口 resultOrigin。首步为 navigate 时可以从声明结果页再次调用整个流程。
+
+作者 cases 逐参数提供至少两个不同值并断言实际业务字段。包 match 包含全部目的主机，review 的 pageRoute 权限绑定精确 origin/端口和路径；检查完整声明后再安装。知识/结果提取 repair 保留这些权限并重跑 cases。query 的新文档与 hash 的刷新/同目标 reload 契约保持，不通过跳转任意页面伪造新鲜数据。
+
+观察必须从原任务 origin 开始；后续验证可在该来源的声明结果页继续，重启后仍固定任务 tab。跨源预览不找替代 tab，普通调用歧义则失败。旧 profile 零派发拒绝；取消/断线不开始下一动作或作者 case，不重放导航。frame、自定义脚本及业务写不在此读取授权内。
 
 ### 有界分支与循环（page_workflow_control_v1）
 
@@ -309,8 +319,8 @@ webcli call exploration.repair --args '{"taskId":"example-task","site":"example.
 - 新会话先 `list`，再 `get`/`evidence`/`draft-read` 找回状态。CLI 退出不会取消 Bridge 任务。
 - Bridge 重启中的任务标记 interrupted，明确选择重新 collect（HTTP 模式 discover/request）或 validate；不自动重放探测或安装。
 - `cancel` 停止后续阶段并丢弃迟到结果；已派发浏览器请求可能完成。安装开始后不能取消。
-- start 可传 allowedOrigins 数组，显式授权额外 API origin，如 `https://api.example.com`；只允许精确 origin，无路径、凭据或通配符。流量不会自动扩大权限，安装 review 会列出新域名。
-- 默认 GET、Agent 计划下的只读 POST JSON/form/GraphQL query、API 动态路径、声明式 UI_SELECTOR/DOM_STATE、单步 INTERCEPT、跨文档页面查询、参数化详情导航和显式 2–8 步只读 workflow 已支持。HTTP 和有明确幂等契约的 Extension 单请求写走独立 mock/审阅/效果验证；更广 UI 控件写、任意自定义多步 UI、跨源/frame 工作流仍未支持；报告限制，不伪装成功。
+- start 可传 allowedOrigins 数组，显式授权额外 API 或页面导航 origin，如 `https://api.example.com`；只允许精确 origin，无路径、凭据或通配符。流量不会自动扩大权限，安装 review 会列出新域名。
+- 默认 GET、Agent 计划下的只读 POST JSON/form/GraphQL query、API 动态路径、声明式 UI_SELECTOR/DOM_STATE、单步 INTERCEPT、跨文档页面查询、参数化详情导航和显式 2–8 步只读 workflow 已支持。HTTP 和有明确幂等契约的 Extension 单请求写走独立 mock/审阅/效果验证；更广 UI 控件写、任意自定义多步 UI、frame 工作流仍未支持；主文档跨源需要明确目的源声明；报告限制，不伪装成功。
 - 使用 webcli-browser Skill 的 browser.* 触发搜索、翻页或检查页面状态，再 collect。采集/验证进行中不要操作同一页；TAB_BUSY 时等待。
 - trace 输出结构诊断、事件、文件清单与计划，便于交接修复；不含捕获正文或代码。verification-read 与 knowledge-read 可恢复作者测试用例；安装后修复使用 repair-info/repair，再走相同的验证、审阅与安装流程。
 - 证据的 URL 参数值被省略；不要把 `<value>` 作为实际查询值。业务参数来自用户输入，登录信息由既有浏览器运行时取得。

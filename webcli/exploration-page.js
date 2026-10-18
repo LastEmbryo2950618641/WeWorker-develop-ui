@@ -1,3 +1,4 @@
+import { pageSourceOriginTargets } from './page-workflow-origins.js';
 import { createHash } from 'node:crypto';
 import { explorationError as fail, textArg } from './exploration-commands.js';
 import { draftCommandId } from './generation-harness/package-draft.js';
@@ -43,6 +44,7 @@ export function pageObservation({ source, url, shape, reason }) {
   const page = new URL(url);
   if (page.pathname.includes(':id') && source.mode !== 'workflow' && !(source.mode === 'navigate' && source.resultPathname === page.pathname)) throw fail('PAGE_SOURCE_DYNAMIC_ROUTE', 'Dynamic page routes need a navigation query with explicit path parameters.');
   const target = { expectedOrigin: page.origin, expectedPath: source.mode === 'workflow' ? source.steps[0].pathname : page.pathname };
+  pageSourceOriginTargets(source, target.expectedOrigin, target.expectedPath);
   const id = 'page-v1-' + createHash('sha256').update(JSON.stringify({ ...target, source })).digest('hex').slice(0, 20);
   const clean = (value, depth = 0) => {
     if (depth > 8 || !object(value) || !['object', 'array', 'string', 'number', 'integer', 'boolean', 'null', 'unknown'].includes(value.type)) return { type: 'unknown' };
@@ -78,7 +80,7 @@ export function buildPageTool(site, tool, observation) {
   return { toolDefinition: { name, access: 'read', description: tool.purpose || `Read the observed ${observation.source.strategy} source on the current page.`,
     pageRoute: { origin: observation.expectedOrigin, pathname: observation.expectedPath,
       ...(workflow ? { workflow: pageWorkflowContract(observation.source) }
-        : navigation ? { navigation: { pathname: observation.source.resultPathname, pathParameters: observation.source.pathParameters,
+        : navigation ? { navigation: { pathname: observation.source.resultPathname, ...(observation.source.resultOrigin ? { resultOrigin: observation.source.resultOrigin } : {}), pathParameters: observation.source.pathParameters,
           ...(observation.source.queryParameters ? { queryParameters: observation.source.queryParameters } : {}),
           ...(observation.source.hashNavigation ? { hashNavigation: observation.source.hashNavigation } : {}) } }
         : query && observation.source.resultPathname !== observation.expectedPath ? { additionalPaths: [observation.source.resultPathname] } : {}) },

@@ -753,3 +753,31 @@ it('requires control capability before observation and validation with no fallba
   expect((await f.service.execute('validate', { taskId })).ok).toBe(true); await f.service.jobs.get(taskId);
   expect((await f.service.execute('get', { taskId })).data.status).toBe('review_ready');
 });
+
+
+it('requires declared task origins for page navigation and limits cross-origin task checks to explicit read routes', async () => {
+  const capabilities = ['passive_exploration_v1', 'page_sources_v1', 'page_query_v1', 'page_navigation_v1'];
+  const f = setup({ capabilities: () => ({ connected: true, capabilities }) });
+  const taskId = await start(f.service);
+  const source = { mode: 'navigate', resultOrigin: 'https://example.org', resultPathname: '/items/:id', pathParameters: [{ name: 'itemId', segmentIndex: 1, description: 'Public ID' }], result: { strategy: 'DOM_STATE', path: ['publicItem'] } };
+  const args = { taskId, source, values: { itemId: '007' }, reason: 'Read declared public detail' };
+  expect((await f.service.execute('query', args)).error.code).toBe('CAPABILITY_UNAVAILABLE');
+  capabilities.push('page_navigation_origin_v1');
+  expect((await f.service.execute('query', args)).ok).toBe(true); await f.service.jobs.get(taskId);
+  expect((await f.service.execute('get', { taskId })).data.error.code).toBe('PAGE_ORIGIN_NOT_ALLOWED');
+  expect(f.requestExtension.mock.calls.some(([m]) => m.type === 'exploration_page_query')).toBe(false);
+  const started = await f.service.execute('start', { tabId: 7, goal: 'Public destination', requestId: 'example-cross-origin', allowedOrigins: ['https://example.org'] });
+  const nextId = started.data.taskId; await f.service.jobs.get(nextId);
+  let cross = false; const original = f.requestExtension.getMockImplementation();
+  f.requestExtension.mockImplementation(message => {
+    if (message.type === 'exploration_page_query') { cross = true; return { ok: true, shape: { type: 'object' } }; }
+    if (message.type === 'exploration_list_tabs' && cross) return { tabs: [{ id: 7, url: 'https://example.org/items/007' }] };
+    return original(message);
+  });
+  expect((await f.service.execute('query', { ...args, taskId: nextId })).ok).toBe(true); await f.service.jobs.get(nextId);
+  expect((await f.service.execute('get', { taskId: nextId })).data.status).toBe('evidence_ready');
+  const run = f.service.runs.get(nextId);
+  await expect(f.service.checkTab(run)).rejects.toMatchObject({ code: 'TAB_CHANGED' });
+  await expect(f.service.checkTab(run, [{ origin: 'https://example.org', pathname: '/different' }])).rejects.toMatchObject({ code: 'TAB_CHANGED' });
+  expect((await f.service.checkTab(run, [{ origin: 'https://example.org', pathname: '/items/:id' }])).id).toBe(7);
+});

@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-18（B01 跨源主文档进行中）：固定 resultOrigin/step.origin、任务 allowedOrigins、完整安装权限与精确路由、固定 tab 预览和旧 profile 拒绝已实现。源码与双打包跨源专项各 11 项通过（2zWcqF/r9KzgD），含 hash/往返/作者取消、12 次 workflow 调用；HTTP 24 项、WebCLI 1436 项、扩展 60 项通过。完整双打包回归继续，早期一次无详细错误的偶发失败保留未知原因，未计整体完成。frame 与 W/B/A/U/E 全部剩余项保持。
+
 - 2026-10-18（hash/有界读取阶段已验证）：本地代码检查点 d0e8ea9，Chromium 1217 CLI＋Bridge 完整双打包 **99 项** XoGPDg 通过；5370 产品文件/28 私有绑定隐私检查通过。最终控制专项 8 项、HTTP 24 项、WebCLI 1427 项、扩展 53 项、构建/配置/Skill/npm pack 630 文件证据齐全。整体 active；B01 跨源主文档声明进入下一实现，当前未提交、未实机验证，frame 及完整余项保留。
 
 - 2026-10-18（B01 有界读取控制进行中）：新增 when/repeat/until/collect、每轮身份与全局预算、去重/冲突/无进展/限额拒绝；源码 Chromium 1217 专项 7 项、WebCLI 127 文件/1427 项、扩展 53 项通过。hash 完整回归发现断线期间缺失 manifest 被当作旧 Adapter 导致五页重载，已收紧为只有明确 legacy 才重载；完整双打包复跑中，不提前计通过。双打包 HTTP 24 项、配置/Skill/npm pack 630 文件与一致性通过。整体 active，跨源/frame 和全部余项保留。

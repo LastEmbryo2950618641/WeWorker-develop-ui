@@ -20,13 +20,14 @@ export async function executePageHashNavigation({ chrome, ensureCdpAttached, tab
   const hash = source.hashNavigation, deadline = now() + source.timeoutMs;
   const active = () => { assertRunning(); if (now() >= deadline) throw fail('PAGE_QUERY_TIMEOUT', 'Hash navigation timed out; no action was replayed.'); };
   const initial = new URL((await chrome.tabs.get(tabId)).url);
-  if (initial.origin !== expectedOrigin || ![expectedPath, source.resultPathname].some(path => matchesPagePath(initial.pathname, path))) throw fail('PAGE_QUERY_ROUTE_CHANGED', 'Open the declared hash entry or result page.');
+  if (!(initial.origin === expectedOrigin && matchesPagePath(initial.pathname, expectedPath)
+    || initial.origin === destination.origin && matchesPagePath(initial.pathname, source.resultPathname))) throw fail('PAGE_QUERY_ROUTE_CHANGED', 'Open the declared hash entry or result page.');
   await ensureCdpAttached(tabId);
   await chrome.debugger.sendCommand({ tabId }, 'Page.enable');
   const frame = async () => (await chrome.debugger.sendCommand({ tabId }, 'Page.getFrameTree'))?.frameTree?.frame;
   const original = await frame();
   if (!original?.id || !original.loaderId) throw fail('PAGE_QUERY_ROUTE_CHANGED', 'Cannot establish the hash navigation document.');
-  const read = () => executePageSource(chrome, tabId, { source: source.result, expectedOrigin, expectedPath: destination.pathname });
+  const read = () => executePageSource(chrome, tabId, { source: source.result, expectedOrigin: destination.origin, expectedPath: destination.pathname });
   const sameTarget = initial.href === destination.href;
   const sameBase = initial.origin + initial.pathname + initial.search === destination.origin + destination.pathname + destination.search;
   let before;
@@ -40,10 +41,10 @@ export async function executePageHashNavigation({ chrome, ensureCdpAttached, tab
     if (method === 'Page.frameNavigated' && !params.frame?.parentId) {
       version++; documentCount++; loaderId = params.frame.loaderId;
       if (params.frame.id !== original.id || !loaderId || loaderId === original.loaderId || documentCount > 1) error = fail('PAGE_QUERY_ROUTE_CHANGED', 'Hash navigation document changed unexpectedly.');
-      try { if (new URL(params.frame.url).origin !== expectedOrigin) error = fail('PAGE_QUERY_ORIGIN_CHANGED', 'Hash navigation left its declared origin.'); } catch { error = fail('PAGE_QUERY_ROUTE_CHANGED', 'Invalid hash navigation document.'); }
+      try { if (new URL(params.frame.url).origin !== destination.origin) error = fail('PAGE_QUERY_ORIGIN_CHANGED', 'Hash navigation left its declared origin.'); } catch { error = fail('PAGE_QUERY_ROUTE_CHANGED', 'Invalid hash navigation document.'); }
     } else if (method === 'Page.navigatedWithinDocument' && params.frameId === original.id) {
       version++; withinCount++;
-      try { if (new URL(params.url).origin !== expectedOrigin) { error = fail('PAGE_QUERY_ORIGIN_CHANGED', 'Hash navigation left its declared origin.'); return; } } catch { error = fail('PAGE_QUERY_ROUTE_CHANGED', 'Invalid hash navigation URL.'); return; }
+      try { if (new URL(params.url).origin !== destination.origin) { error = fail('PAGE_QUERY_ORIGIN_CHANGED', 'Hash navigation left its declared origin.'); return; } } catch { error = fail('PAGE_QUERY_ROUTE_CHANGED', 'Invalid hash navigation URL.'); return; }
       if (params.url !== destination.href || withinCount > 1) error = fail('PAGE_QUERY_ROUTE_CHANGED', 'Hash navigation did not retain its exact target.');
     }
   };
@@ -63,7 +64,7 @@ export async function executePageHashNavigation({ chrome, ensureCdpAttached, tab
     while (now() < deadline) {
       active(); if (error) throw error;
       const current = await chrome.tabs.get(tabId), url = new URL(current.url);
-      if (url.origin !== expectedOrigin) throw fail('PAGE_QUERY_ORIGIN_CHANGED', 'Hash navigation left its declared origin.');
+      if (url.origin !== destination.origin && (version || url.href !== initial.href)) throw fail('PAGE_QUERY_ORIGIN_CHANGED', 'Hash navigation left its declared origin.');
       const newDocument = documentCount === 1;
       if ((newDocument || (!sameTarget && sameBase && withinCount === 1)) && current.status === 'complete') {
         if (url.href !== destination.href) throw fail('PAGE_QUERY_ROUTE_CHANGED', 'Hash navigation changed the complete destination URL.');

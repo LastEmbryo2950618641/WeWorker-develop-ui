@@ -1,3 +1,4 @@
+import { usesWorkflowOrigins } from './page-workflow-origins.js';
 import { usesWorkflowControl } from './page-workflow-control.js';
 /**
  * WebSocket Bridge
@@ -1673,6 +1674,7 @@ export class WebSocketBridge extends EventEmitter {
     if (selected?.command.pageRoute?.navigation && !this._extensionCapabilities?.includes('page_navigation_v1')) throw new Error('Reload the browser extension before calling parameterized page navigation.');
     if ((usesNavigationHash(selected?.command.pageRoute?.navigation) || usesNavigationHash(selected?.command.pageRoute?.workflow)) && !this._extensionCapabilities?.includes('page_navigation_hash_v1')) throw new Error('Reload the selected browser extension before calling hash navigation.');
     if ((usesNavigationQuery(selected?.command.pageRoute?.navigation) || usesNavigationQuery(selected?.command.pageRoute?.workflow)) && !this._extensionCapabilities?.includes('page_navigation_query_v1')) throw new Error('Reload the browser extension before calling public URL query navigation.');
+    if ((usesWorkflowOrigins(selected?.command.pageRoute?.navigation) || usesWorkflowOrigins(selected?.command.pageRoute?.workflow)) && !this._extensionCapabilities?.includes('page_navigation_origin_v1')) throw new Error('Reload the selected browser extension before calling explicit cross-origin page reading.');
     if (usesWorkflowControl(selected?.command.pageRoute?.workflow) && !this._extensionCapabilities?.includes('page_workflow_control_v1')) throw new Error('Reload the selected browser extension before calling conditional or repeated page workflows.');
     if (selected?.command.pageRoute?.workflow && !this._extensionCapabilities?.includes('page_workflow_v1')) throw new Error('Reload the browser extension before calling ordered page workflows.');
     if (selected?.command.uiWrite && !this._extensionCapabilities?.includes('ui_write_v1')) throw new Error('Reload the browser extension before calling UI writes.');

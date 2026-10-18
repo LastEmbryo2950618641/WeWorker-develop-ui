@@ -17,3 +17,15 @@
 5. 自动化和隔离实机须覆盖两个公开 loopback origin、重复相同 URL frame、嵌套跨源、父/子导航、重定向、选择歧义、取消/重启、权限变化与提取修复。上游的 context 重解析/旧 target 重试策略不自动迁入本项目的不重放契约。
 
 尚未编写此上下文扩展的实现。B01 跨 origin/frame 仍开放，W01–04、B02–04、A01–02、U01–06 与 E01–04 全部范围保留；Python 网站探索agent、日常浏览器、真实账户与未知调试端口均未操作。
+
+## 跨源主文档实现进展（2026-10-18）
+
+已增加固定 navigate.resultOrigin、workflow step.origin 链、start.allowedOrigins 门禁、完整 manifest match/pageRoute 权限、精确源与路径组合选择、固定任务 tab 预览和 page_navigation_origin_v1 派发前检查。单步 query 和多步 A→B 的源码 Chromium 首轮通过（5GCrtt），包括生成/作者验证/安装/重复调用/知识/提取 repair/重定向拒绝/取消/重启不重放。跨源 hash、A→B→A、重启后验证和作者取消正在扩展验收，尚不计为最终通过；完整打包/隐私和回归待本阶段最终证据。frame 工作流暂无实现。
+
+## frame 身份方案探针（不是工作流验收）
+
+隔离 Chromium 1217 的临时扩展副本，以本项目 ensureCdpAttached / withBrowserFrameContext 真实事件链运行：父文档中的唯一 iframe 节点通过 DOM.describeNode 得到 CDP frameId，再与扩展隔离上下文及 Chrome frameId/documentId 对应。5 个主/子/嵌套文档，包含两个完整 URL 相同的跨源 iframe，均唯一匹配，未用 URL 或树序号挑选。报告 `weworker-frame-identity-DAKfnA/report.json`，日志 `/tmp/weworker-frame-identity-probe-host.log`；临时浏览器/服务全部关闭。
+
+首次探针在 ServiceWorker 内使用动态 import，被规范拒绝；改为仅临时副本静态导入。第二次直接 attach 没有进入本项目事件状态，因此找不到上下文；改为复用 ensureCdpAttached 后通过。没有修改生产文件绕过身份检查。这验证选择器到真实 owner/document 的可行性，不证明生成、动作、导航、新鲜度、权限或取消链路已完成。
+
+后续声明按嵌套 owner 选择器逐层固定 origin/path，不保存临时 frameId/documentId。每次调用只解析一次，之后按真实 documentId/uniqueContextId 与 owner 身份复核；相同 URL 替换或歧义失败。主文档及所有祖先须保持，子文档显式导航采用独立身份迁移，不以重新选中 frame 冒充连续动作。frame 仍开放。

@@ -14,7 +14,8 @@ import { executePageSource } from './page-source.js';
 import { executeInterceptRead } from './intercept-read.js';
 import { executePageQuery, cancelPageWorkflow, cancelAllPageWorkflows, assertPageWorkflowActive } from './page-query.js';
 import { matchesPagePath, assertPageQueryRoute } from './page-navigation.js';
-import { pageRoutePaths } from './page-workflow.js';
+import { pageRoutePaths, pageRouteTargets } from './page-workflow.js';
+import { usesWorkflowOrigins, matchesOriginTarget } from './page-workflow-origins.js';
 import { recordBrowserObservation, clearBrowserObservations } from './browser-observations.js';
 import { recordBrowserFrameEvent, clearBrowserFrames } from './browser-frames.js';
 import { recordBrowserDownload, clearBrowserDownloads } from './browser-downloads.js';
@@ -70,6 +71,7 @@ const EXTENSION_CAPABILITIES = [
   'page_navigation_hash_v1',
   'page_workflow_v1',
   'page_workflow_control_v1',
+  'page_navigation_origin_v1',
   'page_write_v1',
   'ui_write_v1',
   'ui_write_result_v1',
@@ -2728,7 +2730,7 @@ async function handleNativeMessage(msg) {
           const { origin, pathname } = selected.command.pageRoute;
           assertAdapterNavigationUrl(selected.manifest, origin + pathname);
           const matches = tabs.filter(entry => {
-            try { const url = new URL(entry.url); return url.origin === origin && pageRoutePaths(selected.command.pageRoute).some(path => matchesPagePath(url.pathname, path)); }
+            try { const url = new URL(entry.url); return pageRouteTargets(selected.command.pageRoute).some(target => matchesOriginTarget(url, target)); }
             catch { return false; }
           });
           const activeMatches = matches.filter(entry => entry.active);
@@ -7820,7 +7822,18 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
     throw new Error('invalid generation preview adapter id');
   }
   if (!SAFE_ADAPTER_ID_RE.test(String(siteKey || ''))) throw new Error('invalid generation preview siteKey');
-  const targetTab = await findGenerationPreviewTab(siteKey, tabId);
+  const routeCommands = previewBundle?.manifest?.commands || [];
+  const explicitOrigins = routeCommands.some(command => usesWorkflowOrigins(command.pageRoute?.navigation) || usesWorkflowOrigins(command.pageRoute?.workflow));
+  let targetTab;
+  if (explicitOrigins) {
+    // A cross-origin preview is bound to the task tab. Never find a substitute
+    // by host if this tab navigated outside its explicitly declared routes.
+    if (Number.isInteger(tabId)) {
+      try { const selected = await chrome.tabs.get(tabId);
+        if (routeCommands.some(command => command.pageRoute && pageRouteTargets(command.pageRoute).some(target => matchesOriginTarget(new URL(selected.url), target)))) targetTab = selected;
+      } catch {}
+    }
+  } else targetTab = await findGenerationPreviewTab(siteKey, tabId);
   if (!targetTab) {
     return {
       passed: false,
@@ -7843,13 +7856,21 @@ async function validateGenerationPreviewOnTab({ previewAdapterId, previewBundle,
   const manifest = inlinePreview?.manifest || await loadAdapterManifest(previewAdapterId);
   if (!manifest) throw new Error(`preview manifest not found: ${previewAdapterId}`);
   const supportFiles = normalizeAdapterSupportFiles(previewAdapterId, manifest.support_files);
+  const explicitOrigins = manifest.commands?.some(command => usesWorkflowOrigins(command.pageRoute?.navigation) || usesWorkflowOrigins(command.pageRoute?.workflow));
+  const previewSite = url => {
+    if (!explicitOrigins) return siteKey;
+    const current = new URL(url);
+    if (!manifest.commands.some(command => command.pageRoute && pageRouteTargets(command.pageRoute).some(target => matchesOriginTarget(current, target)))) throw new Error('Preview left the declared page routes.');
+    assertAdapterNavigationUrl(manifest, current.href);
+    return current.hostname;
+  };
   const expected = [...new Set((expectedToolNames || []).map(String).filter(Boolean))];
 
   const token = crypto.randomUUID();
   let began = false;
   try {
     await chrome.scripting.executeScript({ target: { tabId: targetTab.id }, world: 'ISOLATED', files: ['content/preview-registry.js'] });
-    const opened = await chrome.tabs.sendMessage(targetTab.id, { type: 'begin_generation_preview', token, siteKey, previewAdapterId, packageDigest: inlinePreview?.packageDigest || null, allowQueryChanges: manifest.commands?.some(command => command.pageStrategy === 'INTERCEPT') === true });
+    const opened = await chrome.tabs.sendMessage(targetTab.id, { type: 'begin_generation_preview', token, siteKey: previewSite((await chrome.tabs.get(targetTab.id)).url), previewAdapterId, packageDigest: inlinePreview?.packageDigest || null, allowQueryChanges: manifest.commands?.some(command => command.pageStrategy === 'INTERCEPT') === true });
     if (!opened?.ok) throw new Error(opened?.error || 'Unable to begin preview');
     began = true;
     generationPreviewGrants.set(token, { tabId: targetTab.id, url: targetTab.url, allowedHosts: normalizeRouteHosts(manifest.runtime_allowed_hosts), expiresAt: Date.now() + 300000 });
@@ -7929,7 +7950,7 @@ async function validateGenerationPreviewOnTab({ previewAdapterId, previewBundle,
             else {
               await sendTabMessage(targetTab.id, { type: 'end_generation_preview', token });
               await chrome.scripting.executeScript({ target: { tabId: targetTab.id }, world: 'ISOLATED', files: ['content/preview-registry.js'] });
-              const restored = await chrome.tabs.sendMessage(targetTab.id, { type: 'begin_generation_preview', token, siteKey, previewAdapterId, packageDigest: inlinePreview?.packageDigest || null, allowQueryChanges: manifest.commands?.some(command => command.pageStrategy === 'INTERCEPT') === true });
+              const restored = await chrome.tabs.sendMessage(targetTab.id, { type: 'begin_generation_preview', token, siteKey: previewSite((await chrome.tabs.get(targetTab.id)).url), previewAdapterId, packageDigest: inlinePreview?.packageDigest || null, allowQueryChanges: manifest.commands?.some(command => command.pageStrategy === 'INTERCEPT') === true });
               if (!restored?.ok) throw new Error('Unable to resume preview after query.');
               generationPreviewGrants.get(token).url = (await chrome.tabs.get(targetTab.id)).url;
               await injectGenerationPreviewSourcesWithCdp(targetTab.id, scopedGenerationPreviewScripts(scripts, token));

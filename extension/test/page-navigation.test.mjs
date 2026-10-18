@@ -65,3 +65,14 @@ test('query navigation encodes each literal value once and binds exact query key
   assert.equal(f.calls.filter(method => method === 'Page.navigate').length, 1);
   const redirect = setup('redirect'); assert.equal((await redirect.run({ source: query, values: { keyword: value } })).error.code, 'PAGE_QUERY_ROUTE_CHANGED');
 });
+
+test('declared destination origins preserve exact route guards and do not authorize other origins', async () => {
+  const cross = { ...source, resultOrigin: 'https://example.org' }, f = setup();
+  assert.equal((await f.run({ source: cross })).ok, true);
+  assert.equal(f.calls.filter(method => method === 'Page.navigate').length, 1);
+  const command = { safety: 'read', pageWorkflow: true, pageRoute: { origin: payload.expectedOrigin, pathname: '/start', navigation: { pathname: source.resultPathname, pathParameters: source.pathParameters, resultOrigin: 'https://example.org' } } };
+  assert.equal(assertPageQueryRoute({ ...payload, source: cross }, command), 'https://example.org/items/007');
+  assert.throws(() => assertPageQueryRoute(payload, command));
+  assert.throws(() => assertPageQueryRoute({ ...payload, source: { ...cross, resultOrigin: 'https://other.example.org' } }, command));
+  assert.equal((await setup('redirect').run({ source: cross })).error.code, 'PAGE_QUERY_ORIGIN_CHANGED');
+});

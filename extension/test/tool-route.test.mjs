@@ -465,6 +465,35 @@ test('page source commands select exact origin/path, reject ambiguity, and never
   assert.equal((await worker.callNativeTool('fixture.read-page')).result, 'fixture-result');
 });
 
+test('cross-origin page selection keeps source and destination paths paired with their exact origins', async () => {
+  const manifest = { name: 'fixture', match: ['example.com', 'example.org'],
+    _hostSnapshot: { name: 'fixture', profile: 'public', digest: 'fixture-digest' },
+    commands: [{ id: 'read-page', runtime: 'extension', safety: 'read', pageRoute: { origin: 'https://example.com', pathname: '/entry',
+      navigation: { resultOrigin: 'https://example.org:8443', pathname: '/items/:id', pathParameters: [{ segmentIndex: 1, name: 'itemId', description: 'Public item ID' }] } } }] };
+  const tabs = [{ id: 1, url: 'https://example.com/items/007' }, { id: 2, url: 'https://example.org:8443/entry' },
+    { id: 3, url: 'https://example.org/items/007' }, { id: 4, url: 'https://example.org:8443/items/007' }];
+  const worker = loadServiceWorker({ tabs, managedCatalog: { available: true, managedNames: ['fixture'], adapters: [manifest] } });
+  const executed = [];
+  worker.context.getHostAdapterRuntime = () => ({ execute: async tabId => { executed.push(tabId); return 'fixture-result'; } });
+  assert.equal((await worker.callNativeTool('fixture.read-page')).result, 'fixture-result');
+  assert.deepEqual(executed, [4]);
+  tabs[3].url = 'https://example.org:8443/items/:id';
+  assert.equal((await worker.callNativeTool('fixture.read-page')).result.error.code, 'PAGE_SOURCE_ROUTE_MISSING');
+  assert.deepEqual(executed, [4]); assert.equal(tabs.length, 4);
+});
+
+test('cross-origin preview never substitutes a matching tab for a missing or departed task tab', async () => {
+  const route = { origin: 'https://example.com', pathname: '/entry', navigation: { resultOrigin: 'https://example.org', pathname: '/items/:id' } };
+  const worker = loadServiceWorker({ tabs: [{ id: 1, url: 'https://example.org/other' }, { id: 2, url: 'https://example.org/items/007' }] });
+  worker.context.findGenerationPreviewTab = () => { throw Error('Must not search for a replacement preview tab'); };
+  for (const tabId of [1, 999, undefined]) {
+    const result = await worker.context.validateGenerationPreview({ previewAdapterId: 'generation_preview_example', siteKey: 'example.com', tabId,
+      previewBundle: { manifest: { commands: [{ pageRoute: route }] } } });
+    assert.equal(result.passed, false);
+  }
+  assert.equal(worker.sentToTabs.length, 0);
+});
+
 test("managed background calls select the offscreen runner without opening a site tab", async () => {
   const manifest = { name: 'fixture', match: ['example.com'], runtime_allowed_hosts: ['api.example.org'],
     _hostSnapshot: { name: 'fixture', profile: 'public', digest: 'fixture-digest' },

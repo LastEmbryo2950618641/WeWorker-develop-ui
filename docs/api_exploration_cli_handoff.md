@@ -1,6 +1,6 @@
 # API 自动探索 CLI 改造跟进与交接
 
-> 更新日期：2026-10-18。用户在本对话明确恢复持续目标，当前 active；498ba61 干净起点与 53acae7 代码检查点已核对。下文暂停为历史结束状态。完整余项以能力台账为准，B01 hash/有界循环与分支在 d0e8ea9 已验证（完整双打包 99 项）；跨源主文档下一实现未提交、未实机，整体 active。
+> 更新日期：2026-10-18。用户在本对话明确恢复持续目标，当前 active；498ba61 干净起点与 53acae7 代码检查点已核对。下文暂停为历史结束状态。完整余项以能力台账为准，B01 hash/有界循环与分支在 d0e8ea9 已验证（完整双打包 99 项）；跨源主文档实现未提交，源码首轮 8 项已过（5GCrtt），扩展验收与最终回归进行中，整体 active。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
 
 ## 新会话从这里接手
@@ -874,3 +874,14 @@ npm run test:exploration:browser --prefix webcli -- \
 - 阶段验证汇总：WebCLI **127 文件/1427 项**、聚焦 **69 项**、扩展 **53 项**；源码控制 **7 项** dZJaoz、最终打包控制 **8 项** Y3nbGm、hash 专项 **9 项** c4GzcD、双打包 HTTP **24 项** uL2N25；构建/配置/3 配置测试/28 文件语法/探索 Skill/npm pack **630 文件**与字节一致性通过。只证明 d0e8ea9 阶段，不覆盖下列未提交跨源代码。
 - 已继续下一 B01：跨源 origin 规范化 helper、navigate.resultOrigin、workflow step.origin、任务 allowedOrigins 限制、manifest match/权限、route 选择与 preview 固定任务 tab 开始实现。普通 observe/collect/write 的 checkTab 默认仍要求原 origin，仅声明读路由允许有限目的地；旧 profile 在派发前拒绝。**新 capability 尚未在扩展公告，当前没有跨源实机或完整回归通过，不得算完成。** frame 暂无实现。
 - 下一实现当前单元：origin helper 最初 4 项、主机聚焦 55 项、profile/服务聚焦 63 项、扩展 navigation/tool-route 39 项通过，均不足以验收跨源。service-worker 测试 loader 缺新增 import 导致旧 route 用例失败，补同步注入后 39 项通过。跨源支持后续仍需预览恢复/重复调用/修复/取消重启与双打包真实两个 loopback origin 验证；当前半成品不要误并为 d0e8ea9 的已验结果。
+
+### 2026-10-18：跨源主文档首轮源码实机（active）
+
+- 新 capability page_navigation_origin_v1 已在扩展公告，取代上一条“尚未公告”的进度状态。源码 Chromium 1217 5GCrtt/report.json **8 项通过**，日志 /tmp/weworker-origins-source.log：未声明 origin 零派发，single/workflow 的生成、双作者值、安装、重复普通调用、知识、重定向拒绝，single 提取 repair，取消和 Bridge 重启不重放。该首轮尚未覆盖跨源 hash/往返/作者取消，扩展脚本 BcTHOC 运行中。
+- 新增精确端口与 origin/path 组合单测；全量 WebCLI、扩展聚焦正在运行。实现/文档/Skill 未提交，不把此前 d0e8ea9 的 99 项全量冒称为跨源验证。完整范围继续执行，frame 暂无实现。
+
+- 扩展跨源验收源码 **11 项** 2zWcqF，通过 hash、A→B→A、到目的源后 Bridge 重启再验证、作者取消；双打包专项 **11 项** r9KzgD，通过连续 12 次 workflow 普通调用及相同完整 hash 只 reload 一次。各 **85 产品文件/0 私有绑定** 隐私检查通过，额外检查观察标记未保存。HTTP 双打包 **24 项** 4UrDmJ、390 文件/14 私有绑定通过。
+- 当前 WebCLI **128 文件/1436 项** /tmp/weworker-origins-all.log；最终主机聚焦 **64 项**、runtime-validator **5 项**，扩展导航/workflow/tool-route/preview **60 项**通过。CLI/Bridge 构建、公共配置/3 测试、25 文件语法、探索 Skill、npm pack **632 文件**（包含 origins helper）及 70 项源码/扩展产物/Skill 字节一致性通过。最后改动是帮助文本与额外测试；完整双打包正在 /tmp/weworker-origins-bundled-full.log 运行，不提前计通过。
+- 失败保留：BcTHOC 在 workflow 第二次普通调用返回无 data，夹具直接取 data.item 而未保留具体 error 导致 TypeError。未改生产逻辑或放宽断言；补完整 ok/error 断言后，2zWcqF 与连续 12 调用的 r9KzgD 均未复现。**该一次异常原因仍未知，不写成已修复**，完整回归继续观察。新 preview 单测首轮 fixture ID 未使用 generation_preview_ 前缀，改为实际合法 ID 后 60 项通过；没有改生产前缀校验。
+
+- B01 frame 已做独立方案探针 DAKfnA：复用实际 ensureCdpAttached/withBrowserFrameContext，DOM owner 对应 5 个主/子/嵌套跨源文档并区分两个相同 URL；仅证明身份解析可行，生成工作流暂无实现。首次 SW 动态 import 与直接 attach 两种探针失败均记录于上下文审计；生产代码未因探针变更。完整跨源回归继续，保存实现检查点后继续 frame，不暂停目标。

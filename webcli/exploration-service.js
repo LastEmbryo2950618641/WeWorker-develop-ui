@@ -1,3 +1,4 @@
+import { usesWorkflowOrigins, pageSourceOriginTargets, matchesOriginTarget } from './page-workflow-origins.js';
 import { usesWorkflowControl } from './page-workflow-control.js';
 import { normalizePageQuery, pageQueryValues } from './exploration-query.js';
 import { navigationParameters, usesNavigationQuery, usesNavigationHash } from './page-navigation-parameters.js';
@@ -146,10 +147,10 @@ export class ExplorationService {
     });
   }
 
-  async checkTab(run) {
+  async checkTab(run, readTargets = []) {
     if (run.mode === 'http') return { id: null, url: run.origin };
     const tab = (await this.tabs()).find(tab => tab.id === run.tabId);
-    if (!tab || new URL(tab.url).origin !== run.origin) throw fail('TAB_CHANGED', 'The task tab is closed or belongs to a different origin. Select the intended page before continuing.');
+    if (!tab || new URL(tab.url).origin !== run.origin && !readTargets.some(target => matchesOriginTarget(new URL(tab.url), target, true))) throw fail('TAB_CHANGED', 'The task tab is closed or belongs to a different origin. Select the intended page before continuing.');
     if (run.browserIdentity) {
       const result = await this.request({ type: 'browser_execute', command: 'identity', args: {}, tabId: run.tabId, identity: run.browserIdentity }, 15000);
       if (!result?.ok) throw fail(result?.error?.code || 'SESSION_EXPIRED', result?.error?.message || 'Task browser tab identity expired. Start a new task in the intended tab.');
@@ -299,6 +300,7 @@ export class ExplorationService {
       if (query && args.source?.mode === 'workflow' && !this.capabilities().capabilities.includes('page_workflow_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension to execute ordered page workflows.');
       if (intercept && !this.capabilities().capabilities.includes('intercept_read_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension to observe intercepted page queries.');
       const source = query ? normalizePageQuery(args.source) : intercept ? normalizeInterceptSource(args.source, run.candidates) : normalizePageSource(args.source), reason = textArg(args.reason, 'reason');
+      if (query && usesWorkflowOrigins(source) && !this.capabilities().capabilities.includes('page_navigation_origin_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before explicit cross-origin page reading.');
       if (query && usesWorkflowControl(source) && !this.capabilities().capabilities.includes('page_workflow_control_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before conditional or repeated page workflows.');
       if (query && usesNavigationHash(source) && !this.capabilities().capabilities.includes('page_navigation_hash_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before hash navigation.');
       if (query && usesNavigationQuery(source) && !this.capabilities().capabilities.includes('page_navigation_query_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before navigating public URL query parameters.');
@@ -307,7 +309,9 @@ export class ExplorationService {
         const tab = await this.checkTab(run);
         if (signal.aborted) return;
         const page = new URL(tab.url);
-        const operationId = source.mode === 'workflow' || usesNavigationHash(source) ? randomUUID() : undefined;
+        const readTargets = query && usesWorkflowOrigins(source) ? pageSourceOriginTargets(source, run.origin, page.pathname) : [];
+        if (readTargets.some(target => ![run.origin, ...(run.allowedOrigins || [])].includes(target.origin))) throw fail('PAGE_ORIGIN_NOT_ALLOWED', 'Declare each navigation origin in start.allowedOrigins before observing it.');
+        const operationId = source.mode === 'workflow' || usesNavigationHash(source) || usesWorkflowOrigins(source) ? randomUUID() : undefined;
         const cancel = () => { this.request({ type: 'exploration_cancel_workflow', tabId: run.tabId, operationId }, 5000).catch(() => {}); };
         if (operationId) signal.addEventListener('abort', cancel, { once: true });
         let result;
@@ -317,7 +321,7 @@ export class ExplorationService {
         } finally { if (operationId) signal.removeEventListener('abort', cancel); }
         if (signal.aborted) return;
         if (!result?.ok) throw fail(result?.error?.code || 'PAGE_SOURCE_MISSING', result?.error?.message || 'Unable to observe the page source.');
-        const current = await this.checkTab(run);
+        const current = await this.checkTab(run, readTargets);
         if (signal.aborted) return;
         // The extension verifies the exact resolved route for navigation; tabs
         // summaries normalize numeric IDs, so they cannot compare raw arguments.
@@ -617,6 +621,7 @@ export class ExplorationService {
     if ((run.pageSources || []).some(item => ['query', 'navigate', 'workflow'].includes(item.source.mode)) && !this.capabilities().capabilities.includes('page_query_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating navigation-aware page queries.');
     if ((run.pageSources || []).some(item => item.source.mode === 'workflow') && !this.capabilities().capabilities.includes('page_workflow_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating ordered page workflows.');
     if ((run.pageSources || []).some(item => item.source.mode === 'navigate') && !this.capabilities().capabilities.includes('page_navigation_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating parameterized page routes.');
+    if ((run.pageSources || []).some(item => usesWorkflowOrigins(item.source)) && !this.capabilities().capabilities.includes('page_navigation_origin_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating explicit cross-origin page reading.');
     if ((run.pageSources || []).some(item => usesWorkflowControl(item.source)) && !this.capabilities().capabilities.includes('page_workflow_control_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating conditional or repeated page workflows.');
     if ((run.pageSources || []).some(item => usesNavigationHash(item.source)) && !this.capabilities().capabilities.includes('page_navigation_hash_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating hash navigation.');
     if ((run.pageSources || []).some(item => usesNavigationQuery(item.source)) && !this.capabilities().capabilities.includes('page_navigation_query_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating public URL query navigation.');
@@ -634,8 +639,10 @@ export class ExplorationService {
     if (Object.keys(run.verification || {}).length && !this.capabilities().capabilities.includes('strict_output_contract_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating authored assertions.');
     if (run.mode !== 'http') this.assertTabAvailable(run.tabId, run.taskId);
     run.review = null; run.runtimeDigest = null; run.runtimeSummary = null; run.preWriteDigest = null;
+    const pageIds = new Set((run.plan?.tools || []).filter(tool => tool.risk === 'read').map(tool => tool.sourcePageId));
+    const readTargets = (run.pageSources || []).filter(item => pageIds.has(item.id) && usesWorkflowOrigins(item.source)).flatMap(item => pageSourceOriginTargets(item.source, item.expectedOrigin, item.expectedPath));
     return this.launch(run, 'validating', async signal => {
-      await this.checkTab(run);
+      await this.checkTab(run, readTargets);
       if (signal.aborted) return;
       run.validation = validateAdapterDraft({ adapterDir: run.draft.adapterDir, expectedSiteKey: run.siteKey, expectedToolNames: run.draft.toolNames, paths: this.paths, repairScope: run.repairScope });
       if (!run.validation.passed) { this.update(run, 'draft', 'Static validation failed; inspect validation errors.'); return; }
@@ -654,7 +661,7 @@ export class ExplorationService {
       const runtime = readDraft.toolNames.length ? await this.runtimeValidator({ run: this.facade(run), draft: readDraft, signal, plan: run.plan, memory: run.memory, validation: run.validation, verification: run.verification })
         : { passed: true, executionSummary: { attempted: 0, passed: 0, failed: 0, skipped: 0 } };
       if (signal.aborted) return;
-      await this.checkTab(run);
+      await this.checkTab(run, readTargets);
       if (signal.aborted) return;
       // Persist only verifier summaries, never observed result bodies/test inputs.
       const counts = runtime.executionSummary;

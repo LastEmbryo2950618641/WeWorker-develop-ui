@@ -1,3 +1,4 @@
+import { normalizeWorkflowOrigin, workflowOriginRoutes } from './page-workflow-origins.js';
 /**
  * Adapter Package v2 — 校验、发现与解析
  *
@@ -189,13 +190,15 @@ export function validateV2Manifest(manifest, directoryName = "?") {
     if (command.pageRoute?.navigation !== undefined) {
       const route = command.pageRoute, navigation = route.navigation;
       let valid = command.pageWorkflow === true && navigation && typeof navigation === 'object' && !Array.isArray(navigation)
-        && Object.keys(navigation).every(key => ['pathname', 'pathParameters', 'queryParameters', 'hashNavigation'].includes(key)) && typeof navigation.pathname === 'string' && /^\/(?!\/)/.test(navigation.pathname);
+        && Object.keys(navigation).every(key => ['pathname', 'resultOrigin', 'pathParameters', 'queryParameters', 'hashNavigation'].includes(key)) && typeof navigation.pathname === 'string' && /^\/(?!\/)/.test(navigation.pathname);
       try {
-        const url = new URL(route.origin + navigation.pathname);
+        const resultOrigin = normalizeWorkflowOrigin(navigation.resultOrigin ?? route.origin);
+        if (!match?.some(host => new URL(resultOrigin).hostname === host || host.startsWith('*.') && new URL(resultOrigin).hostname.endsWith(host.slice(1)))) throw new Error('Destination host must be declared.');
+        const url = new URL(resultOrigin + navigation.pathname);
         const bindings = normalizePathParameters({ url: url.href }, (navigation.hashNavigation || navigation.queryParameters?.length) && navigation.pathParameters?.length === 0 ? undefined : navigation.pathParameters);
         const queries = normalizeNavigationQueryParameters(navigation.queryParameters, bindings);
         const hash = normalizeHashNavigation(navigation.hashNavigation, [...bindings, ...queries]);
-        valid &&= url.origin === route.origin && url.pathname === navigation.pathname && !url.search && !url.hash && ((bindings.length + queries.length) > 0 || hash)
+        valid &&= url.origin === resultOrigin && url.pathname === navigation.pathname && !url.search && !url.hash && ((bindings.length + queries.length) > 0 || hash)
           && JSON.stringify(hash) === JSON.stringify(navigation.hashNavigation)
           && JSON.stringify(queries) === JSON.stringify(navigation.queryParameters || [])
           && bindings.every(binding => navigation.pathname.slice(1).split('/')[binding.segmentIndex] === ':id')
@@ -206,6 +209,8 @@ export function validateV2Manifest(manifest, directoryName = "?") {
     if (command.pageRoute?.workflow !== undefined) {
       try {
         const source = validatePageWorkflowContract(command.pageRoute.workflow);
+        const routes = workflowOriginRoutes(source, command.pageRoute.origin);
+        if (routes.some(route => [route.origin, route.resultOrigin].some(origin => !match?.some(host => new URL(origin).hostname === host || host.startsWith('*.') && new URL(origin).hostname.endsWith(host.slice(1)))))) throw new Error('Workflow hosts must be declared.');
         if (command.pageWorkflow !== true || command.pageRoute.navigation || command.pageRoute.additionalPaths
           || source.steps[0].pathname !== command.pageRoute.pathname) throw new Error('Invalid entry route.');
       } catch { fail(adapterName, 'pageRoute.workflow requires a complete normalized read-only step sequence beginning at pathname.'); }

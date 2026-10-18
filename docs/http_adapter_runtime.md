@@ -1,6 +1,6 @@
 # 独立 HTTP Adapter 与探索策略
 
-2026-10-18 边界补充：只读页面 navigate 的 `queryParameters` / `hashNavigation` 与 workflow 的有界 `when/repeat/collect` 属于 Extension 页面读取契约（见开发设计），不改变 HTTP 鉴权/请求权限、PAGE_FETCH/UI 写 URL 或 effect.resultReadback 限制，不赋予业务写授权。
+2026-10-18 边界补充：只读页面 navigate 的 `queryParameters` / `hashNavigation` / 显式 `resultOrigin` 与 workflow 的明确 `origin` 与有界 `when/repeat/collect` 属于 Extension 页面读取契约（见开发设计），不改变 HTTP 鉴权/请求权限、PAGE_FETCH/UI 写 URL 或 effect.resultReadback 限制，不赋予业务写授权。
 
 2026-10-17：v2 包运行时 `http` 支持契约版本 `http.version=1|2`。version 2 增加宿主环境鉴权与 Cookie store/分区；兼容 version 1，旧宿主明确拒绝 version 2。它由 WebCLI 的 Node Worker 执行，与 Extension、Toolkit 各自的 Runner 分开。无需 Python、桌面客户端或模型 Key。
 

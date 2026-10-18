@@ -1,3 +1,4 @@
+import { normalizeWorkflowOrigin } from './page-workflow-origins.js';
 import { executePageHashNavigation } from './page-hash-navigation.js';
 import { executePageSource } from './page-source.js';
 import { pageWorkflowContract } from './page-workflow.js';
@@ -17,6 +18,7 @@ export function matchesPagePath(pathname, template) {
 }
 
 export function resolvePageDestination(origin, source, values = {}, allowStatic = false) {
+  try { origin = normalizeWorkflowOrigin(source.resultOrigin ?? origin); } catch (error) { throw fail('INVALID_PAGE_QUERY', error.message); }
   const url = new URL(origin + source.resultPathname);
   if (url.origin !== origin || url.pathname !== source.resultPathname || url.search || url.hash || url.username || url.password
     || !['http:', 'https:'].includes(url.protocol)) throw fail('INVALID_PAGE_QUERY', 'Invalid navigation route.');
@@ -55,6 +57,7 @@ export function assertPageQueryRoute(payload, command) {
     if (!route.navigation || payload.source.resultPathname !== route.navigation.pathname
       || JSON.stringify(payload.source.pathParameters) !== JSON.stringify(route.navigation.pathParameters)
       || JSON.stringify(payload.source.queryParameters) !== JSON.stringify(route.navigation.queryParameters)
+      || payload.source.resultOrigin !== route.navigation.resultOrigin
       || JSON.stringify(payload.source.hashNavigation) !== JSON.stringify(route.navigation.hashNavigation)) throw fail('INVALID_PAGE_QUERY', 'Navigation differs from the declared path/query bindings.');
     return resolvePageDestination(route.origin, payload.source, payload.values).href;
   }
@@ -68,7 +71,8 @@ export async function executePageNavigation({ chrome, ensureCdpAttached, tabId, 
   const destination = resolvePageDestination(expectedOrigin, source, values, allowStaticNavigation);
   if (source.hashNavigation) return executePageHashNavigation({ chrome, ensureCdpAttached, tabId, payload, destination, now, sleep, assertRunning, captureWorkflowPage });
   const initial = await chrome.tabs.get(tabId), initialUrl = new URL(initial.url);
-  if (initialUrl.origin !== expectedOrigin || (!matchesPagePath(initialUrl.pathname, expectedPath) && !matchesPagePath(initialUrl.pathname, source.resultPathname))) throw fail('PAGE_QUERY_ROUTE_CHANGED', 'Open the observed entry or a declared detail page.');
+  if (!(initialUrl.origin === expectedOrigin && matchesPagePath(initialUrl.pathname, expectedPath)
+    || initialUrl.origin === destination.origin && matchesPagePath(initialUrl.pathname, source.resultPathname))) throw fail('PAGE_QUERY_ROUTE_CHANGED', 'Open the observed entry or a declared detail page.');
   await ensureCdpAttached(tabId);
   await chrome.debugger.sendCommand({ tabId }, 'Page.enable');
   const initialFrame = (await chrome.debugger.sendCommand({ tabId }, 'Page.getFrameTree'))?.frameTree?.frame;
@@ -80,11 +84,11 @@ export async function executePageNavigation({ chrome, ensureCdpAttached, tabId, 
     if (method === 'Page.frameNavigated' && !params.frame?.parentId && params.frame?.id === initialFrame.id && params.frame.loaderId !== initialFrame.loaderId) {
       navigated = true; version++;
       currentLoaderId = params.frame.loaderId;
-      try { if (new URL(params.frame.url).origin !== expectedOrigin) error = fail('PAGE_QUERY_ORIGIN_CHANGED', 'Navigation left the declared origin.'); }
+      try { if (new URL(params.frame.url).origin !== destination.origin) error = fail('PAGE_QUERY_ORIGIN_CHANGED', 'Navigation left the declared origin.'); }
       catch { error = fail('PAGE_QUERY_ORIGIN_CHANGED', 'Navigation left the declared origin.'); }
     } else if (method === 'Page.navigatedWithinDocument' && params.frameId === initialFrame.id) {
       version++;
-      try { if (new URL(params.url).origin !== expectedOrigin) error = fail('PAGE_QUERY_ORIGIN_CHANGED', 'Navigation left the declared origin.'); }
+      try { if (new URL(params.url).origin !== destination.origin) error = fail('PAGE_QUERY_ORIGIN_CHANGED', 'Navigation left the declared origin.'); }
       catch { error = fail('PAGE_QUERY_ORIGIN_CHANGED', 'Navigation left the declared origin.'); }
     }
   };
@@ -104,11 +108,11 @@ export async function executePageNavigation({ chrome, ensureCdpAttached, tabId, 
       assertRunning();
       if (error) throw error;
       const current = await chrome.tabs.get(tabId), url = new URL(current.url);
-      if (url.origin !== expectedOrigin) throw fail('PAGE_QUERY_ORIGIN_CHANGED', 'Navigation left the declared origin.');
+      if (url.origin !== destination.origin && (navigated || url.href !== initialUrl.href)) throw fail('PAGE_QUERY_ORIGIN_CHANGED', 'Navigation left the declared origin.');
       if (navigated && current.status === 'complete') {
         if (url.href !== destination.href) throw fail('PAGE_QUERY_ROUTE_CHANGED', 'Navigation did not reach the requested page identifier.');
         const observedVersion = version;
-        const readPayload = { source: source.result, expectedOrigin, expectedPath: destination.pathname };
+        const readPayload = { source: source.result, expectedOrigin: destination.origin, expectedPath: destination.pathname };
         let result;
         try { result = await executePageSource(chrome, tabId, readPayload); } catch { result = null; }
         if (result?.ok && observedVersion === version) {
