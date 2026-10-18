@@ -1,6 +1,6 @@
 # API 自动探索 CLI 改造跟进与交接
 
-> 更新日期：2026-10-18。持续目标从 `6420583` 接续，仍 active；R01 写契约修复、R03 显式知识修订已隔离验证，managed 刷新竞争已修。最新 WebCLI 124 文件/1398 项、扩展 59 项、双打包完整 Chromium 82 项/最终写修复 6 项、HTTP 22 项；U01 skills/status/静态 validate 与 U02 AdapterHub 输出继续补齐。U03 1366 命令已建逐项候选映射，尚非行为对齐。以最新能力清单与文末记录为准；检查点不停止目标，Python 网站探索agent未动。
+> 更新日期：2026-10-18。持续目标仍 active；R01/R02/R03 修复与知识阶段均已隔离验证，最新双打包 Chromium 1217 完整 83 项、HTTP 24 项通过。U01 增加七类静态规范提示，WebCLI 最新 127 文件/1409 项、npm pack 625 文件；U05 外部 CLI 实际差距已审计。检查点不停止目标，后续 B01 动态 query/hash 正在核对，最新细节以文末为准；Python 网站探索agent未动。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
 
 ## 新会话从这里接手
@@ -793,3 +793,20 @@ npm run test:exploration:browser --prefix webcli -- \
 - 聚焦 3 文件 **26 项** `/tmp/weworker-eject-focused.log`；源码/打包独立真实 HTTP 各 **3 项** `webcli-export-acceptance-5eEGqe` / `webcli-export-acceptance-RQVmQq`，日志 `/tmp/weworker-eject-source-final.log` / `/tmp/weworker-eject-bundled.log`。实际三次 GET 分别返回 builtin→edited→builtin，复制阶段零请求，原文件及编辑副本保留。首轮 le55gu 误以为对象 call 在 result 字段，修正脚本读取既有顶层对象后通过；未改变生产返回。
 - WebCLI **125 文件/1401 项**通过 `/tmp/weworker-eject-all.log`；CLI 构建、npm prepack/pack dry-run **624 文件**通过（`/tmp/weworker-eject-build.log`、`/tmp/weworker-eject-pack.json`）。这轮没有改 Extension/HTTP 执行或写契约，不重复完整浏览器；沿用上一阶段的对应证据。Python 网站探索agent和受限文件未动，无 push/PR/新聊天/子 Agent。
 - 下一项 R02 已核对现有 writeRepairDraft/verifyRepairRetention：共享文件确实完全冻结，不能靠已有 draft-write 声称可修。拟以显式 sharedFiles 绑定服务 scope，并保守要求该包全部命令进入修复计划/重验，不信任作者声称的依赖子集；默认 validate 仍不实际写，含写命令仍需全部独立效果/新确认，未验证不得安装。实现和实机验证未开始，不标完成。
+
+
+### 2026-10-18：5941067 后继续 R02 共享修复与管理审计（active）
+
+- R02 `repair.sharedFiles` 绑定已有 internal 文本（最多 50 文件/每个 250000 字节、UTF-8 无 NUL），服务要求全包命令进入计划，不信任作者依赖子集；未选文件/权限保护，禁止增删。默认 validate 零写，所有读 cases 和所有写的新精确审阅/真实独立效果必须通过。编辑共享 helper 使旧审阅失效，历史执行/ID/授权不继承；原持久消费/uncertain 限制保持。
+- 真实浏览器发现生成包自带登录辅助命令被旧策略固定跳过，导致全包重验不能完成，安装门禁正确拒绝。已仅为服务修复 scope 中的明确 read 计划、匹配新证据且有作者 cases 的辅助命令启用验证；普通生成仍跳过，缺证据/错 fingerprint/write 计划不能启用。源码 Chromium 1217 专项 **3 项** Q5Xhx9 通过，早于最后 read/fingerprint 显式条件加固；最终加固由全量及双打包覆盖。
+- 源码/双打包 HTTP **各 24 项** A0l4bO/A94uMb 通过（日志 `/tmp/weworker-shared-http-source-final.log`、`/tmp/weworker-shared-http-bundled.log`）：两个真实读命令和一个真实写共享 mapper，部分计划拒绝，漂移失败，修复/三命令重验，helper 后改使旧审阅失效，新一次 PUT 效果、安装/重启无重放。前一源码 nUw2JN 24 项未覆盖后改审阅断言，不代替最终报告。
+- R02 WebCLI **126 文件/1406 项** `/tmp/weworker-shared-all-final.log`；源码及打包 CLI/Bridge 构建、配置/3 测试、11 JS/MJS 语法、探索 Skill、npm pack 624 文件通过。HTTP 最终 **390 文件/14 私有绑定**、源码页面专项 **50 文件**隐私扫描通过。完整双打包 Chromium 在运行，报告 8pxFNg、日志 `/tmp/weworker-shared-browser-bundled-full.log`，未完成前不算通过。
+- 失败保留：T1g5GO 验收脚本误读 bodyKind 层级；tAuNfc 初始计划误用 repair 的 kebab 名，生成期应 snake_case；Dvftsc 未计入生成登录辅助命令；Mmziq9 暴露上述实际跳过缺口。修正时未弱化真实效果或全包计数。辅助策略单测发现 read 计划条件不足后补强，最终全量通过；误重复 --run/根目录 npm 仅是调用错误，没有据此计通过。
+- U05 完成 1.8.8 external.js/YAML/CLI 静态审计，13 内置元数据与注册/安装/原样 stdio 透传是本项目实际差距；Toolkit 不等价。见 opencli_external_audit.md，尚无实现或实机通过，不执行上游全局安装命令。
+- U01 新增 `adapter convention-audit`，复用包来源/摘要与静态语法，不执行作者代码。七类声明/启发式提示附相对位置；混合大小写、反向写操作不是强制规则，不自动改名或增加删除。动态/helper/Toolkit/legacy 分析不在该范围，提示不是行为正确性证据。源码/打包各 **3 项** 6hyorY/QIgjeh（日志 `/tmp/weworker-conventions-source-final.log`、`/tmp/weworker-conventions-bundled.log`），聚焦 **7 项**、全量 **127 文件/1409 项** `/tmp/weworker-conventions-all.log` 通过。初版 fybebU 发现 results 被表格自动选择导致隐藏 findings，改报告 packages 结构保留所有格式提示，未削弱断言。最后增加结构化帮助行，需打包和聚焦复核。
+- 全部工作使用当前分支，未 push/PR/创建新聊天/子 Agent；Python 网站探索agent、CI/CD、发布、数据库 schema、.env、密钥与依赖未动，没有删除仓库文件。整体目标 active；R02 最终浏览器、管理入口与完整台账均继续推进。
+
+- U01 最终帮助/打包补录：最终双打包 CLI 静态审计 **3 项** `webcli-conventions-acceptance-dAtyu9`，聚焦 **7 项** `/tmp/weworker-conventions-focused-complete.log`，CLI build/prepack/pack **625 文件**（新 adapter-conventions.js）通过。源码 6hyorY、早期打包 QIgjeh 保留；最终包未改 Bridge/Extension 路径，不重复运行浏览器。探索 Skill 校验与公开配置通过；通用 Skill 既有 version 字段兼容限制保持，不声称其 system quick_validate 通过。
+
+- R02 最终完整验收：Chromium revision 1217 双打包 **83 项全部通过**，报告 `webcli-browser-acceptance-8pxFNg/report.json`，日志 `/tmp/weworker-shared-browser-bundled-full.log`。此快照包含最终 R02 辅助命令 read/fingerprint 守卫及此前 managed 刷新加固，未包含并行开发的纯 CLI convention-audit。最新静态管理改动另由全量 1409/最终打包 dAtyu9 覆盖。最终 **3867 文件/28 私有 resultBinding** 隐私扫描通过 `/tmp/weworker-shared-browser-privacy.log`。无需日常 Chrome/用户 Bridge，1194/平台/独立 Agent/真实账户欠账保持。
+- 本检查点之后继续 B01：已核对宿主 normalizePageQuery 与扩展 resolvePageDestination，navigate 确实只接受路径段，不支持声明式 query/hash；现有 search 的 matchQuery 仅校验搜索控件结果，不等价。下一步复用精确路径/文档身份/不重放/两组参数断言与安装权限，处理动态 URL 查询/片段，尚未实现，不标完成。整体目标继续 active。

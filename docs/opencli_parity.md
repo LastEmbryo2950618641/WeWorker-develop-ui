@@ -12,7 +12,7 @@
 | V02 | 已验证 | HTTP/PAGE_FETCH/原生 UI 单写、字符串/安全整数实际 ID、UI 新回执 ID、有界效果 GET；默认 validate 不写、持久消费与 uncertain 只读恢复保持 |
 | V03 | 已验证 | HTTP 单请求写定向 repair；6420583 阶段全量 1355 项、HTTP 源码/双打包各 21 项、Chromium 1217 双打包 77 项，不覆盖后续改动 |
 | R01 | 已验证 | PAGE_FETCH/UI 写契约定向修复，新计划/同源/方法/幂等保护、历史 fixture 重新规范化、派发前基线复核；源码专项 6 项、双打包完整 82 项与最终专项 6 项。managed 刷新竞争已修，详见交接末尾 |
-| R02 | 部分实现 | 共享文件修复：当前保护共享文件；需显式影响范围和所有受影响命令重验 |
+| R02 | 已验证 | 显式已有 internal 文本共享范围、全包命令重验（含辅助命令）；历史授权不继承，编辑使审阅失效。126 文件/1406 测试、源码/双打包 HTTP 各 24、双打包 Chromium 完整 83 通过；3867 文件/28 私有绑定隐私检查通过。50 命令/50 文件/250000 字节边界保留 |
 | R03 | 已验证 | knowledge-revise 绑定当前已验证读取 cases/独立写效果，CAS/旧映射/理由/证据摘要和完整历史；源码/打包 HTTP 各 22 项、双打包 UI 12 项和完整 82 项；不继承授权、不执行请求 |
 | W01 | 部分实现 | 受控 input/change、自动保存与自定义 UI 写控件 |
 | W02 | 部分实现 | hidden CSRF、click/Enter、整页提交导航、Shadow/frame 写生成契约 |
@@ -24,11 +24,11 @@
 | B04 | 部分实现 | AX/Shadow/子 frame 截图、任意设备模拟恢复 |
 | A01 | 部分实现 | YAML/API 文档发现与更广引用解析 |
 | A02 | 部分实现 | 站点签名/OAuth；按上游和实际站点契约审计，不能把 HMAC 视为全部认证 |
-| U01 | 已审计／部分实现 | 随包 skills list/read、v2 status/目录与已安装静态 validate 已补；源码/打包 Skill 各 4 项、管理各 5 项。eject 新目录复制/显式 develop-use 已验（源码/打包各 3 项）；统一 verify/evidence、convention-audit、Git/monorepo、legacy 和 Toolkit 诊断仍开放，见管理审计文档 |
+| U01 | 已审计／部分实现 | 随包 skills list/read、v2 status/目录与已安装静态 validate 已补；源码/打包 Skill 各 4 项、管理各 5 项。eject 新目录复制/显式 develop-use 已验（源码/打包各 3 项）；convention-audit 七类静态提示源码/最终打包各 3 项已验；统一 verify/evidence、Git/monorepo、legacy 和 Toolkit 诊断仍开放，见管理审计文档 |
 | U02 | 部分实现／继续核对入口 | 六格式/md/yml、JSONL 和 Bash/Zsh/Fish 补全已验；AdapterHub 复用 JSON 路径输出结果/help/错误，源码/打包管理各 5、输出各 5、补全各 4 项。其他 Adapter/服务管理格式、发布与凭据路径实际验收仍开放 |
 | U03 | 初步映射／行为审计未完成 | 1.8.8 的 1366 命令/179 分组逐项台账见 opencli_command_map_1_8_8.json；当前 33 包，150 名称候选、36 同包未匹配、1180 历史无映射。候选不是对齐，无映射不是已证明不存在；全部留待源码/行为与实机证据复核 |
 | U04 | 待审计 | 外部 CDP/Electron 目标；不开发 OpenCLI 桌面客户端 |
-| U05 | 待审计 | external CLI 注册/安装/透传；不混同 Toolkit Runner |
+| U05 | 已审计／实际差距待实现 | 1.8.8 external.js 与 cli.js：13 个内置元数据、用户注册、PATH 查找、安装和原样 stdio/退出码透传；本项目无对应注册/执行入口，Toolkit Runner 不等价。审计见 opencli_external_audit.md；尚无本项目实现/实机证据 |
 | U06 | 待审计 | Worker 网络/流式 body/持久回放，对照上游实际实现 |
 | E01 | 验收欠账 | Chromium 1194 Shadow/frame 兼容，其他浏览器与系统 |
 | E02 | 验收欠账 | macOS arm64/x64、Windows 实际安装包；发布/受限配置仍单独授权 |

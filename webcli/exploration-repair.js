@@ -22,10 +22,24 @@ export function repairTarget(site, paths) {
   return { target, pkg: readPackageDirectory(target.root) };
 }
 
-export function writeRepairDraft({ site, expectedDigest, plan, memory, candidates, outputRoot, paths }) {
+export function writeRepairDraft({ site, expectedDigest, plan, memory, candidates, outputRoot, paths, sharedFiles }) {
   const { target, pkg } = repairTarget(site, paths);
   if (pkg.digest !== expectedDigest || memory.generationBaseline?.digest !== expectedDigest || memory.siteKey !== site) throw fail('ADAPTER_BASE_CHANGED', 'Read repair-info and collect current evidence before repairing this Adapter.');
   const commandIds = plan.tools.map(tool => tool.name);
+  const shared = sharedFiles === undefined ? [] : sharedFiles;
+  if (!Array.isArray(shared) || shared.length > 50 || new Set(shared).size !== shared.length
+    || shared.some(file => typeof file !== 'string' || !/^(?:extension|http)\/internal\/[a-zA-Z0-9][a-zA-Z0-9_./-]*$/.test(file)
+      || file.split('/').some(part => !part || part === '.' || part === '..') || !pkg.files.has(file))) {
+    throw fail('REPAIR_SHARED_FILES_INVALID', 'Select at most 50 unique existing internal text files.');
+  }
+  for (const file of shared) {
+    const bytes = pkg.files.get(file);
+    try { if (bytes.length > 250000 || new TextDecoder('utf-8', { fatal: true }).decode(bytes).includes('\0')) throw Error('not text'); }
+    catch { throw fail('REPAIR_SHARED_FILES_INVALID', 'Shared repair only edits UTF-8 text files up to 250000 bytes.'); }
+  }
+  if (shared.length && (commandIds.length !== pkg.commands.length || pkg.commands.some(command => !commandIds.includes(command.id)))) {
+    throw fail('REPAIR_SHARED_SCOPE_INCOMPLETE', 'Shared file repair requires every package command in the plan and fresh verification for all of them.');
+  }
   const pageWriteContracts = {};
   for (const tool of plan.tools) {
     const command = pkg.commands.find(item => item.id === tool.name);
@@ -44,6 +58,7 @@ export function writeRepairDraft({ site, expectedDigest, plan, memory, candidate
   }
   const writeCommandIds = plan.tools.filter(tool => tool.risk === 'write').map(tool => tool.name);
   const scope = { name: site, digest: pkg.digest, commandIds, ...(writeCommandIds.length ? { writeCommandIds } : {}),
+    ...(shared.length ? { sharedFiles: [...shared].sort(), impact: 'all-package-commands' } : {}),
     ...(Object.keys(pageWriteContracts).length ? { pageWriteContracts } : {}) };
   const manifest = { ...pkg.manifest, version: pkg.manifest.version.replace(/^(\d+)\.(\d+)\.(\d+).*$/, (_m, a, b, c) => `${a}.${b}.${Number(c) + 1}`) };
   manifest.commands = manifest.commands.map(command => {
@@ -70,7 +85,7 @@ export function writeRepairDraft({ site, expectedDigest, plan, memory, candidate
   assertManagedDirectory(evidenceDir);
   fs.mkdirSync(evidenceDir, { recursive: true, mode: 0o700 });
   fs.writeFileSync(assertManagedFile(evidenceDir, 'source.json'), JSON.stringify(evidence), { flag: 'wx', mode: 0o600 });
-  return { scope, editableFiles: ['manifest.json', ...pkg.manifest.commands.filter(item => commandIds.includes(item.id)).map(item => item.module)],
+  return { scope, editableFiles: ['manifest.json', ...pkg.manifest.commands.filter(item => commandIds.includes(item.id)).map(item => item.module), ...shared],
     draft: { packageFormat: 2, siteKey: site, adapterDir, mode: 'scoped_repair', toolNames: commandIds.map(id => `${site}.${id}`),
       managedBaseline: { profile: paths.profile, name: site, digest: pkg.digest, source: target.source } } };
 }

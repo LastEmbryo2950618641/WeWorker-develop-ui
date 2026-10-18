@@ -82,6 +82,7 @@ export async function adapterHelpJson() {
       { name: "info <id>", usage: "webcli adapter info <id>", description: "查看 adapter 的工具列表" },
       { name: "status", usage: "webcli adapter status [id]", description: "只读检查 v2 包候选、当前选择和失效诊断" },
       { name: "validate", usage: "webcli adapter validate <dir> | --installed [id]", description: "静态检查 v2 包和 JavaScript，不执行命令" },
+      { name: "convention-audit", usage: "webcli adapter convention-audit <dir> | --installed [id]", description: "只读规范提示；不证明运行或副作用正确" },
       { name: "eject", usage: "webcli adapter eject <id> --directory <new-dir>", description: "复制内置 v2 包到新的编辑目录；用 develop 显式选择" },
       { name: "install", usage: "webcli adapter install <id> | --url <url> | --file <path>", description: "安装 adapter（Hub/URL/本地文件）" },
       { name: "remove <id>", usage: "webcli adapter remove <id>", description: "移除 adapter" },
@@ -133,6 +134,10 @@ export async function adapterSiteHelpJson(adapterId) {
 }
 
 export async function runAdapterCli(args, { outputFormat } = {}) {
+  if (args[0] === 'convention-audit') {
+    const { runConventionAudit } = await import('./adapter-conventions.js');
+    return runConventionAudit(args.slice(1), { outputFormat });
+  }
   if (['status', 'validate'].includes(args[0])) {
     const { runAdapterDiagnostics } = await import('./adapter-diagnostics.js');
     return runAdapterDiagnostics(args, { outputFormat });

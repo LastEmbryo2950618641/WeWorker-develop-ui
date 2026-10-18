@@ -1,5 +1,11 @@
 # HTTP／Extension 写命令与副作用验证
 
+## 共享文件修复与写授权
+
+`repair.sharedFiles` 选择已有 internal 文本文件时，必须把包内全部读写命令放入计划；服务绑定完整影响范围。所有写命令的历史 fixture 仅供复验，不能导入旧 review、执行记录或真实 ID。validate 只跑 mock/读取 cases，必须逐个完成新精确审阅和独立真实效果后才能安装；修改任一共享文件使全包验证和旧审阅失效。取消、重启、丢响应不重放，uncertain 只读恢复不能安装。
+
+最多 50 个已有 internal 文本文件，每个 250000 字节；不增删文件，不扩大权限。文件与范围规范见 [共享修复设计](api_exploration_cli_design.md)。未显式选择的共享文件保持冻结；下文历史阶段中的“不支持共享修复”由本节更新。
+
 ## PAGE_FETCH/UI 写契约定向修复（2026-10-18）
 
 `repair` 可选择已安装的声明式 PAGE_FETCH 或 UI_SELECTOR 写命令。用原 canonical ID、同一种 strategy、新声明/观察来源和完整 pagePathname/bodyParameters/idempotency 或 uiWrite 计划描述当前契约。服务将新契约保存到 `repairScope.pageWriteContracts`，直接生成隔离 manifest；只接受该精确契约，草稿 source.json/manifest 不能扩大服务范围。
@@ -8,7 +14,7 @@
 
 历史 fixture 须匹配原安装摘要和 kind（extension_single_write_v1/ui_single_submit_v1），并按新契约重新规范化。选择器变化可复用待复验数据；请求字段变化使旧 fixture 不再匹配时明确跳过，作者按实际契约补写，不继承实际 ID、执行或授权。普通 validate 仍零真实写。新精确审阅、before GET、派发前持久消费、实际效果/数字 ID/有界 GET 和安装门禁复用原实现；最后一次异步 tab 身份检查后再同步核对安装基线，变化时不派发。
 
-取消/重启/丢响应不重放；只读恢复不能认证 uncertain。修复后重新走 review/install、授权内普通调用和 knowledge-save。自动化 `exploration-page-repair.test.js`；隔离实机 `verify-exploration-browser.mjs --page-repair-only`，双打包加 `--bundled-cli --bundled-bridge`。最新验证状态见交接末尾；共享文件修复、复杂控件和多步写保持待办。下文早期阶段的“写 repair 未支持”属于历史范围。
+取消/重启/丢响应不重放；只读恢复不能认证 uncertain。修复后重新走 review/install、授权内普通调用和 knowledge-save。自动化 `exploration-page-repair.test.js`；隔离实机 `verify-exploration-browser.mjs --page-repair-only`，双打包加 `--bundled-cli --bundled-bridge`。最新验证状态见交接末尾；显式共享文件修复见下节，复杂控件和多步写保持待办。下文早期阶段的“写 repair 未支持”属于历史范围。
 
 2026-10-18：独立探索新增 HTTP 写命令闭环。PUBLIC_API/AUTH_API 可在 `mode=http` 中无浏览器运行；COOKIE_API 沿用所选浏览器 profile 的凭据通道。最新增加 PAGE_FETCH 声明式 Extension 写：固定同源主文档、JSON 字符串字段映射、浏览器会话与明确服务端幂等契约。HTTP、PAGE_FETCH 与声明了公开回执 ID 的原生 UI 现支持公开字符串或显式非负安全整数 ID 的资源回查，三种写验证均支持显式 pending 状态的有界 GET 轮询。最新增加 UI_SELECTOR 同文档原生表单单次提交与输入关联 GET 效果验证（见末节）；复杂控件和多步写流程尚未接入，Python 网站探索agent不参与。
 

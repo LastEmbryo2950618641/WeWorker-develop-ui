@@ -179,6 +179,7 @@ export class ExplorationService {
     if (command === 'repair-info') {
       const { target, pkg } = repairTarget(args.site, this.paths);
       return { site: pkg.name, digest: pkg.digest, version: pkg.manifest.version, source: target.source, commands: pkg.manifest.commands,
+        sharedFiles: [...pkg.files.keys()].filter(file => /^(?:extension|http)\/internal\//.test(file)).sort(), sharedRepairImpact: 'all-package-commands',
         knowledge: this.knowledge.read(pkg.name, { activeDigest: pkg.digest }) };
     }
     if (command === 'knowledge-read') {
@@ -517,7 +518,8 @@ export class ExplorationService {
     if (repair) {
       if (plan.tools.some(tool => typeof tool.name !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(tool.name) || (!tool.sourcePageId && tool.sourceApiIndexes?.length !== 1))) throw fail('INVALID_PLAN', 'Repair plans use exact existing kebab-case IDs and one fresh API or page source per tool.');
       const prepared = writeRepairDraft({ site: textArg(repair.site, 'site', 128), expectedDigest: textArg(repair.expectedDigest, 'expectedDigest', 64),
-        plan, memory: run.memory, candidates: run.candidates, outputRoot: path.join(this.root, run.taskId, randomUUID()), paths: this.paths });
+        plan, memory: run.memory, candidates: run.candidates, sharedFiles: repair.sharedFiles,
+        outputRoot: path.join(this.root, run.taskId, randomUUID()), paths: this.paths });
       const knowledge = this.knowledge.read(run.siteKey, { activeDigest: prepared.scope.digest });
       const repairKnowledge = { hash: knowledge.hash, stale: knowledge.stale, staleReasons: knowledge.staleReasons,
         staleCommands: knowledge.staleCommands, importedTools: [] };

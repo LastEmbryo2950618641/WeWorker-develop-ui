@@ -81,6 +81,12 @@ export function verifyRepairRetention(before, pkg, scope) {
   if (scope.name !== before.name || scope.digest !== before.digest || !Array.isArray(scope.commandIds) || !scope.commandIds.length
     || scope.commandIds.length > 50 || new Set(scope.commandIds).size !== scope.commandIds.length) reject();
   const selected = new Set(scope.commandIds), modules = new Set();
+  const shared = scope.sharedFiles || [];
+  if (!Array.isArray(shared) || shared.length > 50 || new Set(shared).size !== shared.length
+    || shared.some(file => typeof file !== 'string' || !/^(?:extension|http)\/internal\/[a-zA-Z0-9][a-zA-Z0-9_./-]*$/.test(file)
+      || file.split('/').some(part => !part || part === '.' || part === '..') || !before.files.has(file))
+    || (shared.length && (scope.impact !== 'all-package-commands' || selected.size !== before.manifest.commands.length
+      || before.manifest.commands.some(command => !selected.has(command.id))))) reject();
   const writeIds = scope.writeCommandIds || [];
   if (!Array.isArray(writeIds) || new Set(writeIds).size !== writeIds.length || writeIds.some(id => !selected.has(id))) reject();
   const contracts = scope.pageWriteContracts || {};
@@ -99,6 +105,13 @@ export function verifyRepairRetention(before, pkg, scope) {
         || new URL(contract[key]?.url).origin !== command.pageRoute.origin
         || !isDeepStrictEqual(contract[key]?.idempotency, command[key].idempotency)) reject();
     } else if (contracts[id]) reject();
+  }
+  for (const file of shared) {
+    for (const bytes of [before.files.get(file), pkg.files.get(file)]) {
+      try { if (!bytes || bytes.length > 250000 || new TextDecoder('utf-8', { fatal: true }).decode(bytes).includes('\0')) reject(); }
+      catch { reject(); }
+    }
+    modules.add(file);
   }
   if (before.files.size !== pkg.files.size) reject();
   for (const [name, contents] of before.files) {

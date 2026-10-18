@@ -71,6 +71,7 @@ Adapters:
   <adapter> help                           单个 adapter 的命令列表（第二级）
   <adapter> <command> help                 单个命令参数说明（第三级）
   adapter validate <dir>                   校验 v2 adapter 包（结构+禁入文件，规范 docs/adapter_package_spec.md）
+  adapter convention-audit <dir>           静态规范审计（不执行命令；--installed [id] 检查已安装包）
   adapter list                             列出已安装的 adapter
   adapter list --json                      JSON 格式输出（含工具定义）
   adapter info <id>                        查看 adapter 的工具列表

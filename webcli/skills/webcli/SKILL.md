@@ -146,3 +146,8 @@ webcli adapter skill <id>        # 输出某适配器的 SKILL.md
 6. 工具返回错误时，最多重试 2 次。仍失败则告知用户。
 7. 如果调用报 `Extension not connected` / `Chrome扩展未连接`，不要盲目重试——这是 Chrome 扩展未加载（或目标站页面没打开）。引导用户完成上面的 **加载 Chrome 扩展**，然后重试。
 8. 需要登录的站点，先调用 `<domain>.check_login_status`。
+
+
+### 静态规范审计
+
+`webcli adapter convention-audit <directory>` 或 `--installed [id]` 不执行命令，复用 v2 包/来源/摘要校验并输出七类提示。未声明 safety 是配置事实；字段遗漏、混合大小写、limit 截断、catch 空返回、占位回退和缺反向写操作是启发式，需要按业务核实，不凭提示自动改名、删除或添加逆操作。结果 executed:false，六种格式保留 findings，存在提示/无效包退出 1；无提示不能代替真实调用和写效果验证。动态/helper/Toolkit/legacy 未覆盖。

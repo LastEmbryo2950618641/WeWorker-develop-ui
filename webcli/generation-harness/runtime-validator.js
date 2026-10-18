@@ -120,6 +120,7 @@ export function createPreviewRuntimeValidator({ requestExtension, restrictToExpe
         }),
         plan,
         memory,
+        repairedToolNames: repairScope ? repairScope.commandIds.map(id => `${repairScope.name}.${id}`) : [],
       }), verification);
       if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
       // Extension previews bound each batch to five calls. Every planned case

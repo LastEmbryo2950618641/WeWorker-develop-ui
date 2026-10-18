@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { verifyHttpWrites } from './write-acceptance.mjs';
 import { verifyWriteResults } from './write-result-acceptance.mjs';
 import { verifyWriteRepairs } from './write-repair-acceptance.mjs';
+import { verifySharedRepairs } from './shared-repair-acceptance.mjs';
 
 const exec = promisify(execFile), delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -172,6 +173,7 @@ try {
   await verifyHttpWrites({ call, waitTask, startBridge, stopBridge, pass });
   await verifyWriteResults({ call, startBridge, stopBridge, pass });
   await verifyWriteRepairs({ call, waitTask, startBridge, stopBridge, pass });
+  await verifySharedRepairs({ call, waitTask, startBridge, stopBridge, pass });
   async function assertClean(target) {
     const stat = await fs.stat(target).catch(() => null); if (!stat) return;
     if (stat.isDirectory()) { for (const name of await fs.readdir(target)) await assertClean(path.join(target, name)); }

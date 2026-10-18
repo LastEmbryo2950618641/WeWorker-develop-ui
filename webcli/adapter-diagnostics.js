@@ -44,12 +44,12 @@ function inspectPackage(pkg) {
     commands: pkg.commands.length, errors, warnings };
 }
 
-/** Reuses package/grant/digest checks; JS compilation never executes an Adapter. */
-export function validateAdapters({ directory, name, ...options } = {}) {
-  const results = [], diagnostics = [];
+/** Shared read-only collection: reject invalid or changed selected packages. */
+export function collectDiagnosticPackages({ directory, name, ...options } = {}) {
+  const packages = [], diagnostics = [];
   let profile = null;
   if (directory !== undefined) {
-    try { results.push(inspectPackage(readPackageDirectory(resolve(directory)))); }
+    try { packages.push({ pkg: readPackageDirectory(resolve(directory)) }); }
     catch (error) { diagnostics.push({ code: error.code || 'INVALID_ADAPTER_PACKAGE' }); }
   } else {
     if (name !== undefined) assertAdapterIdentity(name);
@@ -61,11 +61,18 @@ export function validateAdapters({ directory, name, ...options } = {}) {
       try {
         const pkg = readPackageDirectory(entry.root);
         if (pkg.digest !== entry.digest) { diagnostics.push({ name: entry.name, code: 'ADAPTER_CONTENT_CHANGED' }); continue; }
-        results.push({ ...inspectPackage(pkg), source: entry.source });
+        packages.push({ pkg, source: entry.source });
       } catch (error) { diagnostics.push({ name: entry.name, code: error.code || 'INVALID_ADAPTER_PACKAGE' }); }
     }
   }
-  return { ok: diagnostics.length === 0 && results.every(item => item.ok), scope: directory === undefined ? 'active-managed-v2' : 'package-directory',
+  return { packages, diagnostics, profile, scope: directory === undefined ? 'active-managed-v2' : 'package-directory' };
+}
+
+/** Reuses package/grant/digest checks; JS compilation never executes an Adapter. */
+export function validateAdapters(options = {}) {
+  const { packages, diagnostics, profile, scope } = collectDiagnosticPackages(options);
+  const results = packages.map(({ pkg, source }) => ({ ...inspectPackage(pkg), ...(source ? { source } : {}) }));
+  return { ok: diagnostics.length === 0 && results.every(item => item.ok), scope,
     profile, executed: false, results, diagnostics,
     summary: { packages: results.length, commands: results.reduce((count, item) => count + item.commands, 0),
       errors: diagnostics.length + results.reduce((count, item) => count + item.errors.length, 0),

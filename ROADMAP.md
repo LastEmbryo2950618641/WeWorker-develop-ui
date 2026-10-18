@@ -1,5 +1,11 @@
 # WeWorker Roadmap
 
+- 2026-10-18（U01 规范审计）：新增 adapter convention-audit，复用 v2 来源/摘要校验和只编译语法，七类配置/启发式提示不执行 Adapter。源码/最终打包各 3 项、聚焦 7 项、WebCLI 127 文件/1409 项通过，npm pack 625 文件含新模块。显示报告避免表格只展示包信息而丢提示；动态/helper/Toolkit/legacy 及统一 verify/evidence 仍开放。整体目标 active。
+
+
+- 2026-10-18（共享修复已验证）：R02 新增显式 sharedFiles 和服务绑定的全包影响范围，所有读/写命令重新验证；修复辅助命令被固定跳过的实际缺口。WebCLI 126 文件/1406 项、源码/双打包 HTTP 各 24 项、源码 Chromium 共享专项 3 项通过，最终双打包 Chromium 1217 完整 83 项及 3867 文件/28 私有绑定隐私扫描通过。U05 完成实际源码审计，确认 external CLI 注册/安装/透传为独立差距；整体目标 active，未改变 Python 网站探索agent或受限范围。
+
+
 - 2026-10-18（Adapter 导出编辑流程）：U01 新增 `adapter eject <id> --directory <new-dir>`，完整复制有效 builtin v2 包，禁止覆盖/managed 目录，不执行或激活；复用 develop/use 显式选择，切回保留编辑文件。源码/打包真实隔离 HTTP 各 3 项、聚焦 26 项、WebCLI 125 文件/1401 项、npm pack 624 文件通过。只修改 CLI/文档/Skill，未重新跑浏览器全量；U01 其他差距和整体目标保持 active，继续 R02 共享修复影响范围审计。
 
 - 2026-10-18（持续目标接续，整体进行中）：R01 PAGE_FETCH/UI 契约 repair、R03 有证据知识修订已实现并隔离验证；managed v2 目录刷新改为 clear/reinject，保留页面与不重放边界。WebCLI 124 文件/1398 项、扩展 59 项、Chromium 1217 双打包完整 82 项、UI 专项 12 项、最终修复专项 6 项、HTTP 双打包 22 项通过。U01 新增随包 Skill 原文读取（含 BOM）和 v2 status/静态 validate；U02 六格式/补全及 AdapterHub 输出接通，源码/打包 Skill 各 4、管理各 5、输出各 5、补全各 4 项通过。npm pack 623 文件；完整浏览器 3822 文件隐私检查通过。U03 建立 1366 命令/179 分组逐项候选映射，150 名称候选、36 同包未匹配、1180 历史无映射，全部仍需行为审计，不计为对齐。失败、快照差异与全部剩余边界见交接末尾；整体 active，Python 网站探索agent未动。
