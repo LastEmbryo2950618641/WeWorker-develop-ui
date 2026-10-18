@@ -1,3 +1,5 @@
+import { usesWorkflowOrigins } from './page-workflow-origins.js';
+import { usesWorkflowControl } from './page-workflow-control.js';
 /**
  * WebSocket Bridge
  *
@@ -9,6 +11,11 @@
 
 import { WebSocketServer } from "ws";
 import { EventEmitter } from "events";
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { BrowserProfiles, profileError } from './browser-profiles.js';
+import { usesNavigationQuery, usesNavigationHash } from './page-navigation-parameters.js';
+import { GenerationRunStore } from './generation-harness/run-store.js';
+import { createGenerationRunTransportSnapshot } from './generation-transport.js';
 import { execFile } from "child_process";
 import { promisify } from "util";
 import fs from "fs";
@@ -40,6 +47,8 @@ import { GenerationWorkerController } from './generation-worker-controller.js';
 import { buildApiSourceEvidence, normalizeRequestBodyEvidence, normalizeResponseBodyEvidence } from './generation-harness/source-evidence.js';
 import { buildPreviousFailureContext } from './generation-harness/failure-attribution.js';
 import { modelOutputErrorDetails } from './generation-harness/model-output-policy.js';
+import { TabOperationLocks } from './tab-operation-locks.js';
+import { assertReadRequest } from './exploration-host.js';
 
 const execFileAsync = promisify(execFile);
 const WS_PORT = 3711;
@@ -138,6 +147,21 @@ export async function handleBackendRuntimeFetch(payload = {}, traceID = null) {
   const requestBody = requestOptions.bodyEncoding === 'base64'
     ? Buffer.from(String(requestOptions.body || ''), 'base64')
     : requestOptions.body != null ? String(requestOptions.body) : undefined;
+  if (payload.backgroundPreviewRead === true) {
+    if (parsed.username || parsed.password || parsed.hash || requestOptions.bodyEncoding === 'base64'
+      || Object.keys(headers || {}).some(key => /method.override|^x-http-method$/i.test(key))) throw new Error('Background preview request is not a supported read.');
+    assertReadRequest({ url, method: method === 'HEAD' ? 'GET' : method, headers, body: requestBody }, parsed.origin, []);
+    const normalized = normalizeReplayRequest({ url, method, headers, body: requestBody, redirect: 'manual',
+      timeoutMs: 30000, responseEncoding: 'base64', maxResponseBytes: 4 * 1024 * 1024 });
+    // One bounded request, no curl/browser retry, no credential/body traces.
+    const result = await performApiReplayRequestViaFetch(normalized, fetch);
+    if (!result.ok) throw new Error('Background preview request failed; no retry was sent.');
+    const response = result.response;
+    if (response.status >= 300 && response.status < 400) throw new Error('Background preview does not follow redirects.');
+    return { status: response.status, ok: response.status >= 200 && response.status < 300,
+      headers: response.headers, body: Buffer.from(response.body, 'base64').toString('utf8'), url,
+      redirected: false, replay: response.replay };
+  }
   writeTrace(traceID, `[BridgeRuntime] backend_fetch request ${JSON.stringify({
     method,
     url,
@@ -479,12 +503,12 @@ function parseCurlResponseHeaders(rawHeaders) {
 }
 
 export class WebSocketBridge extends EventEmitter {
-  constructor() {
+  constructor({ workspaceDir, port = WS_PORT } = {}) {
     super();
+    this._port = port;
 
     /** @type {Map<string, { resolve: Function, reject: Function }>} */
     this._pendingRequests = new Map();
-    this._requestCounter = 0;
 
     /**
      * 调用分段观测：traceID -> { receivedAt, dispatchedAt, clientStartedAt, toolName }。
@@ -496,27 +520,12 @@ export class WebSocketBridge extends EventEmitter {
     /** @type {Set<import('ws').WebSocket>} 所有连接的客户端 */
     this._clients = new Set();
 
-    /** @type {import('ws').WebSocket | null} Chrome扩展的连接 */
-    this._extensionWs = null;
-    /** @type {string | null} Chrome扩展的版本号 */
-    this._extensionVersion = null;
-    /** @type {string[]} Chrome扩展声明的增量能力 */
-    this._extensionCapabilities = [];
-    /** @type {string | null} Chrome扩展连接的 Origin */
-    this._extensionOrigin = null;
-    // Credentials stay in this process, never in extension messages or capture data.
+    this._profiles = new BrowserProfiles(workspaceDir || resolveAdapterPaths().workspaceDir);
+    this._route = new AsyncLocalStorage();
+    this._services = new Map();
+    this._profileLocks = new Map();
+    this._workerControllers = new Map();
     this._captureModelContexts = new Map();
-    this._generationWorkers = new GenerationWorkerController({
-      requestExtension: (message, timeout) => this._request(message, timeout),
-    });
-    this._generationWorkers.on('event', (event, snapshot) => {
-      this._broadcast({
-        type: 'generation_run_event',
-        runId: event.runId,
-        event,
-        run: snapshot,
-      });
-    });
     this._adapterStateWatcher = null;
     try {
       this._adapterStateWatcher = watchAdapterState(resolveAdapterPaths(), (event) => {
@@ -578,10 +587,12 @@ export class WebSocketBridge extends EventEmitter {
 
   _startServer() {
     try {
-      this._wss = new WebSocketServer({ port: WS_PORT });
+      this._wss = new WebSocketServer({ port: this._port ?? WS_PORT });
 
       this._wss.on("connection", (ws, req) => {
         const origin = req?.headers?.origin;
+        const remoteAddress = req?.socket?.remoteAddress || '';
+        ws._explorationLocal = !origin && /^(127\.0\.0\.1|::1|::ffff:127\.0\.0\.1)$/.test(remoteAddress);
         if (!isAllowedBridgeOrigin(origin)) {
           process.stderr.write(`[${ts()}] [Bridge] Rejected WebSocket origin: ${origin}\n`);
           ws.close(1008, "Forbidden origin");
@@ -614,81 +625,85 @@ export class WebSocketBridge extends EventEmitter {
 
             // 如果是extension_hello消息，说明这是Chrome扩展
             if (msg.type === 'extension_hello') {
-              const wasConnected = this._extensionWs !== null;
-              this._extensionWs = ws;
-              if (msg.version) this._extensionVersion = msg.version;
-              this._extensionCapabilities = Array.isArray(msg.capabilities)
-                ? [...new Set(msg.capabilities.filter((item) => typeof item === 'string' && item.trim()))]
-                : [];
-              process.stderr.write(`[${ts()}] [Bridge] Identified Chrome extension connection #${connectionId}${msg.version ? ` (v${msg.version})` : ''}\n`);
               try {
-                ws.send(JSON.stringify({ type: 'extension_hello_ack', ts: Date.now(), capabilities: ['adapter_catalog_v1'] }));
-              } catch (e) {
-                process.stderr.write(`[${ts()}] [Bridge] Failed to ack extension hello: ${e.message}\n`);
+                const alreadyRegistered = Boolean(ws._browserConnection);
+                const connection = this._profiles.register(ws, msg);
+                ws.send(JSON.stringify({ type: 'extension_hello_ack', contextId: connection.contextId, connectionId: connection.connectionId,
+                  ts: Date.now(), capabilities: ['adapter_catalog_v1', 'browser_profiles_v1'] }));
+                sendInitialState();
+                if (!alreadyRegistered) this._broadcast({ type: 'extension_connected', contextId: connection.contextId, version: connection.version, capabilities: connection.capabilities });
+              } catch (error) {
+                ws.send(JSON.stringify({ type: 'extension_hello_error', error: { code: error.code || 'PROFILE_STORE_INVALID', message: error.message } }));
+                ws.close(1008, error.code || 'PROFILE_STORE_INVALID');
               }
-              sendInitialState();
-              // 如果这是扩展首次被识别（之前未连接），通知所有其他客户端
-              if (!wasConnected) {
-                this._broadcast({
-                  type: 'extension_connected',
-                  version: this._extensionVersion,
-                  capabilities: this._extensionCapabilities,
-                });
-              }
+              return;
             }
 
-            // 根据消息类型判断来源并处理
-            if (msg.type === 'extension_hello' || msg.type === 'call_tool_result' || msg.type === 'call_tool_error' || msg.type === 'get_active_tab_result' || msg.type === 'get_trace_logs_result' || msg.type === 'validate_generation_preview_result') {
-              // 来自Chrome扩展的消息
-              this._handleExtensionMessage(msg);
-            } else if (msg.type === 'write_adapter_file') {
-              // 来自扩展的文件写入请求
-              this._handleWriteAdapterFile(msg, ws);
-            } else if (msg.type === 'wecli_backend_fetch' || msg.type === 'wecli_backend_file_read' || msg.type === 'wecli_backend_xlsx_read' || msg.type === 'wecli_backend_file_write') {
-              this._handleWecliBackendRuntimeRequest(msg, ws);
-            } else if (msg.type === 'adapter_catalog' || msg.type === 'adapter_bundle') {
-              this._handleAdapterSnapshot(msg, ws);
-            } else if (msg.type === 'list_user_adapters') {
-              this._handleListUserAdapters(msg, ws);
-            } else if (msg.type === 'list_user_adapter_files') {
-              this._handleListUserAdapterFiles(msg, ws);
-            } else if (msg.type === 'read_user_adapter') {
-              this._handleReadUserAdapter(msg, ws);
-            } else if (msg.type === 'generate_adapter_scaffold') {
-              // 来自扩展的 scaffold 生成请求
-              this._handleGenerateAdapterScaffold(msg, ws);
-            } else if (msg.type === 'get_ai_config') {
-              this._handleGetAiConfig(msg, ws);
-            } else if (msg.type === 'save_ai_config') {
-              this._handleSaveAiConfig(msg, ws);
-            } else if (msg.type === 'test_ai_config') {
-              this._handleTestAiConfig(msg, ws);
-            } else if (msg.type === 'analyze_action_capture_result') {
-              this._handleAnalyzeActionCaptureResult(msg, ws);
-            } else if (msg.type === 'analyze_exploration_result') {
-              this._handleAnalyzeExplorationResult(msg, ws);
-            } else if (msg.type === 'generate_adapter_with_ai') {
-              // 来自扩展的 AI adapter 生成请求
-              this._handleGenerateAdapterWithAI(msg, ws);
-            } else if (msg.type === 'start_generation_run') {
-              this._handleStartGenerationRun(msg, ws);
-            } else if (msg.type === 'resume_generation_run') {
-              this._handleResumeGenerationRun(msg, ws);
-            } else if (msg.type === 'get_generation_run') {
-              this._handleGetGenerationRun(msg, ws);
-            } else if (msg.type === 'cancel_generation_run') {
-              this._handleCancelGenerationRun(msg, ws);
-            } else if (msg.type === 'publish_generation_run') {
-              this._handlePublishGenerationRun(msg, ws);
-            } else if (msg.type === 'client_action_capture_start' || msg.type === 'client_action_capture_analyze') {
-              // Local-only credential-bearing request; never forward this envelope.
-              this._handleClientRequest(msg);
-            } else if (msg.type === 'call_tool' || msg.type === 'get_active_tab' || msg.type === 'exploration_list_tabs' || msg.type === 'exploration_capture_passive' || msg.type === 'exploration_safe_actions_inspect' || msg.type === 'exploration_safe_probe_run' || msg.type === 'exploration_replay_candidate' || msg.type === 'exploration_action_capture_start' || msg.type === 'exploration_action_capture_stop' || msg.type === 'exploration_action_capture_get' || msg.type === 'exploration_action_capture_select' || msg.type === 'exploration_action_capture_clear' || msg.type === 'refresh_adapter_tabs' || msg.type === 'open_browser' || msg.type === 'capture_screenshot' || msg.type === 'reload_extension' || msg.type === 'refresh_registry' || msg.type === 'browser_state' || msg.type === 'browser_network' || msg.type === 'browser_eval' || msg.type === 'browser_analyze' || msg.type === 'browser_explore_workflow' || msg.type === 'browser_action_capture_workflow' || msg.type === 'get_trace_logs') {
-              // 来自CLI客户端的请求，需要转发给Chrome扩展或处理系统命令
-              this._handleClientRequest(msg);
-            } else {
-              process.stderr.write(`[${ts()}] [Bridge] Unknown message type: ${msg.type}\n`);
-            }
+            const dispatch = () => {
+              // 根据消息类型判断来源并处理
+              if (msg.type === 'list_tools_result' || msg.type === 'call_tool_result' || msg.type === 'call_tool_error' || msg.type === 'get_active_tab_result' || msg.type === 'get_trace_logs_result' || msg.type === 'validate_generation_preview_result') {
+                // 来自Chrome扩展的消息
+                this._handleExtensionMessage(msg, ws);
+              } else if (msg.type === 'profile_command') {
+                this._handleProfileCommand(msg, ws);
+              } else if (msg.type === 'exploration_command') {
+                // Reply only to the requesting local client. Task evidence must not
+                // be broadcast to the extension or unrelated CLI connections.
+                this._handleExplorationCommand(msg, ws);
+              } else if (msg.type === 'browser_command') {
+                this._handleBrowserCommand(msg, ws);
+              } else if (msg.type === 'write_adapter_file') {
+                // 来自扩展的文件写入请求
+                this._handleWriteAdapterFile(msg, ws);
+              } else if (msg.type === 'wecli_backend_fetch' || msg.type === 'wecli_backend_file_read' || msg.type === 'wecli_backend_xlsx_read' || msg.type === 'wecli_backend_file_write') {
+                this._handleWecliBackendRuntimeRequest(msg, ws);
+              } else if (msg.type === 'adapter_catalog' || msg.type === 'adapter_bundle') {
+                this._handleAdapterSnapshot(msg, ws);
+              } else if (msg.type === 'list_user_adapters') {
+                this._handleListUserAdapters(msg, ws);
+              } else if (msg.type === 'list_user_adapter_files') {
+                this._handleListUserAdapterFiles(msg, ws);
+              } else if (msg.type === 'read_user_adapter') {
+                this._handleReadUserAdapter(msg, ws);
+              } else if (msg.type === 'generate_adapter_scaffold') {
+                // 来自扩展的 scaffold 生成请求
+                this._routeWorkerRequest(msg, ws, () => this._handleGenerateAdapterScaffold(msg, ws));
+              } else if (msg.type === 'get_ai_config') {
+                this._handleGetAiConfig(msg, ws);
+              } else if (msg.type === 'save_ai_config') {
+                this._handleSaveAiConfig(msg, ws);
+              } else if (msg.type === 'test_ai_config') {
+                this._handleTestAiConfig(msg, ws);
+              } else if (msg.type === 'analyze_action_capture_result') {
+                this._handleAnalyzeActionCaptureResult(msg, ws);
+              } else if (msg.type === 'analyze_exploration_result') {
+                this._handleAnalyzeExplorationResult(msg, ws);
+              } else if (msg.type === 'generate_adapter_with_ai') {
+                // 来自扩展的 AI adapter 生成请求
+                this._routeWorkerRequest(msg, ws, () => this._handleGenerateAdapterWithAI(msg, ws));
+              } else if (msg.type === 'start_generation_run') {
+                this._routeWorkerRequest(msg, ws, () => this._handleStartGenerationRun(msg, ws));
+              } else if (msg.type === 'resume_generation_run') {
+                this._routeWorkerRequest(msg, ws, () => this._handleResumeGenerationRun(msg, ws));
+              } else if (msg.type === 'get_generation_run') {
+                this._routeWorkerRequest(msg, ws, () => this._handleGetGenerationRun(msg, ws));
+              } else if (msg.type === 'cancel_generation_run') {
+                this._routeWorkerRequest(msg, ws, () => this._handleCancelGenerationRun(msg, ws));
+              } else if (msg.type === 'publish_generation_run') {
+                this._routeWorkerRequest(msg, ws, () => this._handlePublishGenerationRun(msg, ws));
+              } else if (msg.type === 'client_action_capture_start' || msg.type === 'client_action_capture_analyze') {
+                // Local-only credential-bearing request; never forward this envelope.
+                this._routeClientRequest(msg, ws);
+              } else if (msg.type === 'call_tool' || msg.type === 'get_active_tab' || msg.type === 'exploration_list_tabs' || msg.type === 'exploration_capture_passive' || msg.type === 'exploration_safe_actions_inspect' || msg.type === 'exploration_safe_probe_run' || msg.type === 'exploration_replay_candidate' || msg.type === 'exploration_action_capture_start' || msg.type === 'exploration_action_capture_stop' || msg.type === 'exploration_action_capture_get' || msg.type === 'exploration_action_capture_select' || msg.type === 'exploration_action_capture_clear' || msg.type === 'refresh_adapter_tabs' || msg.type === 'open_browser' || msg.type === 'capture_screenshot' || msg.type === 'reload_extension' || msg.type === 'refresh_registry' || msg.type === 'browser_state' || msg.type === 'browser_network' || msg.type === 'browser_eval' || msg.type === 'browser_analyze' || msg.type === 'browser_explore_workflow' || msg.type === 'browser_action_capture_workflow' || msg.type === 'get_trace_logs') {
+                // 来自CLI客户端的请求，需要转发给Chrome扩展或处理系统命令
+                this._routeClientRequest(msg, ws);
+              } else {
+                process.stderr.write(`[${ts()}] [Bridge] Unknown message type: ${msg.type}\n`);
+              }
+            };
+            const source = ws._browserConnection;
+            if (source) this._route.run({ contextId: source.contextId, connection: source, client: ws }, dispatch);
+            else dispatch();
           } catch (err) {
             process.stderr.write(`[${ts()}] [Bridge] Error handling message: ${err.message}\n${err.stack}\n`);
           }
@@ -696,28 +711,26 @@ export class WebSocketBridge extends EventEmitter {
 
         ws.on("close", () => {
           this._clients.delete(ws);
-          if (this._extensionWs === ws) {
-            this._clearCaptureModelContexts();
-            this._extensionWs = null;
-            this._extensionCapabilities = [];
-            process.stderr.write(`[${ts()}] [Bridge] Chrome extension disconnected #${connectionId}\n`);
-            this._broadcast({ type: 'extension_disconnected' });
-          } else {
-            process.stderr.write(`[${ts()}] [Bridge] Connection #${connectionId} closed\n`);
+          const disconnected = this._profiles.disconnect(ws);
+          if (disconnected) {
+            for (const [id, pending] of this._pendingRequests) {
+              if (pending.ws !== ws) continue;
+              clearTimeout(pending.timer); this._pendingRequests.delete(id);
+              pending.reject(profileError('PROFILE_DISCONNECTED', 'The selected browser connection ended. Inspect state before explicitly retrying; actions are never replayed.'));
+            }
+            for (const [id, context] of this._captureModelContexts) if (context.connection === disconnected) this._deleteCaptureModelContext(id);
+            this._broadcast({ type: 'extension_disconnected', contextId: disconnected.contextId });
           }
+
         });
 
         ws.on("error", (err) => {
           process.stderr.write(`[${ts()}] [Bridge] Connection #${connectionId} error: ${err.message}\n`);
         });
 
-        // 如果是新连接，通知扩展连接状态
-        if (this.isExtensionConnected()) {
-          ws.send(JSON.stringify({
-            type: 'extension_connected',
-            version: this._extensionVersion,
-            capabilities: this._extensionCapabilities,
-          }));
+        for (const connection of this._profiles.connections.values()) {
+          ws.send(JSON.stringify({ type: 'extension_connected', contextId: connection.contextId,
+            version: connection.version, capabilities: connection.capabilities }));
         }
       });
 
@@ -768,43 +781,129 @@ export class WebSocketBridge extends EventEmitter {
 
   // ─── 处理来自扩展的消息 ────────────────────────────────────────────────────
 
-  _handleExtensionMessage(msg) {
-    if (msg.type === 'call_tool_error') {
-      for (const [contextId, context] of this._captureModelContexts) {
-        if (context.requestId === msg.id) this._deleteCaptureModelContext(contextId);
-      }
-    }
-    // 从 pending 请求中取出 traceID
+  _handleExtensionMessage(msg, ws) {
     const pending = this._pendingRequests.get(msg.id);
-    const traceID = pending?.traceID || msg.traceID || null;
-    const tracePrefix = traceID ? `[${traceID}] ` : '';
-
-    // 响应待处理请求（来自bridge自己的_request调用）
-    if (pending) {
-      this._pendingRequests.delete(msg.id);
-
-      if (msg.type === "call_tool_result") {
-        pending.resolve(msg.result);
-      } else if (msg.type === "call_tool_error") {
-        pending.reject(new Error(msg.error));
-      } else if (msg.type === "list_tools_result") {
-        pending.resolve(msg.tools);
-      } else if (msg.type === "get_active_tab_result") {
-        pending.resolve(msg.tabId);
-      } else if (msg.type === 'validate_generation_preview_result') {
-        if (msg.ok === false) pending.reject(new Error(msg.error || 'preview validation failed'));
-        else pending.resolve(msg.result || msg);
-      }
-      return;
-    }
-
-    // 如果不是bridge自己的请求，广播给所有客户端（来自CLI客户端的转发请求）
-    if (msg.type === "call_tool_result" || msg.type === "call_tool_error" || msg.type === "get_active_tab_result" || msg.type === "get_trace_logs_result") {
-      this._broadcast(msg);
-    }
+    if (!pending || pending.ws !== ws) return;
+    const accepted = new Set(['call_tool_result', 'call_tool_error', 'list_tools_result', 'get_active_tab_result', 'get_trace_logs_result', 'validate_generation_preview_result']);
+    if (!accepted.has(msg.type)) return;
+    clearTimeout(pending.timer); this._pendingRequests.delete(msg.id);
+    if (msg.type === 'call_tool_error' || msg.ok === false) pending.reject(Object.assign(new Error(msg.error || 'Extension request failed'), { code: msg.code }));
+    else if (pending.raw) pending.resolve(msg);
+    else if (msg.type === 'get_active_tab_result') pending.resolve(msg.tabId);
+    else if (msg.type === 'list_tools_result') pending.resolve(msg.tools);
+    else pending.resolve(msg.result ?? msg);
   }
 
-  // ─── 处理来自CLI客户端的请求 ─────────────────────────────────────────────────
+  get _extensionWs() { return this._profiles ? this._currentConnection()?.ws : this._legacyWs; }
+  set _extensionWs(value) { this._legacyWs = value; }
+  get _extensionCapabilities() { return this._profiles ? this._currentConnection()?.capabilities || [] : this._legacyCapabilities || []; }
+  set _extensionCapabilities(value) { this._legacyCapabilities = value; }
+  get _extensionVersion() { return this._currentConnection()?.version || null; }
+  _currentConnection() {
+    const route = this._route?.getStore();
+    if (route) return route.connection;
+    try { return this._profiles?.select().connection; } catch { return null; }
+  }
+  _reply(ws, message) {
+    const route = this._route?.getStore();
+    if (ws?.readyState === 1) ws.send(JSON.stringify({ ...(route ? { contextId: route.contextId } : {}), ...message }));
+  }
+  _runInProfile(msg, ws, fn, allowOffline = false) {
+    const source = ws?._browserConnection;
+    const route = source ? { contextId: source.contextId, connection: source } : this._profiles.select(msg.browserProfile, { allowOffline });
+    if (msg.browserConnectionId !== undefined && msg.browserConnectionId !== route.connection?.connectionId) throw profileError('PROFILE_DISCONNECTED', 'The selected browser connection changed. Start a new operation explicitly.');
+    return this._route.run({ ...route, client: ws }, fn);
+  }
+  async _handleProfileCommand(msg, ws) {
+    let result;
+    try {
+      if (ws._browserConnection || ws._explorationLocal !== true) throw profileError('LOCAL_CLI_REQUIRED', 'Profile management requires a local CLI.');
+      result = { schemaVersion: 1, ok: true, command: 'profile.' + msg.command, data: this._profiles.execute(msg.command, msg.args) };
+    } catch (error) { result = this._profileFailure(error); }
+    this._reply(ws, { type: 'profile_command_result', id: msg.id, result });
+  }
+  _profileFailure(error) {
+    return { schemaVersion: 1, ok: false, error: { code: error.code || 'PROFILE_SERVICE_FAILED', message: error.code ? error.message : 'Unable to initialize browser profile services. Check the local store.' } };
+  }
+  async _profileService(namespace) {
+    const route = this._route.getStore(), key = route.contextId + ':' + namespace;
+    if (!this._services.has(key)) {
+      const create = async () => {
+        const module = await import(namespace === 'browser' ? './browser-service.js' : './exploration-service.js');
+        const Service = namespace === 'browser' ? module.BrowserService : module.ExplorationService;
+        if (!this._profileLocks.has(route.contextId)) this._profileLocks.set(route.contextId, new TabOperationLocks());
+        return new Service({ rootDir: this._profiles.serviceRoot(route, namespace), readOnly: route.readOnly,
+          tabLocks: this._profileLocks.get(route.contextId), requestExtension: (message, timeout) => this._request(message, timeout),
+          capabilities: () => {
+            const current = this._route.getStore();
+            return { contextId: current.contextId, connected: Boolean(current.connection?.ws.readyState === 1 && this._profiles.connections.get(current.contextId) === current.connection),
+              extensionVersion: current.connection?.version || null, capabilities: current.connection?.capabilities || [], protocolVersion: 1 };
+          } });
+      };
+      this._services.set(key, create().catch(error => { this._services.delete(key); throw error; }));
+    }
+    return this._services.get(key);
+  }
+  async _handleProfileService(namespace, msg, ws) {
+    let result;
+    try {
+      if (ws._browserConnection || ws._explorationLocal !== true) throw profileError('LOCAL_CLI_REQUIRED', 'Browser and exploration commands require a local CLI.');
+      if (namespace === 'exploration' && msg.args?.mode !== undefined && !['http', 'browser'].includes(msg.args.mode)) throw profileError('INVALID_ARGUMENT', 'Exploration mode must be browser or http.');
+      if (namespace === 'exploration' && (msg.args?.mode === 'http' || /^http-[a-f0-9-]{36}$/.test(msg.args?.taskId || ''))) {
+        const key = 'host:exploration';
+        if (!this._services.has(key)) this._services.set(key, import('./exploration-service.js').then(({ ExplorationService }) =>
+          new ExplorationService({ mode: 'http', rootDir: path.join(this._profiles.workspaceDir, 'http-exploration') })).catch(error => { this._services.delete(key); throw error; }));
+        result = { ...await (await this._services.get(key)).execute(msg.command, msg.args), contextId: null, connectionId: null };
+        this._reply(ws, { type: namespace + '_command_result', id: msg.id, result });
+        return;
+      }
+      const readCommands = namespace === 'browser' ? ['help', 'sessions', 'doctor']
+        : ['help', 'capabilities', 'list', 'get', 'events', 'evidence', 'trace', 'analyze', 'revisions', 'revision-read', 'draft-read', 'verification-read', 'write-verification-read', 'knowledge-read', 'repair-info'];
+      result = await this._runInProfile(msg, ws, async () => {
+        const route = this._route.getStore();
+        if (route.readOnly && !readCommands.includes(msg.command)) throw profileError('LEGACY_READ_ONLY', 'Pre-profile history is read-only. Start a new task or bind a session in an explicitly selected profile.');
+        return { ...await (await this._profileService(namespace)).execute(msg.command, msg.args), contextId: route.contextId, connectionId: route.connection?.connectionId || null };
+      }, readCommands.includes(msg.command) || (namespace === 'exploration' && msg.command === 'cancel'));
+    } catch (error) { result = this._profileFailure(error); }
+    this._reply(ws, { type: namespace + '_command_result', id: msg.id, result });
+  }
+  _handleBrowserCommand(msg, ws) { return this._handleProfileService('browser', msg, ws); }
+  _handleExplorationCommand(msg, ws) { return this._handleProfileService('exploration', msg, ws); }
+
+  async _routeClientRequest(msg, ws) {
+    try {
+      if (ws._browserConnection) throw profileError('LOCAL_CLIENT_REQUIRED', 'Extension connections cannot submit client commands.');
+      // Toolkit and host HTTP without cookies never select a browser.
+      const command = msg.type === 'call_tool' ? resolveAdapterCall(msg.toolName)?.command : null;
+      if (command?.runtime === 'wewright' || (command?.runtime === 'http' && !command.http.cookies)) return await this._handleClientRequest(msg, ws);
+      return await this._runInProfile(msg, ws, () => this._handleClientRequest(msg, ws));
+    } catch (error) { this._reply(ws, { type: 'call_tool_error', id: msg.id, error: error.message, code: error.code }); }
+  }
+  async _routeWorkerRequest(msg, ws, fn) {
+    try { return await this._runInProfile(msg, ws, fn, ['get_generation_run', 'cancel_generation_run', 'publish_generation_run'].includes(msg.type)); }
+    catch (error) { this._reply(ws, { type: msg.type + '_result', id: msg.id, ok: false, error: error.message, code: error.code }); }
+  }
+  get _generationWorkers() {
+    if (!this._profiles) return this._legacyWorkers;
+    const route = this._route.getStore();
+    if (!route) throw profileError('PROFILE_REQUIRED', 'Select a profile for generation.');
+    if (route.readOnly) {
+      const store = new GenerationRunStore();
+      const deny = () => { throw profileError('LEGACY_READ_ONLY', 'Pre-profile generation history is read-only. Start a new run in the intended profile.'); };
+      return { get: id => { const run = store.load(id); return run ? createGenerationRunTransportSnapshot(run, { rootDir: store.rootDir }) : null; },
+        getTrace: id => store.readTrace(id), start: deny, resume: deny, cancel: deny, publish: deny };
+    }
+    if (!this._workerControllers.has(route.contextId)) {
+      const controller = new GenerationWorkerController({
+        store: new GenerationRunStore({ rootDir: this._profiles.serviceRoot(route, 'generation-runs'), legacyRootDir: null }),
+        requestExtension: (message, timeout) => this._request(message, timeout),
+      });
+      controller.on('event', (event, run) => this._reply(this._route.getStore()?.client, { type: 'generation_run_event', runId: event.runId, event, run }));
+      this._workerControllers.set(route.contextId, controller);
+    }
+    return this._workerControllers.get(route.contextId);
+  }
+  set _generationWorkers(value) { this._legacyWorkers = value; }
 
   /**
    * 记录一次 call_tool 的分段观测起点（仅日志用途；按 traceID 关联，缺 traceID 时不做）。
@@ -846,7 +945,7 @@ export class WebSocketBridge extends EventEmitter {
     process.stderr.write(`[${ts()}] ${tracePrefix}[Bridge] 调用分段: ${toolName} — ${parts.join(' ')}\n`);
   }
 
-  async _handleClientRequest(msg) {
+  async _handleClientRequest(msg, ws) {
     const traceID = msg.traceID || null;
     const tracePrefix = traceID ? `[${traceID}] ` : '';
 
@@ -857,11 +956,11 @@ export class WebSocketBridge extends EventEmitter {
 
       try {
         const result = await this.callTool(toolName, args, traceID, msg.adapterSnapshot);
-        this._broadcast({ type: 'call_tool_result', id, result, traceID });
+        this._reply(ws, { type: 'call_tool_result', id, result, traceID });
         process.stderr.write(`[${ts()}] ${tracePrefix}[Bridge] 调用成功: ${toolName}\n`);
       } catch (err) {
         process.stderr.write(`[${ts()}] ${tracePrefix}[Bridge] 调用失败: ${toolName} — ${err.message}\n`);
-        this._broadcast({ type: 'call_tool_error', id, error: err.message, traceID });
+        this._reply(ws, { type: 'call_tool_error', id, error: err.message, code: err.code, traceID });
       } finally {
         this._finishCallTiming(callTiming, tracePrefix, toolName);
       }
@@ -881,34 +980,36 @@ export class WebSocketBridge extends EventEmitter {
           const timer = setTimeout(() => this._deleteCaptureModelContext(contextId), 10 * 60_000);
           timer.unref?.();
           this._captureModelContexts.set(contextId, {
-            config, timer, requestId: msg.id,
+            config, timer, requestId: msg.id, connection: this._route?.getStore()?.connection,
             tabId: Number(msg.tabId), site: String(msg.siteKey || '').trim(), actionName: String(msg.actionName || '').trim(),
           });
           captureRequest.analysisContextId = contextId;
         }
-        if (!this._send(captureRequest)) throw new Error('浏览器扩展未连接');
+        const response = await this._request(captureRequest, 120000);
+        this._reply(ws, { type: 'call_tool_result', id: msg.id, result: response });
       } catch (err) {
         this._deleteCaptureModelContext(contextId);
-        this._broadcast({ type: 'call_tool_error', id: msg.id, error: err.message });
+        this._reply(ws, { type: 'call_tool_error', id: msg.id, error: err.message });
       }
     } else if (msg.type === 'get_active_tab') {
       try {
         const tabId = await this.getActiveTabId();
-        this._broadcast({ type: 'get_active_tab_result', id: msg.id, tabId, traceID });
+        this._reply(ws, { type: 'get_active_tab_result', id: msg.id, tabId, traceID });
       } catch (err) {
-        this._broadcast({ type: 'get_active_tab_error', id: msg.id, error: err.message, traceID });
+        this._reply(ws, { type: 'get_active_tab_error', id: msg.id, error: err.message, traceID });
       }
     } else if (msg.type === 'open_browser') {
       try {
         const result = await this.openBrowser(msg.url);
-        this._broadcast({ type: 'call_tool_result', id: msg.id, result, traceID });
+        this._reply(ws, { type: 'call_tool_result', id: msg.id, result, traceID });
       } catch (err) {
-        this._broadcast({ type: 'call_tool_error', id: msg.id, error: err.message, traceID });
+        this._reply(ws, { type: 'call_tool_error', id: msg.id, error: err.message, traceID });
       }
     } else if (msg.type === 'capture_screenshot') {
       // 直接转发给Chrome扩展
       process.stderr.write('[Bridge] Forwarding capture_screenshot to Chrome extension\n');
-      this._send(msg);
+      const response = await this._request(msg, 120000, msg.traceID, true);
+      this._reply(ws, { ...response, id: msg.id });
     } else if (msg.type === 'reload_extension') {
       process.stderr.write('[Bridge] Forwarding reload_extension to Chrome extension\n');
       this._send({ type: 'reload_extension' });
@@ -918,10 +1019,12 @@ export class WebSocketBridge extends EventEmitter {
     } else if (msg.type === 'get_trace_logs') {
       // CLI 查询扩展的 trace 日志，直接转发给扩展
       process.stderr.write(`[${ts()}] [Bridge] Forwarding get_trace_logs to extension: ${msg.traceID}\n`);
-      this._send(msg);
+      const response = await this._request(msg, 120000, msg.traceID, true);
+      this._reply(ws, { ...response, id: msg.id });
     } else if (msg.type === 'exploration_list_tabs' || msg.type === 'exploration_capture_passive' || msg.type === 'exploration_safe_actions_inspect' || msg.type === 'exploration_safe_probe_run' || msg.type === 'exploration_replay_candidate' || msg.type === 'exploration_action_capture_stop' || msg.type === 'exploration_action_capture_get' || msg.type === 'exploration_action_capture_select' || msg.type === 'exploration_action_capture_clear' || msg.type === 'refresh_adapter_tabs' || msg.type === 'browser_state' || msg.type === 'browser_network' || msg.type === 'browser_eval' || msg.type === 'browser_analyze' || msg.type === 'browser_explore_workflow' || msg.type === 'browser_action_capture_workflow') {
       process.stderr.write(`[${ts()}] [Bridge] Forwarding ${msg.type} to Chrome extension\n`);
-      this._send(msg);
+      const response = await this._request(msg, 120000, msg.traceID, true);
+      this._reply(ws, { ...response, id: msg.id });
     }
   }
 
@@ -1193,7 +1296,7 @@ export class WebSocketBridge extends EventEmitter {
       let modelConfig;
       if (Object.hasOwn(msg, 'analysisContextId')) {
         const context = this._captureModelContexts.get(msg.analysisContextId);
-        if (!context) throw new Error('客户端动作分析上下文已失效，请重试已有捕获的 AI 分析，无需重新操作网站');
+        if (!context || context.connection !== ws._browserConnection) throw new Error('客户端动作分析上下文已失效，请重试已有捕获的 AI 分析，无需重新操作网站');
         if (context.tabId !== captureResult?.tabId || context.site !== captureResult?.site || context.actionName !== captureResult?.actionName) {
           throw new Error('客户端动作分析上下文与捕获任务不匹配');
         }
@@ -1409,42 +1512,51 @@ export class WebSocketBridge extends EventEmitter {
 
   // ─── 发送消息给扩展 ─────────────────────────────────────────────────────────  // ─── 发送消息给扩展 ─────────────────────────────────────────────────────────
 
-  _send(msg) {
-    if (!this._extensionWs || this._extensionWs.readyState !== 1 /* OPEN */) {
+  _send(msg, selected) {
+    const connection = selected || (this._profiles ? this._profiles.assertConnection(this._route.getStore() || this._profiles.select()) : { ws: this._extensionWs });
+    if (!connection.ws || connection.ws.readyState !== 1) {
       process.stderr.write("[Bridge] Cannot send: Chrome extension not connected\n");
       return false;
     }
-    this._extensionWs.send(JSON.stringify(msg));
+    const { browserProfile: ignoredProfile, browserConnectionId: ignoredConnection, ...payload } = msg;
+    connection.ws.send(JSON.stringify(payload));
     // ② 收单→派发：call_tool 真正写进扩展连接的时刻（失败时不算派发完成）。
     if (msg && msg.type === 'call_tool' && msg.traceID) {
       const timing = this._callTimings.get(msg.traceID);
       if (timing) timing.dispatchedAt = Date.now();
     }
-    process.stderr.write(`[${ts()}] [Bridge] -> extension: ${JSON.stringify(msg).substring(0, 200)}\n`);
+    const logMessage = ['http_credentials', 'browser_execute', 'exploration_observe_page', 'exploration_intercept_read', 'exploration_page_query', 'exploration_page_write'].includes(msg.type) ? { type: msg.type, command: msg.command, id: msg.id, tabId: msg.tabId }
+      : msg.type === 'validate_generation_preview' ? { type: msg.type, id: msg.id, tabId: msg.tabId,
+        expectedToolCount: msg.expectedToolNames?.length || 0, testCaseCount: msg.testCases?.length || 0 } : msg;
+    process.stderr.write(`[${ts()}] [Bridge] -> extension: ${JSON.stringify(logMessage).substring(0, 200)}\n`);
     return true;
   }
 
   _nextId() {
-    return String(++this._requestCounter);
+    return randomUUID();
   }
 
-  _request(msg, timeout = 120000, traceID = null) {
+  _request(msg, timeout = 120000, traceID = null, raw = false) {
     const id = this._nextId();
-    return new Promise((resolve, reject) => {
-      this._pendingRequests.set(id, { resolve, reject, traceID });
-      const msgWithId = { ...msg, id };
-      if (traceID) msgWithId.traceID = traceID;
-      if (!this._send(msgWithId)) {
-        this._pendingRequests.delete(id);
-        reject(new Error("Extension not connected"));
-        return;
+    let connection;
+    try {
+      connection = this._profiles ? this._profiles.assertConnection(this._route.getStore() || this._profiles.select()) : { ws: this._extensionWs };
+      if (msg.type === 'http_credentials') {
+        const version = msg.payload?.version ?? 1;
+        if (![1, 2].includes(version) || (version === 1 && (msg.payload?.storeId !== undefined || msg.payload?.partitionKey !== undefined))) throw profileError('HTTP_CREDENTIALS_UNAVAILABLE', 'Unsupported HTTP credential scope version.');
+        if (!(connection.capabilities || this._extensionCapabilities).includes(version === 2 ? 'http_credentials_v2' : 'http_credentials_v1')) throw profileError('HTTP_CREDENTIALS_UNAVAILABLE', 'Reload the selected browser extension for scoped HTTP credentials.');
       }
-      setTimeout(() => {
-        if (this._pendingRequests.has(id)) {
-          this._pendingRequests.delete(id);
-          reject(new Error(`Request "${msg.type}" timed out after ${timeout}ms`));
-        }
+      if (msg.type === 'exploration_page_write' && !(connection.capabilities || this._extensionCapabilities).includes('page_write_v1')) throw profileError('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before page writes.');
+    } catch (error) { return Promise.reject(error); }
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this._pendingRequests.delete(id);
+        reject(profileError('EXTENSION_TIMEOUT', 'Browser request timed out. Inspect state before retrying an action.'));
       }, timeout);
+      this._pendingRequests.set(id, { resolve, reject, traceID, raw, timer, ws: connection.ws });
+      try {
+        if (!this._send({ ...msg, id, ...(traceID ? { traceID } : {}) }, connection)) throw profileError('PROFILE_DISCONNECTED', 'The selected extension is disconnected.');
+      } catch (error) { clearTimeout(timer); this._pendingRequests.delete(id); reject(error); }
     });
   }
 
@@ -1546,6 +1658,16 @@ export class WebSocketBridge extends EventEmitter {
       throw new Error('Adapter changed since this call started; refresh the catalog.');
     }
     if ((selected?.command.requires_confirmation ?? selected?.command.safety === 'write') && args?.__confirmed !== true) throw new Error('Explicit confirmation is required for this command.');
+    if (selected?.command.runtime === 'http') {
+      const { runHttpTool } = await import('./http-runner.js');
+      const completed = await runHttpTool(selected, args || {}, { traceID,
+        resolveCookies: async payload => {
+          const result = await this._request({ type: 'http_credentials', payload }, 10_000);
+          return result.cookies;
+        },
+      });
+      return completed.result;
+    }
     if (selected?.command.runtime === 'wewright') {
       const { runToolkitTool } = await import('./toolkit-runner.js');
       const completed = await runToolkitTool({
@@ -1561,6 +1683,20 @@ export class WebSocketBridge extends EventEmitter {
     if (selected?.command.execution?.runtime === 'background' && !this._extensionCapabilities?.includes('adapter_background_v1')) {
       throw new Error('Reload the browser extension before calling background Adapter commands.');
     }
+    if (selected?.command.pageRoute && !this._extensionCapabilities?.includes('page_sources_v1')) {
+      throw new Error('Reload the browser extension before calling page-source Adapter commands.');
+    }
+    if (selected?.command.pageWorkflow && !this._extensionCapabilities?.includes('page_query_v1')) throw new Error('Reload the browser extension before calling navigation-aware page queries.');
+    if (selected?.command.pageRoute?.navigation && !this._extensionCapabilities?.includes('page_navigation_v1')) throw new Error('Reload the browser extension before calling parameterized page navigation.');
+    if ((usesNavigationHash(selected?.command.pageRoute?.navigation) || usesNavigationHash(selected?.command.pageRoute?.workflow)) && !this._extensionCapabilities?.includes('page_navigation_hash_v1')) throw new Error('Reload the selected browser extension before calling hash navigation.');
+    if ((usesNavigationQuery(selected?.command.pageRoute?.navigation) || usesNavigationQuery(selected?.command.pageRoute?.workflow)) && !this._extensionCapabilities?.includes('page_navigation_query_v1')) throw new Error('Reload the browser extension before calling public URL query navigation.');
+    if ((usesWorkflowOrigins(selected?.command.pageRoute?.navigation) || usesWorkflowOrigins(selected?.command.pageRoute?.workflow)) && !this._extensionCapabilities?.includes('page_navigation_origin_v1')) throw new Error('Reload the selected browser extension before calling explicit cross-origin page reading.');
+    if (usesWorkflowControl(selected?.command.pageRoute?.workflow) && !this._extensionCapabilities?.includes('page_workflow_control_v1')) throw new Error('Reload the selected browser extension before calling conditional or repeated page workflows.');
+    if (selected?.command.pageRoute?.workflow && !this._extensionCapabilities?.includes('page_workflow_v1')) throw new Error('Reload the browser extension before calling ordered page workflows.');
+    if (selected?.command.uiWrite && !this._extensionCapabilities?.includes('ui_write_v1')) throw new Error('Reload the browser extension before calling UI writes.');
+    if (selected?.command.uiWrite?.result && !this._extensionCapabilities?.includes('ui_write_result_v1')) throw new Error('Reload the browser extension before reading UI receipt IDs.');
+    if (selected?.command.pageWrite && !this._extensionCapabilities?.includes('page_write_v1')) throw new Error('Reload the browser extension before calling page writes.');
+    if (selected?.command.pageStrategy === 'INTERCEPT' && !this._extensionCapabilities?.includes('intercept_read_v1')) throw new Error('Reload the browser extension before calling intercepted page queries.');
     const timeout = resolveToolCallTimeout(toolName);
     return this._request({ type: "call_tool", toolName, args, ...(selected ? { adapterSnapshot: selected.snapshot } : {}) }, timeout, traceID);
   }
@@ -1626,6 +1762,11 @@ export class WebSocketBridge extends EventEmitter {
     const allowedUrl = assertAllowedOpenBrowserUrl(url, allowedOrigins);
     url = allowedUrl;
 
+    // A selected browser operation must never fall back to another browser or replay.
+    if (this._route?.getStore()) {
+      const result = await this._request({ type: 'open_tab', url }, 5000);
+      return { success: true, method: 'extension', tabId: result.tabId };
+    }
     // 方案1：如果Chrome扩展已连接，使用扩展API打开新tab
     if (this.isExtensionConnected()) {
       try {

@@ -37,6 +37,8 @@ WeWorker 是桌面端 AI 工作助手项目，包含 Electron 桌面端、TypeSc
 - 保持现有模块边界：UI 改动优先放在 Renderer；窗口、生命周期、资源路径和 IPC 放在 Electron；模型调用、文件访问、安全校验和 Adapter 桥接放在 Backend。
 - `webcli/` 与 `extension/` 维持独立边界；除任务明确要求外，不改其协议和运行逻辑。
 - WebCLI 统一对外提供 Adapter 概念与 `webcli call` 命令入口；Extension Adapter 通过 Bridge/Chrome 扩展执行，Toolkit Adapter 通过同一安装包内的 embedded Toolkit Runtime 执行，两类 Adapter 不共享底层 Runner。
+- 开源与内部仓库保持通用架构、运行时和探索流程一致，差异限于 Adapter 内容与对应打包范围。通用改进不得引入内部业务信息或另建内部专用执行链路。
+- 探索、生成和修复前核对已有 Adapter 的 runtime、execution、鉴权来源及真实页面依赖；需要浏览器登录态不等于需要打开业务页。保留已有后台 API 能力，禁止因生成、修复或同步将其退化为页面调用。声称无需业务页时，必须验证后台运行器和关闭任务自有业务页后的普通调用；不得为验收关闭用户已有页面。
 - Node.js 代码使用现有 ESM/CommonJS 风格，不为一次性逻辑新增框架或大型依赖。
 - 网站探索agent Python 环境由 `uv` 管理，不使用系统 `pip` 修改环境。
 - 开发态从 `components/webwright/` 源码启动网站探索agent；正式构建只打包该目录提供的 embedded `onedir`。

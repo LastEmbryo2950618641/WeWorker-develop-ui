@@ -21,7 +21,7 @@ describe('bridge call_tool segment logging', () => {
     bridge._pendingRequests = new Map()
     bridge._requestCounter = 0
     bridge._extensionWs = { readyState: 1, send: vi.fn() }
-    bridge._broadcast = vi.fn()
+    bridge._reply = vi.fn()
     bridge.callTool = callTool
     return bridge
   }
@@ -63,7 +63,7 @@ describe('bridge call_tool segment logging', () => {
     expect(segment).toMatch(/bridge总计=\d+ms/)
     // 观测状态不残留。
     expect(bridge._callTimings.size).toBe(0)
-    expect(bridge._broadcast).toHaveBeenCalledWith(expect.objectContaining({ type: 'call_tool_result', id: 'cli-1', traceID: 'trace-1' }))
+    expect(bridge._reply).toHaveBeenCalledWith(undefined, expect.objectContaining({ type: 'call_tool_result', id: 'cli-1', traceID: 'trace-1' }))
   })
 
   it('reports the segments for failures too, and never blocks the error path', async () => {
@@ -90,7 +90,7 @@ describe('bridge call_tool segment logging', () => {
     expect(segment).not.toContain('cli启动→收单')
     expect(segment).toMatch(/收单→派发=\d+ms/)
     expect(bridge._callTimings.size).toBe(0)
-    expect(bridge._broadcast).toHaveBeenCalledWith(expect.objectContaining({ type: 'call_tool_error', id: 'cli-2', error: 'Adapter navigation host is not allowed.' }))
+    expect(bridge._reply).toHaveBeenCalledWith(undefined, expect.objectContaining({ type: 'call_tool_error', id: 'cli-2', error: 'Adapter navigation host is not allowed.' }))
   })
 
   it('keeps working when the call was never dispatched to the extension', async () => {

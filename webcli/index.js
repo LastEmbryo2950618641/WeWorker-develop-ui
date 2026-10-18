@@ -60,12 +60,18 @@ Service:
   service status                 查看服务状态
   service logs [-f, --follow]    查看服务日志
 
+API exploration (standalone, no desktop/model key required):
+  call exploration.help                    探索、草稿编辑、验证与安装命令
+  call browser.help                        浏览器会话、页面操作与网络检查
+  call profile.help                        多浏览器连接、别名与默认选择
+
 Adapters:
   list                                     列出已安装的 adapter（adapter list 的简写）
   help                                     已安装 adapter 摘要（渐进式 help 第一级）
   <adapter> help                           单个 adapter 的命令列表（第二级）
   <adapter> <command> help                 单个命令参数说明（第三级）
   adapter validate <dir>                   校验 v2 adapter 包（结构+禁入文件，规范 docs/adapter_package_spec.md）
+  adapter convention-audit <dir>           静态规范审计（不执行命令；--installed [id] 检查已安装包）
   adapter list                             列出已安装的 adapter
   adapter list --json                      JSON 格式输出（含工具定义）
   adapter info <id>                        查看 adapter 的工具列表
@@ -99,7 +105,9 @@ AdapterHub:
   adapterhub endpoint [--json]                        打印当前 AdapterHub 端点
 
 Tools:
-  call <tool_name> [--key=value ...] [-v, --verbose] [--output-format=markdown|json]
+  skills list | skills read <skill[/path]>  列出或读取随包 Skill（不安装、不执行）
+  completion bash|zsh|fish                 输出动态 shell 补全脚本（不修改 shell 配置）
+  call <tool_name> [--key=value ...] [-v, --verbose] [--output-format=json|markdown|table|plain|csv|yaml]
                                   调用 Adapter 工具（Extension 自动启动 Bridge；Toolkit 直接运行）
                                   参数直接以 --key=value 形式传递：
                                     webcli call open_browser --url=http://jd.com
@@ -112,7 +120,7 @@ Tools:
                                   兼容旧格式：--args '{"url":"http://jd.com"}'
                                   输出格式：终端默认 markdown（按站点列名映射渲染），管道/脚本默认 json；
                                   需要结构化数据时显式用 --output-format=json
-  webcli <site> <command...> [--key=value ...] [-v, --verbose] [--output-format=markdown|json]
+  webcli <site> <command...> [--key=value ...] [-v, --verbose] [--output-format=json|markdown|table|plain|csv|yaml]
                                   按 WeCLI 风格调用 site.command 工具
   webcli <site> [-help] [-f json]
                                   查看某站点的全部工具（-f json 结构化输出）
@@ -138,8 +146,9 @@ Tracing:
 
 Options:
   --version        显示版本（兼容：单独执行 webcli -v）
+  --profile <id|alias>  选择浏览器（优先于 WEBCLI_PROFILE 和保存的默认值）
   -v, --verbose    调用工具时输出 trace 日志
-  --output-format=markdown|json  调用工具输出格式（终端默认 markdown，管道/脚本默认 json）
+  --output-format=json|markdown|table|plain|csv|yaml  调用工具输出格式（终端默认 markdown，管道/脚本默认 json）
   -h, --help       显示帮助
 `.trim();
 
@@ -148,7 +157,7 @@ Options:
  * - 文本模式：HELP 顶部插入 Site adapters 列表
  * - JSON 模式（-f json）：输出结构化数据（agent 可解析）
  */
-async function printGlobalHelp({ json = false } = {}) {
+async function printGlobalHelp({ json = false, outputFormat } = {}) {
   let adapters = [];
   try {
     const { loadAdapterViews } = await import("./adapter-cli.js");
@@ -160,13 +169,17 @@ async function printGlobalHelp({ json = false } = {}) {
     .map((a) => ({ id: a.id, name: a.name || a.id }))
     .sort((x, y) => x.id.localeCompare(y.id));
 
-  if (json) {
+  if (json || outputFormat !== undefined) {
     const data = {
       name: "webcli",
       usage: "webcli <command> [options]",
       description: "WeWorker 网站工具 CLI：调用浏览器站点自动化工具，管理适配器与统计",
       commands: [
         { name: "call <tool>", usage: "webcli call <tool_name> [--key=value ...]", description: "调用站点工具" },
+        { name: "completion", usage: "webcli completion bash|zsh|fish", description: "输出 shell 补全脚本" },
+        { name: "skills", usage: "webcli skills list | read <skill[/path]>", description: "读取随包 Skill 和参考文件" },
+        { name: "profile", usage: "webcli call profile.help", description: "浏览器连接、别名和默认选择" },
+        { name: "exploration", usage: "webcli call exploration.help", description: "独立 API 探索、Agent 草稿编辑、验证与本地安装" },
         { name: "adapter", usage: "webcli adapter <command>", description: "管理网站适配器" },
         { name: "service", usage: "webcli service <start|stop|status|logs>", description: "管理 WebSocket bridge 服务" },
         { name: "stats", usage: "webcli stats", description: "调用频次统计" },
@@ -184,7 +197,7 @@ async function printGlobalHelp({ json = false } = {}) {
         "webcli adapter <id> -help -f json",
       ],
     };
-    console.log(JSON.stringify(data, null, 2));
+    console.log(formatCallOutput(data, outputFormat ?? 'json'));
     return;
   }
 
@@ -248,14 +261,14 @@ function getServiceNodeArgs() {
 
 // ─── Command: service start ──────────────────────────────────────────────────
 
-async function cmdServiceStart(daemon) {
+async function cmdServiceStart(daemon, report = console.log) {
   if (daemon) {
     await mkdir(WEBCLI_DIR, { recursive: true });
 
     // Check if already running
     const existing = await readPid();
     if (existing && isPidRunning(existing)) {
-      console.log(`WebCLI service is already running (PID: ${existing})`);
+      report(`WebCLI service is already running (PID: ${existing})`);
       return;
     }
 
@@ -267,10 +280,10 @@ async function cmdServiceStart(daemon) {
     child.unref();
     await writeFile(PID_FILE, String(child.pid));
 
-    console.log(`✓ WebCLI service started in background (PID: ${child.pid})`);
-    console.log(`  Logs:   ${LOG_FILE}`);
-    console.log(`  Stop:   webcli service stop`);
-    console.log(`  Status: webcli service status`);
+    report(`✓ WebCLI service started in background (PID: ${child.pid})`);
+    report(`  Logs:   ${LOG_FILE}`);
+    report(`  Stop:   webcli service stop`);
+    report(`  Status: webcli service status`);
   } else {
     // Foreground — hand off to service mode
     await runServiceMode();
@@ -365,7 +378,7 @@ async function ensureBridgeRunning() {
   if (isRunning) return;
 
   process.stderr.write("Bridge not running, starting...\n");
-  await cmdServiceStart(true);
+  await cmdServiceStart(true, message => process.stderr.write(message + '\n'));
 
   // Wait for Bridge to be ready (max 5s)
   for (let i = 0; i < 10; i++) {
@@ -401,12 +414,87 @@ async function cmdCall(toolName, argsStr, options = {}) {
   catch (error) { console.error(`Error: ${error.message}`); process.exit(1); }
   // 合并 --key=value 标志参数（优先级低于 --args 中的同名字段）
   args = { ...flagArgs, ...args };
+  // Management defaults remain machine-readable; explicit formats use the same
+  // renderer as Adapter calls, without changing the transport envelope.
+  const printManagement = value => console.log(formatCallOutput(value, options.outputFormat === undefined ? 'json' : outputFormat));
+
+  if (toolName.startsWith('profile.')) {
+    const command = toolName.slice('profile.'.length);
+    const { profileHelp } = await import('./browser-profiles.js');
+    if (command === 'help') { printManagement(profileHelp()); return; }
+    await ensureBridgeRunning();
+    const { callLocalCommand } = await import('./exploration-client.js');
+    const result = await callLocalCommand('profile', command, args);
+    printManagement(result); if (!result.ok) process.exitCode = 1; return;
+  }
+  if (toolName.startsWith('browser.')) {
+    const command = toolName.slice('browser.'.length);
+    const { browserCommands, browserHelp } = await import('./browser-commands.js');
+    if (command === 'help') { printManagement(browserHelp()); return; }
+    if (!Object.hasOwn(browserCommands, command)) {
+      printManagement({ schemaVersion: 1, ok: false, error: { code: 'UNKNOWN_COMMAND', message: 'Use webcli call browser.help.' } });
+      process.exitCode = 1; return;
+    }
+    if (['console', 'network'].includes(command) && (args.follow === true || args.follow === 'true')) {
+      if (options.outputFormat !== undefined && outputFormat !== 'json') throw new Error('Browser follow uses JSON Lines; omit --output-format or use json.');
+      await ensureBridgeRunning();
+      const { runBrowserFollow } = await import('./browser-follow.js');
+      process.exitCode = await runBrowserFollow(command, args, { profile: options.profile }); return;
+    }
+    await ensureBridgeRunning();
+    if (['console', 'network'].includes(command) && (args.follow === false || args.follow === 'false')) delete args.follow;
+    const { callLocalCommand } = await import('./exploration-client.js');
+    const result = await callLocalCommand('browser', command, args, { timeoutMs: 50000, profile: options.profile });
+    printManagement(result);
+    if (!result.ok) process.exitCode = 1;
+    return;
+  }
+
+  // Reserved management namespace. It never resolves a website/Toolkit package.
+  if (toolName.startsWith('exploration.')) {
+    const command = toolName.slice('exploration.'.length);
+    const { explorationCommands, explorationHelp } = await import('./exploration-commands.js');
+    if (command === 'help') {
+      printManagement(explorationHelp());
+      return;
+    }
+    if (!Object.hasOwn(explorationCommands, command)) {
+      printManagement({ schemaVersion: 1, ok: false, error: { code: 'UNKNOWN_COMMAND', message: 'Use webcli call exploration.help.' } });
+      process.exitCode = 1;
+      return;
+    }
+    await ensureBridgeRunning();
+    const { callExploration } = await import('./exploration-client.js');
+    const result = await callExploration(command, args, { profile: options.profile });
+    printManagement(result);
+    if (!result.ok) process.exitCode = 1;
+    return;
+  }
 
   const { resolveToolkitTool } = await import("./adapter-registry.js");
   const { resolveAdapterCall } = await import("./adapter-host.js");
   const v2Match = resolveAdapterCall(toolName);
   if (v2Match) {
+    if ((v2Match.command.runtime === 'http' || v2Match.command.pageWrite || v2Match.command.uiWrite) && (v2Match.command.safety === 'write' || v2Match.command.requires_confirmation) && args.__confirmed !== true) {
+      console.log(formatCallOutput({ error: 'Explicit confirmation is required for this command.', code: (v2Match.command.pageWrite || v2Match.command.uiWrite) ? 'CONFIRMATION_REQUIRED' : 'HTTP_CONFIRMATION_REQUIRED', trace_id: null }, outputFormat));
+      process.exitCode = 1;
+      return;
+    }
     if ((v2Match.command.requires_confirmation ?? v2Match.command.safety === "write") && args.__confirmed !== true) throw new Error("Explicit confirmation is required for this command.");
+    if (v2Match.command.runtime === 'http' && !v2Match.command.http.cookies) {
+      try {
+        const { runHttpTool } = await import('./http-runner.js');
+        const completed = await runHttpTool(v2Match, args);
+        const value = completed.result;
+        const output = value && typeof value === 'object' && !Array.isArray(value)
+          ? { ...value, trace_id: completed.traceID } : { result: value, trace_id: completed.traceID };
+        console.log(formatCallOutput(output, outputFormat, { mapping: columnMapping }));
+      } catch (error) {
+        console.log(formatCallOutput({ error: error.message, code: error.code || 'HTTP_COMMAND_FAILED', trace_id: null }, outputFormat));
+        process.exitCode = 1;
+      }
+      return;
+    }
     if (v2Match.command.runtime === "wewright") {
       // v2 wewright 命令：内嵌 Runtime --internal-script，入口取 manifest module（现有合同不变）
       try {
@@ -471,25 +559,26 @@ async function cmdCall(toolName, argsStr, options = {}) {
   ws.on("open", () => {
     const id = "cli-" + Date.now();
     const traceID = randomUUID().replace(/-/g, "").slice(0, 12);
-    ws.send(JSON.stringify({ type: "call_tool", toolName, args, id, traceID, adapterSnapshot: v2Match?.snapshot, clientStartedAt: CLI_STARTED_AT }));
+    ws.send(JSON.stringify({ type: "call_tool", toolName, args, id, traceID, browserProfile: options.profile, adapterSnapshot: v2Match?.snapshot, clientStartedAt: CLI_STARTED_AT }));
 
     ws.on("message", async (data) => {
       const msg = JSON.parse(data.toString());
       if (msg.id !== id) return;
       clearTimeout(timeout);
+      if (msg.contextId) options.profile = msg.contextId;
       if (msg.type === "call_tool_result") {
         const isPlainObject = msg.result && typeof msg.result === "object" && !Array.isArray(msg.result);
         const output = isPlainObject
           ? { ...msg.result, trace_id: traceID }
           : { result: msg.result, trace_id: traceID };
         console.log(formatCallOutput(output, outputFormat, { mapping: columnMapping }));
-        await printVerboseTrace(traceID, verbose);
+        await printVerboseTrace(traceID, verbose, options.profile);
         ws.close();
         process.exit(0);
       } else if (msg.type === "call_tool_error") {
-        const output = { error: msg.error, trace_id: traceID, hint: `用 webcli trace ${traceID} 查看完整链路日志` };
+        const output = { error: msg.error, code: msg.code, trace_id: traceID, hint: `用 webcli trace ${traceID} 查看完整链路日志` };
         console.log(formatCallOutput(output, outputFormat));
-        await printVerboseTrace(traceID, verbose);
+        await printVerboseTrace(traceID, verbose, options.profile);
         ws.close();
         process.exit(1);
       }
@@ -505,10 +594,10 @@ async function cmdCall(toolName, argsStr, options = {}) {
 
 // ─── Command: trace <traceID> ─────────────────────────────────────────────────
 
-async function printVerboseTrace(traceID, verbose) {
+async function printVerboseTrace(traceID, verbose, profile) {
   if (!verbose) return;
   process.stderr.write("\n");
-  await cmdTrace(traceID, { stderr: true });
+  await cmdTrace(traceID, { stderr: true, profile });
 }
 
 async function cmdTrace(traceID, options = {}) {
@@ -542,10 +631,14 @@ async function cmdTrace(traceID, options = {}) {
 
       ws.on("open", () => {
         const id = "trace-" + Date.now();
-        ws.send(JSON.stringify({ type: "get_trace_logs", traceID, id }));
+        ws.send(JSON.stringify({ type: "get_trace_logs", traceID, id, browserProfile: options.profile }));
         ws.on("message", (data) => {
           const msg = JSON.parse(data.toString());
-          if (msg.id !== id || msg.type !== "get_trace_logs_result") return;
+          if (msg.id !== id) return;
+          if (msg.type === 'call_tool_error') {
+            clearTimeout(timeout); ws.close(); resolve({ error: { code: msg.code || 'TRACE_FAILED', message: msg.error } }); return;
+          }
+          if (msg.type !== "get_trace_logs_result") return;
           clearTimeout(timeout);
           ws.close();
           resolve(msg.logs || []);
@@ -558,7 +651,8 @@ async function cmdTrace(traceID, options = {}) {
       });
     });
 
-    if (extLogs && extLogs.length > 0) {
+    if (extLogs?.error) { write(JSON.stringify({ ok: false, error: extLogs.error })); foundAny = true; if (!options.stderr) process.exitCode = 1; }
+    if (Array.isArray(extLogs) && extLogs.length > 0) {
       write("── Extension 日志 ──");
       for (const line of extLogs) {
         write(line);
@@ -591,7 +685,7 @@ function readRecentLogFile(filePath, maxBytes) {
 const BUILTIN_COMMANDS = new Set([
   "--version", "-v", "--help", "-h", "-help", "--service",
   "extension-path", "adapter", "service", "call", "trace", "install",
-  "list", "mcp", "mcp-logs",
+  "list", "skills", "completion", "mcp", "mcp-logs",
 ]);
 // 渐进式 help 不拦截的顶层命令（其 <sub> help 属于自身命令域）
 const BUILTIN_HELP_EXEMPT = new Set(["adapterhub", "stats"]);
@@ -678,8 +772,14 @@ function extractRuntimeFlags(args) {
   const rest = [];
   let verbose = false;
   let outputFormat;
+  let profile = process.env.WEBCLI_PROFILE;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
+    if (arg === '--profile' || arg.startsWith('--profile=')) {
+      profile = arg === '--profile' ? args[++i] : arg.slice(10);
+      if (!profile || profile.startsWith('--')) throw new Error('--profile requires a contextId or alias.');
+      continue;
+    }
     if (arg === "--verbose" || (arg === "-v" && !(i === 0 && args.length === 1))) {
       verbose = true;
       continue;
@@ -695,14 +795,14 @@ function extractRuntimeFlags(args) {
       }
       continue;
     }
-    const formatMatch = arg.match(/^--output-format=(.+)$/);
+    const formatMatch = arg.match(/^--output-format=(.*)$/);
     if (formatMatch) {
       outputFormat = formatMatch[1];
       continue;
     }
     rest.push(arg);
   }
-  return { args: rest, verbose, outputFormat };
+  return { args: rest, verbose, outputFormat, ...(profile !== undefined ? { profile } : {}) };
 }
 
 function normalizeCliExecutionPath(filePath, realpath = realpathSync) {
@@ -788,6 +888,7 @@ function extractFlagArgs(argv, startIndex = 0) {
 function resolveCliInvocation(args) {
   const cmd = args[0];
   if (cmd === "call") {
+    if (['browser.console', 'browser.network'].includes(args[1])) args = args.map(arg => arg === '--follow' ? '--follow=true' : arg);
     const { args: flagArgs, rest } = extractFlagArgs(args, 2);
     const argsIdx = args.indexOf("--args");
     return {
@@ -817,16 +918,42 @@ function resolveCliInvocation(args) {
   };
 }
 
-async function runProgressiveHelp(args) {
+async function runProgressiveHelp(args, outputFormat) {
   const { runAdapterHelp } = await import('./progressive-help.js');
-  console.log(await runAdapterHelp(args));
+  console.log(await runAdapterHelp(args, { outputFormat }));
 }
 
 async function main() {
-  const { args, verbose, outputFormat } = extractRuntimeFlags(process.argv.slice(2));
+  if (['completion', '--get-completions'].includes(process.argv[2])) {
+    const { runCompletion } = await import('./completion.js');
+    process.stdout.write(await runCompletion(process.argv.slice(2))); return;
+  }
+  const { args, verbose, outputFormat, profile } = extractRuntimeFlags(process.argv.slice(2));
   const cmd  = args[0];
   const sub  = args[1];
+  if (cmd === 'skills') {
+    const { runSkillsCli } = await import('./skills-cli.js');
+    runSkillsCli(args.slice(1), { outputFormat }); return;
+  }
   const invocation = resolveCliInvocation(args);
+
+  if ((cmd === 'profile' && (sub === 'help' || args.some(arg => ['--help', '-h'].includes(arg))))
+      || (cmd === 'call' && sub?.startsWith('profile.') && args.some(arg => ['--help', '-h'].includes(arg)))) {
+    const { profileHelp } = await import('./browser-profiles.js');
+    console.log(formatCallOutput(profileHelp(), outputFormat ?? 'json')); return;
+  }
+  if ((cmd === 'browser' && (sub === 'help' || args.some(arg => ['--help', '-h'].includes(arg))))
+      || (cmd === 'call' && sub?.startsWith('browser.') && args.some(arg => ['--help', '-h'].includes(arg)))) {
+    const { browserHelp } = await import('./browser-commands.js');
+    console.log(formatCallOutput(browserHelp(), outputFormat ?? 'json')); return;
+  }
+
+  if ((cmd === 'exploration' && (sub === 'help' || args.some(arg => ['--help', '-h'].includes(arg))))
+      || (cmd === 'call' && sub?.startsWith('exploration.') && args.some(arg => ['--help', '-h'].includes(arg)))) {
+    const { explorationHelp } = await import('./exploration-commands.js');
+    console.log(formatCallOutput(explorationHelp(), outputFormat ?? 'json'));
+    return;
+  }
 
   // --version / -v
   if (cmd === "--version" || cmd === "-v") {
@@ -837,7 +964,7 @@ async function main() {
   // --help / -h / -help / no command
   if (!cmd || cmd === "--help" || cmd === "-h" || cmd === "-help") {
     const jsonMode = args.includes("-f") && args[args.indexOf("-f") + 1] === "json";
-    await printGlobalHelp({ json: jsonMode });
+    await printGlobalHelp({ json: jsonMode, outputFormat });
     return;
   }
 
@@ -873,21 +1000,21 @@ async function main() {
   // adapter <...>
   if (cmd === "adapter") {
     const { runAdapterCli } = await import("./adapter-cli.js");
-    await runAdapterCli(args.slice(1));
+    await runAdapterCli(args.slice(1), { outputFormat });
     return;
   }
 
   // list —— adapter list 的简写（对齐 wecli 的 `wecli list` 心智）
   if (cmd === "list") {
     const { runAdapterCli } = await import("./adapter-cli.js");
-    await runAdapterCli(["list", ...args.slice(1)]);
+    await runAdapterCli(["list", ...args.slice(1)], { outputFormat });
     return;
   }
 
   // adapterhub <...>
   if (cmd === "adapterhub") {
     const { runAdapterHubCli } = await import("./adapterhub-cli.js");
-    await runAdapterHubCli(args.slice(1));
+    await runAdapterHubCli(args.slice(1), { outputFormat });
     return;
   }
 
@@ -913,16 +1040,13 @@ async function main() {
 
   // call <tool_name> [--key=value ...] [--args '{}']
   if (cmd === "call") {
-    const { args: flagArgs, rest } = extractFlagArgs(args, 2);
-    const toolName = rest[0] || args[1];
+    const { toolName, argsJson, flagArgs } = resolveCliInvocation(args);
     if (!toolName) {
       console.error("Error: 请指定工具名称");
       console.error("Usage: webcli call <tool_name> [--key=value ...]");
       process.exit(1);
     }
-    const argsIdx = args.indexOf("--args");
-    const argsJson = argsIdx !== -1 ? args[argsIdx + 1] : undefined;
-    await cmdCall(toolName, argsJson, { verbose, flagArgs, outputFormat });
+    await cmdCall(toolName, argsJson, { verbose, flagArgs, outputFormat, profile });
     return;
   }
 
@@ -940,7 +1064,7 @@ async function main() {
       console.error("Usage: webcli trace <traceID>");
       process.exit(1);
     }
-    await cmdTrace(traceID);
+    await cmdTrace(traceID, { profile });
     return;
   }
 
@@ -989,7 +1113,7 @@ async function main() {
     (sub === "help" && args.length === 2) ||
     (args[2] === "help" && args.length === 3);
   if (isHelpRequest && !BUILTIN_COMMANDS.has(cmd) && !BUILTIN_HELP_EXEMPT.has(cmd)) {
-    await runProgressiveHelp(args);
+    await runProgressiveHelp(args, outputFormat);
     return;
   }
 
@@ -1000,7 +1124,7 @@ async function main() {
   if (!BUILTIN_COMMANDS.has(cmd) && args.slice(1).some((a) => SITE_HELP_FLAGS.has(a))) {
     const jsonMode = args.includes("-f") && args[args.indexOf("-f") + 1] === "json";
     const { runAdapterCli } = await import("./adapter-cli.js");
-    await runAdapterCli([cmd, "-help", ...(jsonMode ? ["-f", "json"] : [])]);
+    await runAdapterCli([cmd, "-help", ...(jsonMode ? ["-f", "json"] : [])], { outputFormat });
     return;
   }
 

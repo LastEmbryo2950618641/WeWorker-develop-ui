@@ -147,12 +147,12 @@ function summarizePrivilegedResult(action, result) {
   return sanitizeTraceValue(result);
 }
 
-async function runHandlerWithTrace(handler, args, traceID) {
+async function runHandlerWithTrace(handler, args, traceID, continuation) {
   const previousTraceID = activeTraceID;
   activeTraceID = traceID;
   traceLog(traceID, `[ContentScript] handler args ${JSON.stringify(sanitizeTraceValue(args || {}))}`);
   try {
-    return await handler(args);
+    return await handler(args, continuation);
   } finally {
     activeTraceID = previousTraceID;
   }
@@ -1177,7 +1177,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         console.log(`${tracePrefix}[WebMCP] call_tool: ${toolName} — handler found, executing`);
         traceLog(traceID, `[ContentScript] call_tool: ${toolName} — handler 已找到，开始执行`);
         Promise.resolve()
-          .then(() => runHandlerWithTrace(h, args, traceID))
+          .then(() => runHandlerWithTrace(h, args, traceID, msg.continuation))
           .then(result => { sendResponse({ result: JSON.parse(JSON.stringify(result ?? null)) }); })
           .catch(err => { sendResponse({ error: err.message ?? String(err) }); });
         return;
@@ -1205,7 +1205,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   console.log(`${tracePrefix}[WebMCP] call_tool: ${toolName} — executing`);
   traceLog(traceID, `[ContentScript] call_tool: ${toolName} — 开始执行`);
   Promise.resolve()
-    .then(() => runHandlerWithTrace(handler, args, traceID))
+    .then(() => runHandlerWithTrace(handler, args, traceID, msg.continuation))
     .then(result => {
       console.log(`${tracePrefix}[WebMCP] call_tool completed: ${toolName}`);
       traceLog(traceID, `[ContentScript] call_tool 完成: ${toolName}`);

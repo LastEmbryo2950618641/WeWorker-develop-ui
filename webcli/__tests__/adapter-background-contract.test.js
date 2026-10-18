@@ -47,4 +47,16 @@ describe('background command package contract', () => {
     expect(await WebSocketBridge.prototype._callToolInner.call(bridge,'demo.list',{count:'007'})).toBe('fixture');
     expect(request.mock.calls[0][0]).toMatchObject({args:{count:'007'},adapterSnapshot:{digest:installed.digest}});
   });
+  it('requires the page source protocol before dispatching a route-bound command', async () => {
+    const pkg = manifest(false);
+    pkg.commands[0].pageRoute = { origin: 'https://example.com', pathname: '/items' };
+    install(pkg);
+    const request = vi.fn(async () => 'fixture');
+    const bridge = { _request: request, _extensionCapabilities: ['adapter_catalog_v1'] };
+    await expect(WebSocketBridge.prototype._callToolInner.call(bridge, 'demo.list', {})).rejects.toThrow(/Reload/);
+    expect(request).not.toHaveBeenCalled();
+    bridge._extensionCapabilities.push('page_sources_v1');
+    expect(await WebSocketBridge.prototype._callToolInner.call(bridge, 'demo.list', {})).toBe('fixture');
+    expect(request).toHaveBeenCalledOnce();
+  });
 });

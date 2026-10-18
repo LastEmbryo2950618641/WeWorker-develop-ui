@@ -1,3 +1,4 @@
+import { normalizeWorkflowOrigin, workflowOriginRoutes } from './page-workflow-origins.js';
 /**
  * Adapter Package v2 — 校验、发现与解析
  *
@@ -13,9 +14,15 @@
 
 import { existsSync, lstatSync, readdirSync, readFileSync } from "fs";
 import { basename, join, resolve, sep } from "path";
+import { validateHttpContract } from './http-contract.js';
+import { normalizePathParameters } from './generation-harness/path-parameters.js';
+import { normalizeNavigationQueryParameters, normalizeHashNavigation } from './page-navigation-parameters.js';
+import { validatePageWorkflowContract } from './exploration-workflow.js';
+import { validateUiWrite } from './exploration-ui-write.js';
+import { validatePageWrite } from './exploration-extension-write.js';
 
 
-const RUNTIMES = ["extension", "wewright"];
+const RUNTIMES = ["extension", "wewright", "http"];
 const COMMAND_ID_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const FORBIDDEN_MANIFEST_FIELDS = [
   "adapter_type",
@@ -149,7 +156,10 @@ export function validateV2Manifest(manifest, directoryName = "?") {
       }
       legacyCallNames.add(normalized);
     }
-    if (!RUNTIMES.includes(command?.runtime)) fail(adapterName, `command "${id}": runtime must be extension|wewright.`);
+    if (!RUNTIMES.includes(command?.runtime)) fail(adapterName, `command "${id}": runtime must be extension|wewright|http.`);
+    validateHttpContract(command);
+    validatePageWrite(command);
+    validateUiWrite(command);
     if (command.execution !== undefined && (command.runtime !== 'extension' || !command.execution
       || command.execution.type !== 'api' || command.execution.runtime !== 'background'
       || Object.keys(command.execution).some((key) => !['type', 'runtime'].includes(key)))) {
@@ -162,8 +172,59 @@ export function validateV2Manifest(manifest, directoryName = "?") {
         fail(adapterName, `Command "${id}" route field "${field}" must be a declared match host.`);
       }
     }
+    if (command.pageRoute !== undefined) {
+      const route = command.pageRoute;
+      let url;
+      try { url = new URL(route?.origin + route?.pathname); } catch { /* Rejected below. */ }
+      if (!route || typeof route !== 'object' || Array.isArray(route)
+        || Object.keys(route).some(key => !['origin', 'pathname', 'additionalPaths', 'navigation', 'workflow'].includes(key))
+        || typeof route.pathname !== 'string' || !/^\/(?!\/)/.test(route.pathname)
+        || command.runtime !== 'extension' || command.execution || (command.safety === 'write' && !command.pageWrite && !command.uiWrite)
+        || !url || !['http:', 'https:'].includes(url.protocol) || url.username || url.password
+        || url.origin !== route.origin || url.pathname !== route.pathname || url.search || url.hash
+        || !match?.some(host => url.hostname === host || (host.startsWith('*.') && url.hostname.endsWith(host.slice(1))))
+        || (command.tabDomain && url.hostname !== command.tabDomain)) {
+        fail(adapterName, `Command "${id}" pageRoute must be an exact declared HTTP(S) origin and pathname for a foreground read command.`);
+      }
+    }
+    if (command.pageRoute?.navigation !== undefined) {
+      const route = command.pageRoute, navigation = route.navigation;
+      let valid = command.pageWorkflow === true && navigation && typeof navigation === 'object' && !Array.isArray(navigation)
+        && Object.keys(navigation).every(key => ['pathname', 'resultOrigin', 'pathParameters', 'queryParameters', 'hashNavigation'].includes(key)) && typeof navigation.pathname === 'string' && /^\/(?!\/)/.test(navigation.pathname);
+      try {
+        const resultOrigin = normalizeWorkflowOrigin(navigation.resultOrigin ?? route.origin);
+        if (!match?.some(host => new URL(resultOrigin).hostname === host || host.startsWith('*.') && new URL(resultOrigin).hostname.endsWith(host.slice(1)))) throw new Error('Destination host must be declared.');
+        const url = new URL(resultOrigin + navigation.pathname);
+        const bindings = normalizePathParameters({ url: url.href }, (navigation.hashNavigation || navigation.queryParameters?.length) && navigation.pathParameters?.length === 0 ? undefined : navigation.pathParameters);
+        const queries = normalizeNavigationQueryParameters(navigation.queryParameters, bindings);
+        const hash = normalizeHashNavigation(navigation.hashNavigation, [...bindings, ...queries]);
+        valid &&= url.origin === resultOrigin && url.pathname === navigation.pathname && !url.search && !url.hash && ((bindings.length + queries.length) > 0 || hash)
+          && JSON.stringify(hash) === JSON.stringify(navigation.hashNavigation)
+          && JSON.stringify(queries) === JSON.stringify(navigation.queryParameters || [])
+          && bindings.every(binding => navigation.pathname.slice(1).split('/')[binding.segmentIndex] === ':id')
+          && (!route.pathname.includes(':id') || route.pathname === navigation.pathname);
+      } catch { valid = false; }
+      if (!valid) fail(adapterName, 'pageRoute.navigation requires a declared same-origin path template and complete path bindings.');
+    } else if (command.pageRoute?.pathname.includes(':id')) fail(adapterName, 'Dynamic pageRoute requires explicit navigation bindings.');
+    if (command.pageRoute?.workflow !== undefined) {
+      try {
+        const source = validatePageWorkflowContract(command.pageRoute.workflow);
+        const routes = workflowOriginRoutes(source, command.pageRoute.origin);
+        if (routes.some(route => [route.origin, route.resultOrigin].some(origin => !match?.some(host => new URL(origin).hostname === host || host.startsWith('*.') && new URL(origin).hostname.endsWith(host.slice(1)))))) throw new Error('Workflow hosts must be declared.');
+        if (command.pageWorkflow !== true || command.pageRoute.navigation || command.pageRoute.additionalPaths
+          || source.steps[0].pathname !== command.pageRoute.pathname) throw new Error('Invalid entry route.');
+      } catch { fail(adapterName, 'pageRoute.workflow requires a complete normalized read-only step sequence beginning at pathname.'); }
+    }
+    if (command.pageRoute?.additionalPaths !== undefined) {
+      const paths = command.pageRoute.additionalPaths;
+      if (command.pageWorkflow !== true || !Array.isArray(paths) || paths.length > 4 || paths.some(value => {
+        try { const url = new URL(value, command.pageRoute.origin); return typeof value !== 'string' || !value.startsWith('/') || url.origin !== command.pageRoute.origin || url.pathname !== value || url.search || url.hash; } catch { return true; }
+      })) fail(adapterName, 'additionalPaths must be up to four exact same-origin workflow pathnames.');
+    }
+    if (command.pageWorkflow !== undefined && (command.pageWorkflow !== true || command.pageStrategy !== 'UI_SELECTOR' || !command.pageRoute)) fail(adapterName, 'pageWorkflow requires a UI_SELECTOR pageRoute.');
+    if (command.pageStrategy !== undefined && (!command.pageRoute || !['UI_SELECTOR', 'DOM_STATE', 'INTERCEPT'].includes(command.pageStrategy))) fail(adapterName, 'pageStrategy must name a supported strategy with pageRoute.');
     runtimesPresent.add(command.runtime);
-    const ext = command.runtime === "extension" ? "js" : "py";
+    const ext = command.runtime === "wewright" ? "py" : "js";
     const expectedModule = `${command.runtime}/commands/${id}.${ext}`;
     if (command?.module !== expectedModule) {
       fail(adapterName, `command "${id}": module must be "${expectedModule}".`);
@@ -192,8 +253,10 @@ export function validateV2Manifest(manifest, directoryName = "?") {
     if (!Array.isArray(match) || match.length === 0 || match.some((d) => typeof d !== "string" || !d.trim())) {
       fail(adapterName, "match (non-empty domain array) is required when extension commands exist.");
     }
-  } else if (match != null && (!Array.isArray(match) || match.length > 0)) {
+  } else if (!runtimesPresent.has('http') && match != null && (!Array.isArray(match) || match.length > 0)) {
     fail(adapterName, "match is forbidden for pure wewright adapters.");
+  } else if (match != null && (!Array.isArray(match) || match.some(host => typeof host !== 'string' || !host.trim()))) {
+    fail(adapterName, 'match must be a domain array.');
   }
 
   return { name: manifest.name, manifest, commands };

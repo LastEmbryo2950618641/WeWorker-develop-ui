@@ -7,6 +7,7 @@ export function resolveAdapterCall(toolName, options = {}) {
     throw adapterError('ADAPTER_CATALOG_UNAVAILABLE', 'Adapter catalog requires inspection before execution.');
   }
   const names = [...new Set([
+    ...Object.entries(catalog.selections || {}).filter(([, selection]) => selection?.source === 'disabled').map(([name]) => name),
     ...catalog.candidates.filter((entry) => entry.source !== 'unmanaged').map((entry) => entry.name),
     ...catalog.diagnostics.filter((entry) => entry.source !== 'unmanaged').flatMap((entry) => entry.name ? [entry.name] : entry.names || []),
   ])].sort((a, b) => b.length - a.length);
@@ -27,6 +28,9 @@ export function describeAdapterCatalog(options = {}) {
   // Hosts may pass a catalog they already built for the same read (resolveCatalogTool does the same).
   const catalog = options.catalog || buildAdapterCatalog(options);
   const managedNames = new Set(catalog.candidates.filter((entry) => entry.source !== 'unmanaged').map((entry) => entry.name));
+  for (const [name, selection] of Object.entries(catalog.selections || {})) {
+    if (selection?.source === 'disabled') managedNames.add(name);
+  }
   for (const diagnostic of catalog.diagnostics) {
     if (diagnostic.name && diagnostic.source !== 'unmanaged') managedNames.add(diagnostic.name);
     for (const name of diagnostic.names || []) managedNames.add(name);

@@ -39,6 +39,17 @@ test('explicit user roots isolate metadata and conflicting overrides fail', (t) 
   assert.throws(() => buildAdapterEnvironment({ ...options, env: { WEBCLI_ADAPTERS_DIR: userDir, WEWORKER_USER_ADAPTERS_DIR: options.home } }), /Conflicting/);
 });
 
+test('current generated metadata without a legacy inventory works in desktop and CLI', (t) => {
+  const options = fixture(t, 'public');
+  fs.writeFileSync(path.join(options.builtinDir, '.profile.json'), JSON.stringify({ schema_version: 1, profile: 'public', adapters: [] }));
+  for (const packaged of [true, false]) {
+    const env = buildAdapterEnvironment({ ...options, packaged, env: { WEWORKER_BUILTIN_ADAPTERS_DIR: options.builtinDir } });
+    assert.equal(resolveAdapterPaths({ env, home: options.home }).profile, 'public');
+  }
+  fs.writeFileSync(path.join(options.builtinDir, '.profile.json'), JSON.stringify({ schema_version: 1, profile: 'public', adapters: [], legacy: {} }));
+  assert.throws(() => buildAdapterEnvironment(options), /Invalid built-in Adapter profile metadata/);
+});
+
 test('packaged builds reject missing metadata or another profile and cannot use source fallbacks', (t) => {
   const options = fixture(t);
   assert.throws(() => buildAdapterEnvironment({ ...options, env: { WEWORKER_BUILD_PROFILE: 'public' } }), /does not match/);

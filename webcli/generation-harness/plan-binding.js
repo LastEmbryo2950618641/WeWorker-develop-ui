@@ -1,4 +1,5 @@
 // Plan indexes refer to the original generation context, never to ranked slots.
+import { normalizePathParameters } from './path-parameters.js';
 export function plannedToolNames(siteKey, plan, packageFormat = 1) {
   return (plan?.tools || []).map((tool) => {
     const local = String(tool.name || '').split('.').pop();
@@ -33,9 +34,9 @@ export function bindGenerationPlan(memory, plan) {
       sourceToolName = candidate.toolName;
       actions.push(candidate);
     } else {
-      if (lists.length >= 2) throw new Error('generation plan supports at most two read API tools');
-      sourceToolName = `${memory.siteKey}.${lists.length ? 'fetch_summary_groups' : 'search_records'}`;
-      lists.push(candidate);
+      sourceToolName = `${memory.siteKey}.${lists.length === 0 ? 'search_records' : lists.length === 1 ? 'fetch_summary_groups' : `query_read_${lists.length + 1}`}`;
+      const pathParameters = normalizePathParameters(candidate, tool.pathParameters);
+      lists.push(pathParameters.length ? { ...candidate, pathParameters } : candidate);
     }
     if (overrides.some((item) => item.sourceToolName === sourceToolName)) {
       throw new Error(`duplicate planned source tool: ${name}`);

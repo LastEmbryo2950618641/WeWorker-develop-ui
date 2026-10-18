@@ -199,3 +199,31 @@ describe('host-owned page navigation', () => {
     expect(removed).toBe(2);
   });
 });
+
+describe('read query continuation across document replacement', () => {
+  const command = { id: 'search', safety: 'read', pageWorkflow: true };
+  const pkg = { name: 'example.com', commands: [command] };
+  function setup(result = { ok: true, data: { title: 'Example' } }) {
+    const events = [];
+    const runtime = createHostAdapterRuntime({ bundle: async () => ({}), prepare: async () => {}, clear: async () => {}, inject: async () => { events.push('inject'); },
+      query: async () => { events.push('query'); runtime.invalidate(7); return result; } });
+    return { runtime, events };
+  }
+  it('reinjects after the query and passes a result instead of executing the trigger again', async () => {
+    const { runtime, events } = setup();
+    const result = await runtime.execute(7, pkg, 'https://example.com/start', async (_remaining, continuation) => {
+      events.push(continuation ? 'resume' : 'prepare');
+      return continuation ? continuation.result : { __webcli_page_query: { version: 1 } };
+    }, command);
+    expect(result.data.title).toBe('Example'); expect(events).toEqual(['inject', 'prepare', 'query', 'inject', 'resume']);
+  });
+  it('never retries query errors, writes, or a handler that emits another action after resumption', async () => {
+    const f = setup({ ok: false, error: { code: 'PAGE_QUERY_TIMEOUT' } });
+    expect((await f.runtime.execute(7, pkg, 'https://example.com', () => ({ __webcli_page_query: { version: 1 } }), command)).error.code).toBe('PAGE_QUERY_TIMEOUT');
+    expect(f.events.filter(e => e === 'query')).toHaveLength(1);
+    const g = setup(); await expect(g.runtime.execute(7, pkg, 'https://example.com', () => ({ __webcli_page_query: { version: 1 } }), command)).rejects.toThrow('repeated');
+    const write = { ...command, safety: 'write' };
+    const h = setup(); await expect(h.runtime.execute(7, { ...pkg, commands: [write] }, 'https://example.com', () => ({ __webcli_page_query: { version: 1 } }), write)).rejects.toThrow('Invalid');
+    expect(h.events).not.toContain('query');
+  });
+});

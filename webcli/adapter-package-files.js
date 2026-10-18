@@ -2,6 +2,8 @@ import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { validateAgentGuidance, validateV2Manifest } from './adapter-package-validation.js';
+import { assertUiWriteModule } from './exploration-ui-write.js';
+import { assertPageWriteModule } from './exploration-extension-write.js';
 
 export function adapterError(code, message) {
   return Object.assign(new Error(message), { code });
@@ -70,6 +72,7 @@ export function validatePackageFiles(input) {
   try { manifest = JSON.parse(files.get('manifest.json')?.toString('utf8')); }
   catch { throw adapterError('INVALID_PACKAGE', 'Adapter manifest is missing or invalid.'); }
   const validated = validateV2Manifest(manifest, manifest?.name);
+  for (const command of validated.commands) { assertPageWriteModule(command, files); assertUiWriteModule(command, files); }
   const guidanceBytes = files.get('guidance.md');
   if (guidanceBytes) {
     try { validateAgentGuidance(guidanceBytes); }

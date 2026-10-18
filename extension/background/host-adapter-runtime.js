@@ -1,18 +1,28 @@
 /** Serialize page replacement and calls so an update cannot replace a running command's globals. */
-export function createHostAdapterRuntime({ bundle, prepare, clear, inject, navigate, ready, now = Date.now, maxNavigations = 4, timeoutMs = 105000 }) {
+export function createHostAdapterRuntime({ bundle, prepare, clear, inject, navigate, ready, query, now = Date.now, maxNavigations = 4, timeoutMs = 105000 }) {
   const queues = new Map();
   const stamps = new Map();
   const documents = new Map();
+  function exclusive(tabId, operation) {
+    const task = (queues.get(tabId) || Promise.resolve()).catch(() => {}).then(operation);
+    queues.set(tabId, task);
+    void task.finally(() => { if (queues.get(tabId) === task) queues.delete(tabId); }).catch(() => {});
+    return task;
+  }
   return {
+    exclusive,
+    hasSnapshot(tabId, manifest, url) {
+      return stamps.get(tabId) === JSON.stringify([manifest.name, manifest._hostSnapshot, url]);
+    },
     invalidate(tabId) {
       stamps.delete(tabId);
       documents.set(tabId, (documents.get(tabId) || 0) + 1);
     },
     execute(tabId, manifest, url, operation = null, command = null, traceID = null) {
       const deadline = now() + timeoutMs;
-      const task = (queues.get(tabId) || Promise.resolve()).catch(() => {}).then(async () => {
+      return exclusive(tabId, async () => {
         const policy = command && manifest.commands?.find(entry => entry.id === command.id);
-        let currentUrl = url;
+        let currentUrl = url, continuation = null;
         for (let step = 0; ; step++) {
           if (now() >= deadline) throw new Error('Adapter page execution timed out.');
           for (let attempt = 0; ; attempt++) {
@@ -39,7 +49,18 @@ export function createHostAdapterRuntime({ bundle, prepare, clear, inject, navig
             }
           }
           if (now() >= deadline) throw new Error('Adapter page execution timed out.');
-          const result = operation ? await operation(Math.max(1, deadline - now())) : undefined;
+          const result = operation ? await operation(Math.max(1, deadline - now()), continuation) : undefined;
+          if (result?.__webcli_page_query) {
+            if (continuation || !query || policy?.safety !== 'read' || policy.pageWorkflow !== true) throw new Error('Invalid or repeated page query continuation.');
+            const payload = result.__webcli_page_query;
+            if (payload.version !== 1) throw new Error('Unsupported page query version.');
+            const output = await query(tabId, payload, manifest, policy);
+            if (!output?.ok) return output;
+            continuation = { kind: 'page_query_result', result: output };
+            stamps.delete(tabId);
+            continue;
+          }
+          if (continuation && result?.__webcli_navigation) throw new Error('A resumed page query cannot request another navigation.');
           const next = result?.__webcli_navigation;
           if (!next) return result;
           if (!policy || !navigate || next.version !== 1 || typeof next.resume !== 'boolean') throw new Error('Invalid Adapter navigation continuation.');
@@ -56,9 +77,6 @@ export function createHostAdapterRuntime({ bundle, prepare, clear, inject, navig
           if (!next.resume) return next.result ?? { status: 'navigation_complete', url: currentUrl };
         }
       });
-      queues.set(tabId, task);
-      void task.finally(() => { if (queues.get(tabId) === task) queues.delete(tabId); }).catch(() => {});
-      return task;
     },
   };
 }

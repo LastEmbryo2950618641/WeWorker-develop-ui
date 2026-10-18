@@ -615,3 +615,23 @@ test('direct storage_get refreshes localStorage through a temporary inactive tab
   assert.equal(tabs.find((tab) => tab.id === 8), undefined)
   assert.deepEqual(removeCalls, [8])
 })
+
+test('cache-only storage reads never consult or create a business page', async () => {
+  const f = loadServiceWorker();
+  const stored = {};
+  f.context.chrome.storage.local.get = async () => stored;
+  f.context.chrome.storage.local.set = async value => Object.assign(stored, value);
+  const payload = { key: 'example_token', area: 'local', url: 'https://itsm.example.com/', cacheOnly: true };
+  const missing = await f.directRequest('storage_get', payload);
+  assert.equal(missing.ok, false);
+  assert.equal(missing.error.code, 'PAGE_CONTEXT_REQUIRED');
+  assert.equal(f.createCalls.length, 0);
+  assert.equal(f.executeCalls.length, 0);
+  const populated = await f.directRequest('storage_get', { ...payload, cacheOnly: false });
+  assert.equal(populated.ok, true);
+  const executions = f.executeCalls.length;
+  const cached = await f.directRequest('storage_get', payload);
+  assert.deepEqual(plain(cached), plain(populated));
+  assert.equal(f.executeCalls.length, executions);
+  assert.equal(f.createCalls.length, 0);
+});

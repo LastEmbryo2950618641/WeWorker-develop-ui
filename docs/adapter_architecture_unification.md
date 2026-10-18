@@ -40,11 +40,16 @@ Adapter 是唯一分发和安装单位。浏览器扩展承担浏览器执行与
 
 ## 包、名称与命令契约
 
+2026-10-17 增量：v2 增加独立 `http` runtime，以 `commands[].http.version=1` 明确能力版本，模块路径为 `http/commands/<id>.js`。旧宿主拒绝未知 runtime；Extension/Toolkit 枚举和执行器不变。PUBLIC_API/COOKIE_API 的请求、凭据、权限、打包与验证契约见 [HTTP Adapter](http_adapter_runtime.md)。下文双运行时描述为原迁移基线。
+
 - manifest 为包描述、版本、域名、命令 Schema、风险与权限的唯一源；生成器、加载器、Hub 校验器共用规范。
 - name 是稳定调用标识，显示名称和 match 是不同职责。暂不为追求短名批量改名；保留已发布标识，并建立旧名称到新名称的显式映射。
 - 调用保持 webcli call <name>.<command-id>。name 包含点号时使用最长已注册名称匹配，不能按最后一个域名段猜测。
 - commands[].aliases 可显式保留同包旧命令名（最多 64 个，仅字母、数字、下划线、短横线，不包含包名前缀）。别名与规范 ID 不得冲突；列表保持一个规范命令，帮助和 Skill 展示兼容名。宿主与扩展将别名解析到同一命令、权限及包摘要；停用、损坏或移除后禁止旧副本回退。commands[].legacyNames 可显式声明最多 64 个完整跨包前缀历史调用名；加载器建立全目录唯一索引，CLI、Backend、Bridge、Extension help/call 与 Skill 使用同一规范命令和包摘要。内部已为可确定映射的旧名声明 legacyNames，未能映射到现有 v2 命令的历史名继续保留清单待产品确认。
 - Extension API 命令可声明 execution: { type: "api", runtime: "background" }。省略时仍走页面执行；Toolkit 不接受此声明。页面命令升级为后台命令时新增 execution:background 安装权限，且 Bridge 要求扩展协商 adapter_background_v1 能力。
+- Extension 前台只读命令可声明 pageRoute: { origin: "https://example.com", pathname: "/items" }，限定当前页面来源。必须是 match 声明的页面主机及准确 HTTP(S) origin/pathname，无查询串或 hash，不扩大权限。普通调用选择唯一匹配页或多个匹配页中的唯一活动页；缺失/歧义报错，不自动导航。Bridge 要求 page_sources_v1；执行 helper 再次核对路由。省略此字段的命令保留原域名路由行为。
+- UI_SELECTOR 的 pageWorkflow=true 支持明确查询续接；固定结果路径使用 pageRoute.additionalPaths。参数化详情导航可增加 pageRoute.navigation: { pathname: "/items/:id", pathParameters: [{ segmentIndex: 1, name: "itemId", description: "公开条目 ID" }] }，固定同源目标与完整路径绑定，纳入 page-navigation 安装权限。入口 pathname 可为固定路径或同一目标模板；普通调用匹配入口/详情路由，仍拒绝缺失和歧义。需要 page_navigation_v1，预览与调用都复核契约后只导航一次，读取新主文档并以独立 continuation 返回结果，不重放失败。实际探索命令与限制见 [开发设计](api_exploration_cli_design.md) 的“参数化页面导航”。
+- 多步只读命令用 pageRoute.workflow: { steps, timeoutMs }，每步保存起始 pathname 与去掉 result 提取声明后的规范化 query（含模式/动作/参数/关联/目标/时限）。2–8 步按路由串联，整体纳入 page-workflow 权限；不与 navigation/additionalPaths 混用。需要 page_workflow_v1，后台串行执行且只续接一次最终结果；失败、取消、断线后不自动重放。动作/路径变化须重新审阅，结果提取可局部修复。该契约不是任意写操作或脚本执行授权。
 - 命令实现与共享实现分开，宿主 Runtime 不重复装入各个包。
 - 现有 v2 runtime 枚举 extension/wewright 是兼容输入；产品层使用 Extension/Toolkit。不得无版本约定地改枚举、改工具参数、改变输出格式。
 - 名称校验覆盖 Windows 保留名、非法字符、尾随点与空格、大小写碰撞；文件校验覆盖路径穿越、符号链接、目录联接及解压体积限制。

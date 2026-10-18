@@ -1,9 +1,26 @@
+import { uiWriteRequest } from './ui-write.js';
+import { browserContextId } from './browser-profile.js';
+import { readHttpCookies } from './http-credentials.js';
+import { executePageRequest, pageWriteRequest } from './page-write.js';
 import { scopedGenerationPreviewScripts } from './generation-preview-bundle.js';
+import { validateBackgroundPreview, backgroundPreviewRequest } from './generation-background-preview.js';
 import { buildV2Bootstrap, v2InjectionFiles } from "./v2-loader.js";
 import { injectAdapterSources } from './adapter-script-loader.js';
 import { createHostAdapterClient } from './host-adapter-client.js';
 import { createHostAdapterRuntime, assertAdapterNavigationUrl, createNavigationGuard, navigateAdapterTab } from './host-adapter-runtime.js';
 import { createManagedBackgroundRuntime, MANAGED_RUNNER_PATH } from './managed-background-runtime.js';
+import { executeBrowserCommand } from './browser-commands.js';
+import { browserResponseEvidence } from './browser-network.js';
+import { executePageSource } from './page-source.js';
+import { executeInterceptRead } from './intercept-read.js';
+import { executePageQuery, cancelPageWorkflow, cancelAllPageWorkflows, assertPageWorkflowActive } from './page-query.js';
+import { matchesPagePath, assertPageQueryRoute } from './page-navigation.js';
+import { pageRoutePaths, pageRouteTargets } from './page-workflow.js';
+import { usesWorkflowOrigins, matchesOriginTarget } from './page-workflow-origins.js';
+import { recordBrowserObservation, clearBrowserObservations } from './browser-observations.js';
+import { recordBrowserFrameEvent, clearBrowserFrames } from './browser-frames.js';
+import { recordBrowserDownload, clearBrowserDownloads } from './browser-downloads.js';
+import { recordBrowserEvent, clearBrowserEvents } from './browser-events.js';
 
 /**
  * Background Service Worker
@@ -25,6 +42,7 @@ const WS_URL = "ws://localhost:3711";
 const EXTENSION_CAPABILITIES = [
   'adapter_catalog_v1',
   'adapter_background_v1',
+  'background_preview_v1',
   'passive_exploration_v1',
   'safe_api_probe_v1',
   'api_replay_v1',
@@ -33,11 +51,39 @@ const EXTENSION_CAPABILITIES = [
   'action_capture_analysis_retry_v1',
   'generation_harness_v1',
   'runtime_validation_v1',
+  'browser_commands_v1',
+  'browser_profiles_v1',
+  'http_credentials_v1',
+  'http_credentials_v2',
+  'browser_frames_v1',
+  'browser_downloads_v1',
+  'browser_frame_pointer_v1',
+  'browser_events_v1',
+  'browser_accessibility_v1',
+  'browser_screenshot_v1',
+  'browser_shadow_query_v1',
+  'browser_compound_v1',
+  'browser_upload_target_v1',
+  'strict_output_contract_v1',
+  'page_sources_v1',
+  'intercept_read_v1',
+  'page_query_v1',
+  'page_navigation_v1',
+  'page_navigation_query_v1',
+  'page_navigation_hash_v1',
+  'page_workflow_v1',
+  'page_workflow_control_v1',
+  'page_navigation_origin_v1',
+  'page_write_v1',
+  'ui_write_v1',
+  'ui_write_result_v1',
 ];
 
+let currentBrowserContextId;
 function buildExtensionHello(extra = {}) {
   return {
     type: 'extension_hello',
+    contextId: currentBrowserContextId,
     version: chrome.runtime.getManifest().version,
     capabilities: EXTENSION_CAPABILITIES,
     ...extra,
@@ -293,7 +339,8 @@ function isLikelyBusinessEntry(entry) {
 function formatNetworkEntries(entries, options = {}) {
   const sorted = entries.slice().sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
   const businessOnly = !!options.businessOnly;
-  const filtered = businessOnly ? sorted.filter(isLikelyBusinessEntry) : sorted;
+  const filtered = businessOnly ? sorted.filter(entry => isLikelyBusinessEntry(entry)
+    || (options.includeTelemetry === true && !isStaticAssetEntry(entry) && /json/.test(getEntryContentType(entry)))) : sorted;
   const limit = options.limit ?? null;
   const limited = typeof limit === 'number' ? filtered.slice(0, limit) : filtered;
 
@@ -499,7 +546,7 @@ async function finishAdapterNetworkCapture(tabId, session) {
   try {
     await chrome.debugger.detach({ tabId });
   } catch { }
-  cdpAttachedTabs.delete(tabId);
+  clearBrowserDebuggerState(tabId, 'Adapter capture attachment released.');
 }
 
 async function readAdapterNetworkCapture(tab, payload) {
@@ -1019,7 +1066,7 @@ async function verifyPaginationProgress(tabId, beforePageState, paginationAction
   return { result, afterPageState };
 }
 
-async function runExploreWorkflow({ tabId = null, url = null } = {}) {
+async function runExploreWorkflow({ tabId = null, url = null, includeTelemetry = false } = {}) {
   let targetTabId = tabId;
   let opened = null;
 
@@ -1050,7 +1097,7 @@ async function runExploreWorkflow({ tabId = null, url = null } = {}) {
   }
 
   const pageStateBefore = await sendExplorationMessage(targetTabId, { type: 'browser_state' });
-  const initialNetwork = await getCdpNetworkSnapshot(targetTabId, { businessOnly: true, limit: 60 });
+  const initialNetwork = await getCdpNetworkSnapshot(targetTabId, { businessOnly: true, includeTelemetry, limit: 60 });
   const hydrated = await waitForHydratedPageState(targetTabId, pageStateBefore, {
     minWaitMs: 1200,
     maxWaitMs: 8000,
@@ -1064,7 +1111,7 @@ async function runExploreWorkflow({ tabId = null, url = null } = {}) {
   });
   const resultPageState = hydrated.state || pageStateBefore;
   const pageStateAfter = await sendExplorationMessage(targetTabId, { type: 'browser_state' });
-  const network = await getCdpNetworkSnapshot(targetTabId, { businessOnly: true, limit: 100 });
+  const network = await getCdpNetworkSnapshot(targetTabId, { businessOnly: true, includeTelemetry, limit: 100 });
   const verdictEntries = collectWorkflowNetworkEntries(initialNetwork?.entries, network?.entries);
   const verdict = classifySitePattern(pageStateAfter, verdictEntries);
 
@@ -2208,6 +2255,13 @@ async function sendExplorationMessage(tabId, payload) {
 chrome.debugger.onEvent.addListener(async (source, method, params) => {
   const tabId = source?.tabId;
   if (!tabId || !cdpAttachedTabs.has(tabId)) return;
+  void recordBrowserFrameEvent(chrome, source, method, params);
+  recordBrowserDownload(tabId, method, params);
+  recordBrowserEvent(tabId, source, method, params);
+  // Child target context/request IDs are scoped to their debugger session.
+  // Existing preview and network caches belong to the main target only.
+  if (source.sessionId) return;
+  recordBrowserObservation(tabId, method, params);
 
   if (method === 'Runtime.executionContextCreated') {
     const context = params?.context;
@@ -2312,6 +2366,7 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
 
       pushCdpNetworkEntry(tabId, {
         kind: 'cdp',
+        requestId: params.requestId,
         url: pending.url,
         method: pending.method,
         timestamp: pending.timestamp,
@@ -2324,6 +2379,7 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
         responseHeaders: pending.responseHeaders,
         responseContentType: pending.responseContentType || pending.mimeType || '',
         responsePreview,
+        responseEvidence: browserResponseEvidence(responseBody),
         encodedDataLength: params.encodedDataLength || 0,
       });
       const adapterSession = adapterNetworkCaptureSessions.get(tabId);
@@ -2358,6 +2414,7 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
       if (!pending) return;
       pushCdpNetworkEntry(tabId, {
         kind: 'cdp',
+        requestId: params.requestId,
         url: pending.url,
         method: pending.method,
         timestamp: pending.timestamp,
@@ -2388,14 +2445,19 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
   }
 });
 
-chrome.debugger.onDetach.addListener((source, reason) => {
-  const tabId = source?.tabId;
-  if (!tabId) return;
+function clearBrowserDebuggerState(tabId, reason) {
+  clearBrowserFrames(tabId);
+  clearBrowserDownloads(tabId);
+  clearBrowserEvents(tabId);
   cdpAttachedTabs.delete(tabId);
+  clearBrowserObservations(tabId);
   cdpExecutionContexts.delete(tabId);
   adapterNetworkCaptureSessions.delete(tabId);
   const state = cdpNetworkState.get(tabId);
   if (state) state.lastError = reason || 'detached';
+}
+chrome.debugger.onDetach.addListener((source, reason) => {
+  if (source?.tabId && !source.sessionId) clearBrowserDebuggerState(source.tabId, reason);
 });
 
 // ─── WebSocket 连接 ──────────────────────────────────────────────────────────
@@ -2436,6 +2498,7 @@ function scheduleNativeHeartbeatAckCheck(socket, sentAt) {
 function sendNativeHeartbeat() {
   const socket = ws;
   if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+  if (!currentBrowserContextId) return false;
   const sentAt = Date.now();
   const sent = sendToNative(buildExtensionHello({ heartbeat: true }));
   if (sent) scheduleNativeHeartbeatAckCheck(socket, sentAt);
@@ -2485,13 +2548,15 @@ function connectToNativeHost() {
   }
 
   const socket = ws;
-  socket.addEventListener("open", () => {
+  socket.addEventListener("open", async () => {
     if (ws !== socket) return;
     console.log("[WebMCP] Connected to native host");
     isConnecting = false;
     lastNativeAckAt = Date.now();
 
-    // 先发送一个握手消息，让 Bridge 识别这是 Chrome 扩展（即使暂无工具）
+    try { currentBrowserContextId = await browserContextId(chrome.storage.local); }
+    catch (error) { console.error('[WebMCP] Browser profile unavailable:', error.message); socket.close(1008, 'PROFILE_ID_INVALID'); return; }
+    if (ws !== socket || socket.readyState !== WebSocket.OPEN) return;
     sendToNative(buildExtensionHello());
 
     chrome.tabs.query({}, (tabs) => {
@@ -2532,6 +2597,7 @@ function connectToNativeHost() {
 
   socket.addEventListener("close", (event) => {
     if (ws !== socket) return;
+    cancelAllPageWorkflows();
     bridgeCapabilities = [];
     clearNativeHeartbeatAckTimer();
     const closeDetail = event?.reason || (event?.code ? `WebSocket close code ${event.code}` : 'WebSocket 已关闭');
@@ -2552,7 +2618,9 @@ function connectToNativeHost() {
 // ─── 处理来自 Native Host 的消息 ───────────────────────────────────────────
 
 async function handleNativeMessage(msg) {
-  if (msg.type === 'validate_generation_preview') {
+  if (msg.type === 'http_credentials') {
+    console.log('[WebMCP] <- native: http_credentials', { id: msg.id });
+  } else if (msg.type === 'validate_generation_preview') {
     console.log('[WebMCP] <- native: validate_generation_preview', {
       id: msg.id,
       previewAdapterId: msg.previewAdapterId,
@@ -2596,20 +2664,7 @@ async function handleNativeMessage(msg) {
 
   if (msg.type === 'adapter_state_changed') {
     try {
-      const registry = await doRefreshRegistry();
-      let refreshedTabs = 0;
-      const adapters = Array.isArray(msg.adapters)
-        ? msg.adapters.filter((name) => typeof name === "string" && SAFE_ADAPTER_ID_RE.test(name))
-        : [];
-      // An empty sync snapshot means the consumer reconnected and must refresh all
-      // managed packages; it does not claim knowledge of which names changed.
-      const adapterIds = adapters.length > 0 ? adapters : registry.adapters.filter((name) =>
-        typeof name === "string" && SAFE_ADAPTER_ID_RE.test(name)
-      );
-      for (const adapterId of adapterIds) {
-        const result = await refreshAdapterTabs(adapterId);
-        refreshedTabs += result.refreshedTabs;
-      }
+      const { registry, refreshedTabs } = await refreshAdapterState(msg);
       chrome.runtime.sendMessage({ ...msg, registry, refreshedTabs }, () => void chrome.runtime.lastError);
     } catch (error) {
       console.error("[WebMCP] Adapter state refresh failed:", error?.message || error);
@@ -2664,7 +2719,7 @@ async function handleNativeMessage(msg) {
       }
       if (selected.managed) {
         if (selected.command.runtime !== 'extension') throw new Error('This command requires the host Toolkit runtime.');
-        if ((selected.command.requires_confirmation ?? selected.command.safety === 'write') && args?.__confirmed !== true) throw new Error('Explicit confirmation is required for this command.');
+        if ((selected.command.pageWrite || selected.command.uiWrite || (selected.command.requires_confirmation ?? selected.command.safety === 'write')) && args?.__confirmed !== true) throw new Error('Explicit confirmation is required for this command.');
         if (selected.command.execution?.runtime === 'background') {
           const result = await callManagedBackgroundTool(selected.manifest, selected.command, args || {}, traceID);
           sendToNative({ type: 'call_tool_result', id: msg.id, result, traceID });
@@ -2672,10 +2727,28 @@ async function handleNativeMessage(msg) {
         }
         const tabs = await chrome.tabs.query({});
         const route = selected.command.tabDomain || selected.command.routeDomain || selected.manifest.match[0];
+        let pageTab;
+        if (selected.command.pageRoute) {
+          const { origin, pathname } = selected.command.pageRoute;
+          assertAdapterNavigationUrl(selected.manifest, origin + pathname);
+          const matches = tabs.filter(entry => {
+            try { const url = new URL(entry.url); return pageRouteTargets(selected.command.pageRoute).some(target => matchesOriginTarget(url, target)); }
+            catch { return false; }
+          });
+          const activeMatches = matches.filter(entry => entry.active);
+          pageTab = matches.length === 1 ? matches[0] : activeMatches.length === 1 ? activeMatches[0] : null;
+          if (!pageTab?.id) {
+            sendToNative({ type: 'call_tool_result', id: msg.id, traceID, result: { ok: false, error: {
+              code: matches.length ? 'PAGE_SOURCE_AMBIGUOUS' : 'PAGE_SOURCE_ROUTE_MISSING',
+              message: matches.length ? 'Activate one matching page before calling this command.' : `Open ${origin}${pathname} before calling this command.`,
+            } } });
+            return;
+          }
+        }
         // 先精确匹配 hostname，再回退到 manifest.match 声明的页面主机（含 *.wildcard）。
         // 回退必须限定在声明的主机内：runtime_allowed_hosts 里的辅助域（如 so.gitee.com）
         // 不是页面主机，不得被选为执行页。语义与 assertAdapterNavigationUrl 的白名单一致。
-        let tab = tabs.find(entry => {
+        let tab = pageTab || tabs.find(entry => {
           try { return new URL(entry.url).hostname === route; } catch { return false; }
         });
         if (!tab?.id) {
@@ -2692,8 +2765,17 @@ async function handleNativeMessage(msg) {
           const startUrl = assertAdapterNavigationUrl(selected.manifest, 'https://' + route + '/');
           tab = await chrome.tabs.create({ url: startUrl, active: false });
         }
+        if (selected.command.pageWrite || selected.command.uiWrite) {
+          const connection = ws, request = (selected.command.uiWrite ? uiWriteRequest : pageWriteRequest)(selected.command, args || {}), deadline = Date.now() + 30000;
+          const reply = await getHostAdapterRuntime().exclusive(tab.id, () => executePageRequest({ chrome, ensureCdpAttached, tabId: tab.id,
+            payload: { route: selected.command.pageRoute, request, confirmed: true, deadline,
+              ...(selected.command.uiWrite ? { ui: selected.command.uiWrite } : { idempotency: { header: selected.command.pageWrite.idempotency.header, key: crypto.randomUUID() } }) },
+            assertRunning: () => { if (connection !== ws) throw new Error('Connection changed.'); } }));
+          sendToNative({ type: 'call_tool_result', id: msg.id, result: reply.ok ? reply.value : { ok: false, errorCode: reply.error.code }, traceID });
+          return;
+        }
         const result = await getHostAdapterRuntime().execute(tab.id, selected.manifest, tab.url,
-          (remainingMs) => callToolInTab(tab.id, selected.manifest.name + '.' + selected.command.id, args || {}, traceID, false, remainingMs), selected.command, traceID);
+          (remainingMs, continuation) => callToolInTab(tab.id, selected.manifest.name + '.' + selected.command.id, args || {}, traceID, false, remainingMs, continuation), selected.command, traceID);
         sendToNative({ type: 'call_tool_result', id: msg.id, result, traceID });
         return;
       }
@@ -2796,6 +2878,13 @@ async function handleNativeMessage(msg) {
       traceLog(traceID, `[ServiceWorker] call_tool 错误: ${err.message}`);
     }
 
+  } else if (msg.type === 'http_credentials') {
+    try {
+      const result = await readHttpCookies(chrome, msg.payload);
+      sendToNative({ type: 'call_tool_result', id: msg.id, result }, true);
+    } catch {
+      sendToNative({ type: 'call_tool_error', id: msg.id, code: 'HTTP_CREDENTIALS_UNAVAILABLE', error: 'Cannot read declared HTTP credentials from this browser.' });
+    }
   } else if (msg.type === 'exploration_list_tabs') {
     try {
       const tabs = await chrome.tabs.query({});
@@ -2814,9 +2903,38 @@ async function handleNativeMessage(msg) {
       sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
     }
 
+  } else if (msg.type === 'exploration_page_write') {
+    const connection = ws;
+    const result = await getHostAdapterRuntime().exclusive(Number(msg.tabId), () => executePageRequest({ chrome, ensureCdpAttached, tabId: Number(msg.tabId), payload: msg.payload,
+      assertRunning: () => {
+        if (connection !== ws) throw new Error('Connection changed before page request.');
+        assertPageWorkflowActive(Number(msg.tabId), msg.payload?.operationId);
+      } }));
+    sendToNative({ type: 'call_tool_result', id: msg.id, result }, true);
+  } else if (msg.type === 'exploration_cancel_workflow') {
+    sendToNative({ type: 'call_tool_result', id: msg.id, result: { cancelled: cancelPageWorkflow(Number(msg.tabId), msg.operationId) } });
+  } else if (msg.type === 'exploration_page_query') {
+    const connection = ws;
+    const result = await getHostAdapterRuntime().exclusive(Number(msg.tabId), () => connection !== ws
+      ? { ok: false, error: { code: 'PAGE_WORKFLOW_CANCELLED', message: 'Connection changed before the workflow could start.' } }
+      : executePageQuery({ chrome, ensureCdpAttached, tabId: Number(msg.tabId), payload: { ...msg.payload, metadataOnly: true } }));
+    sendToNative({ type: 'call_tool_result', id: msg.id, result });
+  } else if (msg.type === 'exploration_intercept_read') {
+    const result = await getHostAdapterRuntime().exclusive(Number(msg.tabId), () => executeInterceptRead({ chrome, ensureCdpAttached, tabId: Number(msg.tabId), payload: { ...msg.payload, metadataOnly: true } }));
+    sendToNative({ type: 'call_tool_result', id: msg.id, result });
+  } else if (msg.type === 'exploration_observe_page') {
+    try {
+      const result = await getHostAdapterRuntime().exclusive(Number(msg.tabId), () => executePageSource(chrome, Number(msg.tabId), { ...msg.payload, metadataOnly: true }));
+      sendToNative({ type: 'call_tool_result', id: msg.id, result });
+    } catch {
+      sendToNative({ type: 'call_tool_error', id: msg.id, error: 'Unable to observe the selected page.' });
+    }
+
   } else if (msg.type === 'exploration_capture_passive') {
     try {
-      const result = await runExploreWorkflow({ tabId: msg.tabId ?? null });
+      const tabId = await getExplorationTabId(msg.tabId);
+      if (!tabId) throw new Error('未找到可用于探索的标签页');
+      const result = await getHostAdapterRuntime().exclusive(tabId, () => runExploreWorkflow({ tabId, includeTelemetry: msg.includeTelemetry === true }));
       sendToNative({ type: 'call_tool_result', id: msg.id, result });
     } catch (err) {
       sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
@@ -2824,7 +2942,7 @@ async function handleNativeMessage(msg) {
 
   } else if (msg.type === 'exploration_safe_actions_inspect') {
     try {
-      const result = await inspectSafeApiActions(Number(msg.tabId));
+      const result = await getHostAdapterRuntime().exclusive(Number(msg.tabId), () => inspectSafeApiActions(Number(msg.tabId)));
       sendToNative({ type: 'call_tool_result', id: msg.id, result });
     } catch (err) {
       sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
@@ -2832,11 +2950,11 @@ async function handleNativeMessage(msg) {
 
   } else if (msg.type === 'exploration_safe_probe_run') {
     try {
-      const result = await runSafeApiProbe({
+      const result = await getHostAdapterRuntime().exclusive(Number(msg.tabId), () => runSafeApiProbe({
         tabId: Number(msg.tabId),
         candidateId: String(msg.candidateId || ''),
         value: String(msg.value || ''),
-      });
+      }));
       sendToNative({ type: 'call_tool_result', id: msg.id, result });
     } catch (err) {
       sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
@@ -2844,13 +2962,13 @@ async function handleNativeMessage(msg) {
 
   } else if (msg.type === 'exploration_replay_candidate') {
     try {
-      const result = await runExplorationCandidateReplay({
+      const result = await getHostAdapterRuntime().exclusive(Number(msg.tabId), () => runExplorationCandidateReplay({
         tabId: Number(msg.tabId),
         url: String(msg.url || ''),
         method: String(msg.method || 'GET'),
         headers: msg.headers && typeof msg.headers === 'object' ? msg.headers : {},
         body: String(msg.body || ''),
-      });
+      }));
       sendToNative({ type: 'call_tool_result', id: msg.id, result });
     } catch (err) {
       sendToNative({ type: 'call_tool_error', id: msg.id, error: err.message });
@@ -3251,6 +3369,13 @@ async function handleNativeMessage(msg) {
     } catch (err) {
       sendToNative({ type: "call_tool_error", id: msg.id, error: err.message });
     }
+  } else if (msg.type === 'browser_execute') {
+    const operation = () => executeBrowserCommand(msg, { chrome, ensureCdpAttached, cdpEvaluate, getCdpNetworkSnapshot, onBrowserDetach: clearBrowserDebuggerState });
+    // Read-only download observers must not block the click they are observing.
+    const observer = ['dialog', 'downloads', 'events'].includes(msg.command) || (msg.command === 'wait' && msg.args?.kind === 'download');
+    const result = Number.isInteger(msg.tabId) && !observer
+      ? await getHostAdapterRuntime().exclusive(msg.tabId, operation) : await operation();
+    sendToNative({ type: 'call_tool_result', id: msg.id, result });
   } else if (msg.type === 'browser_state') {
     try {
       const tabId = await getExplorationTabId(msg.tabId);
@@ -3267,7 +3392,7 @@ async function handleNativeMessage(msg) {
 
       let result;
       try {
-        result = await getCdpNetworkSnapshot(tabId, { businessOnly: true, limit: 60 });
+        result = await getCdpNetworkSnapshot(tabId, { businessOnly: true, includeTelemetry: msg.includeTelemetry === true, limit: 60 });
       } catch (cdpErr) {
         const fallback = await sendExplorationMessage(tabId, { type: 'browser_network' });
         result = {
@@ -3344,13 +3469,13 @@ async function handleNativeMessage(msg) {
   }
 }
 
-function sendToNative(msg) {
+function sendToNative(msg, sensitive = false) {
   logCallToolTiming(msg);
   if (!ws || ws.readyState !== WebSocket.OPEN) {
     console.warn("[WebMCP] Cannot send to native: not connected");
     return false;
   }
-  console.log("[WebMCP] -> native:", msg);
+  console.log("[WebMCP] -> native:", sensitive ? { type: msg.type, id: msg.id } : msg);
   try {
     ws.send(JSON.stringify(msg));
     return true;
@@ -4489,7 +4614,7 @@ async function getDirectRuntimeCookiesViaDebugger(payload = {}, traceID = null) 
       try {
         await chrome.debugger.detach({ tabId: activeTab.id });
       } catch { }
-      cdpAttachedTabs.delete(activeTab.id);
+      clearBrowserDebuggerState(activeTab.id, 'Temporary cookie attachment released.');
     }
   }
 }
@@ -4904,11 +5029,11 @@ async function refreshDirectStorageContext({ routeDomain, tabDomain, excludeTabD
  * 当 sendMessage 因 bfcache 失败时，我们主动激活标签页将其从 bfcache 中唤醒，
  * 等待页面恢复后重试。
  */
-async function callToolInTab(tabId, toolName, args, traceID = null, allowTransportRetry = true, timeoutMs = null) {
+async function callToolInTab(tabId, toolName, args, traceID = null, allowTransportRetry = true, timeoutMs = null, continuation = null) {
   const tracePrefix = traceID ? `[${traceID}] ` : '';
   traceLog(traceID, `[ServiceWorker] 发送到 Content Script: tab=${tabId} tool=${toolName}`);
 
-  const message = { type: "call_tool", toolName, args };
+  const message = { type: "call_tool", toolName, args, ...(continuation ? { continuation } : {}) };
   if (traceID) message.traceID = traceID;
 
   const createAdapterError = (message) => {
@@ -6871,6 +6996,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  clearBrowserEvents(tabId);
+  clearBrowserObservations(tabId);
+  clearBrowserDownloads(tabId);
+  clearBrowserFrames(tabId);
+  chrome.storage.session.remove(`webcli-browser-tab-${tabId}`).catch(() => {});
   const actionCaptureSession = cdpActionCaptureSessions.get(tabId);
   if (actionCaptureSession && typeof actionCaptureSession.requestStop === 'function') {
     actionCaptureSession.errors.push('TARGET_TAB_NOT_FOUND');
@@ -6927,6 +7057,10 @@ function getManagedBackgroundRuntime() {
       try { return await task(); } finally { directRuntimeContext = previous; }
     }),
     request: async (action, payload, context) => {
+      if (context.previewNoPage) {
+        if (Date.now() >= context.previewDeadline || ++context.previewRequests > 50) throw new Error('Background preview read budget exceeded.');
+        payload = backgroundPreviewRequest(action, payload);
+      }
       assertManagedRuntimeRequest(action, payload, context);
       return handleDirectRuntimeRequest(action, payload);
     },
@@ -6997,6 +7131,10 @@ function getHostAdapterRuntime() {
     },
     inject: injectV2AdapterWithCode,
     ready: (tabId, manifest, timeoutMs, traceID) => waitForManagedPageReady(tabId, manifest, true, timeoutMs, traceID),
+    query: (tabId, payload, manifest, command) => {
+      assertAdapterNavigationUrl(manifest, assertPageQueryRoute(payload, command));
+      return executePageQuery({ chrome, ensureCdpAttached, tabId, payload: { ...payload, metadataOnly: false } });
+    },
     navigate: (tabId, url, manifest, resume, timeoutMs) => navigateAdapterTab(chrome, tabId, url, manifest, resume, timeoutMs),
   });
 }
@@ -7668,9 +7806,9 @@ function describeGenerationOutputShape(value) {
   };
 }
 
-async function callGenerationPreviewTool(tabId, token, toolName, args, timeoutMs = 30000) {
+async function callGenerationPreviewTool(tabId, token, toolName, args, timeoutMs = 30000, continuation = null) {
   const response = await Promise.race([
-    chrome.tabs.sendMessage(tabId, { type: 'call_generation_preview', token, toolName, args }),
+    chrome.tabs.sendMessage(tabId, { type: 'call_generation_preview', token, toolName, args, ...(continuation ? { continuation } : {}) }),
     new Promise((_, reject) => setTimeout(() => reject(new Error(`tool timed out after ${timeoutMs}ms`)), timeoutMs)),
   ]);
   if (response?.error) throw new Error(response.error);
@@ -7683,12 +7821,37 @@ async function callGenerationPreviewTool(tabId, token, toolName, args, timeoutMs
   return result;
 }
 
-async function validateGenerationPreview({ previewAdapterId, previewBundle = null, siteKey, tabId, expectedToolNames = [], testCases = [] } = {}) {
+const generationPreviewGrants = new Map();
+
+async function validateGenerationPreview({ previewAdapterId, previewBundle = null, siteKey, tabId, expectedToolNames = [], testCases = [], operationId, executionMode } = {}) {
   if (!SAFE_ADAPTER_ID_RE.test(String(previewAdapterId || '')) || !String(previewAdapterId).startsWith('generation_preview_')) {
     throw new Error('invalid generation preview adapter id');
   }
   if (!SAFE_ADAPTER_ID_RE.test(String(siteKey || ''))) throw new Error('invalid generation preview siteKey');
-  const targetTab = await findGenerationPreviewTab(siteKey, tabId);
+  if (executionMode === 'background') {
+    const normalized = normalizeGenerationPreviewBundle(previewBundle);
+    if (!normalized) throw new Error('Background preview requires an inline package.');
+    const bundle = { manifest: normalized.manifest, files: Object.fromEntries(normalized.scripts.map(script => [script.path, script.source])) };
+    return validateBackgroundPreview({ bundle, expectedToolNames, testCases, execute: (manifest, command, args, selected) => {
+      const routeDomain = manifest.match[0].replace(/^\*\./, '');
+      const declaredHosts = [...manifest.match, ...(manifest.runtime_allowed_hosts || [])];
+      return getManagedBackgroundRuntime().execute(manifest, command, args, { adapterId: manifest.name, routeDomain, tabDomain: routeDomain,
+        declaredHosts, allowedHosts: declaredHosts.map(host => host.replace(/^\*\./, '')), previewNoPage: true,
+        previewDeadline: Date.now() + 30000, previewRequests: 0 }, selected);
+    } });
+  }
+  const routeCommands = previewBundle?.manifest?.commands || [];
+  const explicitOrigins = routeCommands.some(command => usesWorkflowOrigins(command.pageRoute?.navigation) || usesWorkflowOrigins(command.pageRoute?.workflow));
+  let targetTab;
+  if (explicitOrigins) {
+    // A cross-origin preview is bound to the task tab. Never find a substitute
+    // by host if this tab navigated outside its explicitly declared routes.
+    if (Number.isInteger(tabId)) {
+      try { const selected = await chrome.tabs.get(tabId);
+        if (routeCommands.some(command => command.pageRoute && pageRouteTargets(command.pageRoute).some(target => matchesOriginTarget(new URL(selected.url), target)))) targetTab = selected;
+      } catch {}
+    }
+  } else targetTab = await findGenerationPreviewTab(siteKey, tabId);
   if (!targetTab) {
     return {
       passed: false,
@@ -7701,19 +7864,34 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
     };
   }
 
+  return getHostAdapterRuntime().exclusive(targetTab.id, async () => validateGenerationPreviewOnTab({
+    previewAdapterId, previewBundle, siteKey, expectedToolNames, testCases, operationId,
+  }, await chrome.tabs.get(targetTab.id)));
+}
+
+async function validateGenerationPreviewOnTab({ previewAdapterId, previewBundle, siteKey, expectedToolNames, testCases, operationId }, targetTab) {
   const inlinePreview = normalizeGenerationPreviewBundle(previewBundle);
   const manifest = inlinePreview?.manifest || await loadAdapterManifest(previewAdapterId);
   if (!manifest) throw new Error(`preview manifest not found: ${previewAdapterId}`);
   const supportFiles = normalizeAdapterSupportFiles(previewAdapterId, manifest.support_files);
+  const explicitOrigins = manifest.commands?.some(command => usesWorkflowOrigins(command.pageRoute?.navigation) || usesWorkflowOrigins(command.pageRoute?.workflow));
+  const previewSite = url => {
+    if (!explicitOrigins) return siteKey;
+    const current = new URL(url);
+    if (!manifest.commands.some(command => command.pageRoute && pageRouteTargets(command.pageRoute).some(target => matchesOriginTarget(current, target)))) throw new Error('Preview left the declared page routes.');
+    assertAdapterNavigationUrl(manifest, current.href);
+    return current.hostname;
+  };
   const expected = [...new Set((expectedToolNames || []).map(String).filter(Boolean))];
 
   const token = crypto.randomUUID();
   let began = false;
   try {
     await chrome.scripting.executeScript({ target: { tabId: targetTab.id }, world: 'ISOLATED', files: ['content/preview-registry.js'] });
-    const opened = await chrome.tabs.sendMessage(targetTab.id, { type: 'begin_generation_preview', token, siteKey, previewAdapterId, packageDigest: inlinePreview?.packageDigest || null });
+    const opened = await chrome.tabs.sendMessage(targetTab.id, { type: 'begin_generation_preview', token, siteKey: previewSite((await chrome.tabs.get(targetTab.id)).url), previewAdapterId, packageDigest: inlinePreview?.packageDigest || null, allowQueryChanges: manifest.commands?.some(command => command.pageStrategy === 'INTERCEPT') === true });
     if (!opened?.ok) throw new Error(opened?.error || 'Unable to begin preview');
     began = true;
+    generationPreviewGrants.set(token, { tabId: targetTab.id, url: targetTab.url, allowedHosts: normalizeRouteHosts(manifest.runtime_allowed_hosts), expiresAt: Date.now() + 300000 });
     const scripts = inlinePreview?.scripts || await Promise.all([...supportFiles, `adapters/${previewAdapterId}/index.js`].map(async file => {
       const response = await fetch(chrome.runtime.getURL(file));
       if (!response.ok) throw new Error('Missing preview script');
@@ -7738,6 +7916,7 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
     const toolResults = [];
     if (errors.length === 0 && Array.isArray(testCases)) {
       for (const testCase of testCases.slice(0, 5)) {
+        assertPageWorkflowActive(targetTab.id, operationId);
         const toolName = String(testCase?.toolName || '');
         const risk = testCase?.risk || {};
         const tool = registeredTools.find((item) => String(item?.name || '') === toolName) || null;
@@ -7745,6 +7924,7 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
         if (preflightErrors.length > 0) {
           toolResults.push({
             toolName,
+            ...(testCase.caseId ? { caseId: testCase.caseId } : {}),
             attempted: false,
             passed: false,
             skipReason: testCase?.skipReason || 'preflight_contract_mismatch',
@@ -7755,6 +7935,7 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
         if (!testCase?.execute || risk.level !== 'read' || Number(risk.confidence || 0) < 0.75) {
           toolResults.push({
             toolName,
+            ...(testCase.caseId ? { caseId: testCase.caseId } : {}),
             attempted: false,
             passed: true,
             skipReason: testCase?.skipReason || 'tool_is_not_high_confidence_read_only',
@@ -7777,10 +7958,28 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
             }
             runtimeArguments = buildCaptureBoundArguments(capturedEntry, tool, testCase);
           }
-          const output = await callGenerationPreviewTool(targetTab.id, token, toolName, runtimeArguments);
+          let output = await callGenerationPreviewTool(targetTab.id, token, toolName, runtimeArguments);
+          if (output?.__webcli_page_query) {
+            const command = manifest.commands?.find(entry => `${manifest.name}.${entry.id}` === toolName);
+            const payload = output.__webcli_page_query;
+            assertAdapterNavigationUrl(manifest, assertPageQueryRoute(payload, command));
+            const result = await executePageQuery({ chrome, ensureCdpAttached, tabId: targetTab.id, payload: { ...payload, operationId, metadataOnly: false } });
+            if (!result.ok) output = result;
+            else {
+              await sendTabMessage(targetTab.id, { type: 'end_generation_preview', token });
+              await chrome.scripting.executeScript({ target: { tabId: targetTab.id }, world: 'ISOLATED', files: ['content/preview-registry.js'] });
+              const restored = await chrome.tabs.sendMessage(targetTab.id, { type: 'begin_generation_preview', token, siteKey: previewSite((await chrome.tabs.get(targetTab.id)).url), previewAdapterId, packageDigest: inlinePreview?.packageDigest || null, allowQueryChanges: manifest.commands?.some(command => command.pageStrategy === 'INTERCEPT') === true });
+              if (!restored?.ok) throw new Error('Unable to resume preview after query.');
+              generationPreviewGrants.get(token).url = (await chrome.tabs.get(targetTab.id)).url;
+              await injectGenerationPreviewSourcesWithCdp(targetTab.id, scopedGenerationPreviewScripts(scripts, token));
+              output = await callGenerationPreviewTool(targetTab.id, token, toolName, runtimeArguments, 30000, { kind: 'page_query_result', result });
+              if (output?.__webcli_page_query || output?.__webcli_navigation) throw new Error('Preview query must return a final result after resuming.');
+            }
+          }
           const contractResult = validateGenerationPreviewOutput(output, testCase.contract || {});
           toolResults.push({
             toolName,
+            ...(testCase.caseId ? { caseId: testCase.caseId } : {}),
             attempted: true,
             durationMs: Date.now() - startedAt,
             passed: contractResult.passed,
@@ -7792,6 +7991,7 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
         } catch (error) {
           toolResults.push({
             toolName,
+            ...(testCase.caseId ? { caseId: testCase.caseId } : {}),
             attempted: true,
             durationMs: Date.now() - startedAt,
             passed: false,
@@ -7812,7 +8012,7 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
       ...toolResults.flatMap((item) => (item.warnings || []).map((warning) => ({ ...warning, toolName: item.toolName }))),
     ];
     for (const failure of failedToolResults) {
-      for (const error of failure.errors || []) errors.push({ ...error, toolName: failure.toolName });
+      for (const error of failure.errors || []) errors.push({ ...error, toolName: failure.toolName, ...(failure.caseId ? { caseId: failure.caseId } : {}) });
     }
     return {
       passed: errors.length === 0,
@@ -7834,6 +8034,7 @@ async function validateGenerationPreview({ previewAdapterId, previewBundle = nul
       errors,
     };
   } finally {
+    generationPreviewGrants.delete(token);
     if (began) await sendTabMessage(targetTab.id, { type: 'end_generation_preview', token });
   }
 }
@@ -7871,9 +8072,42 @@ function sendTabMessage(tabId, message, timeoutMs = 2000) {
 }
 
 async function refreshAdapterTabs(adapterId) {
+  return refreshAdapterTabBatch([adapterId]);
+}
+
+let adapterStateRefreshChain = Promise.resolve();
+let lastRefreshedCatalog = null;
+let refreshedCatalogAdapters = new Set();
+function refreshAdapterState(msg) {
+  const next = adapterStateRefreshChain.catch(() => {}).then(async () => {
+    const registry = await doRefreshRegistry();
+    const catalog = await getHostAdapterClient().catalog();
+    const fingerprint = catalog?.available !== false && Array.isArray(catalog?.adapters) && Array.isArray(catalog?.managedNames)
+      ? JSON.stringify({ profile: catalog.profile, revision: catalog.revision, names: [...catalog.managedNames].sort(),
+        packages: catalog.adapters.map(item => [item.name, item._hostSnapshot]).sort((a, b) => a[0].localeCompare(b[0])) }) : null;
+    // Reconnect snapshots and delayed duplicate change notifications may refer
+    // to an already refreshed catalog. Manual refresh uses the separate tab API.
+    const adapters = Array.isArray(msg.adapters) ? msg.adapters.filter(name => typeof name === 'string' && SAFE_ADAPTER_ID_RE.test(name)) : [];
+    const adapterIds = adapters.length ? adapters : registry.adapters.filter(name => typeof name === 'string' && SAFE_ADAPTER_ID_RE.test(name));
+    if (fingerprint && fingerprint === lastRefreshedCatalog && adapterIds.every(id => refreshedCatalogAdapters.has(id))) return { registry, refreshedTabs: 0 };
+    const result = await refreshAdapterTabBatch(adapterIds);
+    if (!fingerprint || fingerprint !== lastRefreshedCatalog) refreshedCatalogAdapters = new Set();
+    for (const id of adapterIds) refreshedCatalogAdapters.add(id);
+    lastRefreshedCatalog = fingerprint;
+    return { registry, refreshedTabs: result.refreshedTabs };
+  });
+  adapterStateRefreshChain = next;
+  return next;
+}
+
+async function refreshAdapterTabBatch(adapterIds) {
+  const ids = [...new Set(adapterIds)];
+  // One snapshot for the whole catalog notification. Re-querying for each
+  // package can reload newly opened pages, or reload one page repeatedly when
+  // several packages match the same host, after an earlier refresh released it.
   const tabs = await chrome.tabs.query({});
   const matchedTabs = [];
-  const adapterManifest = await loadAdapterManifestAnywhere(adapterId);
+  const manifests = await Promise.all(ids.map(id => loadAdapterManifestAnywhere(id)));
 
   await runDirectToolExclusive(async () => {
     directAdapterLoadPromises.clear();
@@ -7894,39 +8128,73 @@ async function refreshAdapterTabs(adapterId) {
       continue;
     }
 
-    const matchesManifest = adapterManifest
-      ? adapterMatchesHostname(adapterManifest, hostname)
-      : hostname === adapterId || hostname.endsWith(`.${adapterId}`);
-    if (matchesManifest) {
-      matchedTabs.push(tab);
-    }
+    const matchingIds = ids.filter((id, index) => manifests[index]
+      ? adapterMatchesHostname(manifests[index], hostname)
+      : hostname === id || hostname.endsWith(`.${id}`));
+    if (matchingIds.length) matchedTabs.push({ ...tab, matchingIds });
   }
 
   if (matchedTabs.length === 0) {
     return {
       refreshedTabs: 0,
-      toolCount: toolRegistry.get(adapterId)?.tools?.length || 0,
+      toolCount: ids.reduce((count, id) => count + (toolRegistry.get(id)?.tools?.length || 0), 0),
     };
   }
 
-  for (const tab of matchedTabs) {
-    clearTabDomainRegistration(tab.id);
-    clearTabInjectedAdapters(tab.id);
-    clearBadge(tab.id);
-    await sendTabMessage(tab.id, { type: "clear_tools", siteKey: adapterId });
-    await chrome.tabs.reload(tab.id);
-    await waitForTabLoad(tab.id, 15000);
-  }
+  // Reserve every affected tab before awaiting the first reload. Otherwise a
+  // long reconnect refresh lets a later tab start a new exploration, then
+  // reloads it between that task's independent before/write/after requests.
+  let previousRefresh = Promise.resolve();
+  let refreshedTabs = 0;
+  const refreshes = matchedTabs.map(tab => {
+    const preceding = previousRefresh;
+    const refresh = getHostAdapterRuntime().exclusive(tab.id, async () => {
+      await preceding; // Preserve serial reloads without leaving later tabs free.
+      const currentTab = await chrome.tabs.get(tab.id);
+      // The snapshot grants refresh only for the page we originally matched.
+      // A queued operation may have navigated this tab in the meantime.
+      if (currentTab.url !== tab.url) return;
+      // A tab opened after installation may already contain the latest bundle
+      // before the delayed state notification arrives. Do not erase that page.
+      if (tab.matchingIds.every(id => {
+        const manifest = manifests[ids.indexOf(id)];
+        return manifest?._hostSnapshot && getHostAdapterRuntime().hasSnapshot?.(tab.id, manifest, currentTab.url);
+      })) return;
+      clearTabDomainRegistration(tab.id);
+      clearTabInjectedAdapters(tab.id);
+      clearBadge(tab.id);
+      for (const id of tab.matchingIds) await sendTabMessage(tab.id, { type: "clear_tools", siteKey: id });
+      // Managed v2 bundles already use the runtime's clear/reinject protocol
+      // when a command selects a newer digest. Refresh that same way; a page
+      // reload would interrupt independent effect reads and erase user inputs.
+      // Legacy scripts still require a new realm for top-level declarations.
+      // A missing manifest can mean catalog loss/removal, never proof of a
+      // legacy script. Reload only positively identified legacy packages.
+      if (tab.matchingIds.some(id => {
+        const manifest = manifests[ids.indexOf(id)];
+        return manifest && manifest.schema_version !== 2 && !manifest._hostSnapshot;
+      })) {
+        await chrome.tabs.reload(tab.id);
+        await waitForTabLoad(tab.id, 15000);
+      }
+      refreshedTabs++;
+    });
+    previousRefresh = refresh;
+    return refresh;
+  });
+  const refreshed = await Promise.allSettled(refreshes);
+  const failed = refreshed.find(result => result.status === 'rejected');
+  if (failed) throw failed.reason;
 
   for (const tab of matchedTabs) {
     const refreshedTab = await chrome.tabs.get(tab.id);
     await injectAdapters(tab.id, refreshedTab.url || tab.url);
   }
 
-  const domainData = await waitForDomainTools(adapterId, 2500);
+  const domainData = await Promise.all(ids.map(id => waitForDomainTools(id, 2500)));
   return {
-    refreshedTabs: matchedTabs.length,
-    toolCount: domainData?.tools?.length || 0,
+    refreshedTabs,
+    toolCount: domainData.reduce((count, item) => count + (item?.tools?.length || 0), 0),
   };
 }
 
@@ -8088,9 +8356,16 @@ async function handleWecliRuntimeRequest(msg, sender) {
   const action = String(msg.action || '');
   const payload = msg.payload || {};
   const traceID = msg.traceID || null;
-  const allowedHosts = await loadRuntimeAllowedHostsForTab(tab);
+  const allowedHosts = action === 'intercept_read' && msg.previewToken
+    ? previewRuntimeAllowedHosts(msg.previewToken, sender)
+    : await loadRuntimeAllowedHostsForTab(tab);
 
   switch (action) {
+    case 'intercept_read':
+      assertRuntimeUrlAllowed(tab, payload.source?.endpoint, allowedHosts);
+      return executeInterceptRead({ chrome, ensureCdpAttached, tabId: tab.id, payload: { ...payload, metadataOnly: false } });
+    case 'page_read':
+      return executePageSource(chrome, tab.id, { ...payload, metadataOnly: false });
     case 'cookies_get':
       traceLog(traceID, `[ServiceWorkerRuntime] cookies_get ${String(payload.domain || payload.domains || payload.url || tab.url)}`);
       return getRuntimeCookies(tab, payload, allowedHosts);
@@ -8414,6 +8689,10 @@ async function getDirectRuntimeStorageValue(payload) {
     }
   }
 
+  // Preview may prove a cached credential works without opening or consulting
+  // a website tab. Cache initialization belongs to explicit login preparation.
+  if (payload.cacheOnly === true) throw createStorageContextRequiredError(storageScope, area, key);
+
   const tabs = await findStorageContextTabs(
     directRuntimeContext?.routeDomain || host,
     directRuntimeContext?.excludeTabDomain,
@@ -8493,7 +8772,7 @@ async function runRuntimeNativeInput(tabId, payload = {}) {
   } finally {
     if (owned) {
       try { await chrome.debugger.detach({ tabId }); } catch { }
-      cdpAttachedTabs.delete(tabId);
+      clearBrowserDebuggerState(tabId, 'Temporary input attachment released.');
     }
   }
 }
@@ -8597,16 +8876,29 @@ async function runRuntimeDownload(tab, payload, allowedHosts = directRuntimeCont
   return { downloadId, ...(filename ? { filename } : {}) };
 }
 
+function previewRuntimeAllowedHosts(token, sender) {
+  const grant = generationPreviewGrants.get(token);
+  const current = new URL(sender.tab.url);
+  const original = grant && new URL(grant.url);
+  if (!grant || grant.tabId !== sender.tab.id || (sender.frameId ?? 0) !== 0 || grant.expiresAt <= Date.now()
+    || current.origin !== original.origin || current.pathname !== original.pathname) {
+    throw createRuntimeHelperError('PREVIEW_SESSION_EXPIRED', 'This preview query grant is unavailable or belongs to another page.');
+  }
+  return grant.allowedHosts;
+}
+
 async function loadRuntimeAllowedHostsForTab(tab) {
   let tabHost;
-  try {
-    tabHost = new URL(tab.url).hostname;
-  } catch {
-    return [];
-  }
-  // Page helpers only trust host-managed/bundled manifests. A web page cannot
-  // expand its own cross-host authority through a runtime message payload.
-  const selected = await getHostAdapterClient().manifest(tabHost);
+  try { tabHost = new URL(tab.url).hostname; } catch { return []; }
+  // Resolve a unique managed package by its declared page hosts, including
+  // subdomains. Never merge grants from unrelated or ambiguous packages.
+  const client = getHostAdapterClient();
+  const catalog = await client.catalog();
+  if (catalog?.available === false) return [];
+  const matches = (catalog?.adapters || []).filter(manifest => (manifest.match || []).some(host =>
+    host === tabHost || (host.startsWith('*.') && tabHost.endsWith(host.slice(1)))));
+  if (matches.length) return matches.length === 1 ? normalizeRouteHosts(matches[0].runtime_allowed_hosts) : [];
+  const selected = await client.manifest(tabHost);
   const manifest = selected.managed ? selected.manifest : await loadAdapterManifest(tabHost);
   return normalizeRouteHosts(manifest?.runtime_allowed_hosts);
 }

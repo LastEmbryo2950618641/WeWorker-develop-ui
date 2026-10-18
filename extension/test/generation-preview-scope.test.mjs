@@ -4,6 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { scopedGenerationPreviewScripts } from '../background/generation-preview-bundle.js';
 import { buildV2Bootstrap } from '../background/v2-loader.js';
+import { assertPageWorkflowActive } from '../background/page-query.js';
 
 const token = '00000000-0000-4000-8000-000000000001';
 function setup() {
@@ -70,10 +71,12 @@ for (const fail of [false, true]) {
     const source = readFileSync(new URL('../background/service-worker.js', import.meta.url), 'utf8');
     const body = source.slice(source.indexOf('async function validateGenerationPreview('), source.indexOf('function shouldHandleTabUrl('));
     const context = vm.createContext({
-      crypto: { randomUUID: () => token }, SAFE_ADAPTER_ID_RE: /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/,
+      assertPageWorkflowActive,
+      generationPreviewGrants: new Map(), normalizeRouteHosts: value => value || [], crypto: { randomUUID: () => token }, SAFE_ADAPTER_ID_RE: /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/,
       findGenerationPreviewTab: async () => ({ id: 7, url: 'https://example.com/' }),
+      getHostAdapterRuntime: () => ({ exclusive: async (_id, operation) => operation() }),
       normalizeGenerationPreviewBundle: value => value, normalizeAdapterSupportFiles: () => [], scopedGenerationPreviewScripts,
-      chrome: { scripting: { executeScript: async () => [] }, tabs: { sendMessage: async (_id, message) => { messages.push(message); return f.message(message); } } },
+      chrome: { scripting: { executeScript: async () => [] }, tabs: { get: async () => ({ id: 7, url: 'https://example.com/' }), sendMessage: async (_id, message) => { messages.push(message); return f.message(message); } } },
       injectGenerationPreviewSourcesWithCdp: async (_id, scripts) => { for (const script of scripts) await vm.runInContext(script.source, f.context); if (fail) throw new Error('Fixture injection failure'); },
       sendTabMessage: async (_id, message) => { messages.push(message); return f.message(message); },
       callGenerationPreviewTool: async (_id, sessionToken, toolName, args) => (await f.message({ type: 'call_generation_preview', token: sessionToken, toolName, args })).result,
@@ -92,3 +95,35 @@ for (const fail of [false, true]) {
     assert.equal(f.window.__webmcpGeneratedSupport, f.installed);
   });
 }
+
+test('preview helper token travels only with scoped messages and does not mutate the native runtime', async () => {
+  const f = setup(); const sent = [];
+  f.context.chrome.runtime.sendMessage = message => { sent.push(message); return Promise.resolve({ ok: true }); };
+  await f.message({ type: 'begin_generation_preview', token, siteKey: 'example.com', allowQueryChanges: true });
+  f.run([{ path: 'query.js', source: 'window.__webmcpRegister({tools:[{name:"query",handler:()=>chrome.runtime.sendMessage({type:"wecli_runtime_request",action:"intercept_read"})}]});' }]);
+  f.window.location.href = 'https://example.com/?q=example';
+  await f.message({ type: 'call_generation_preview', token, toolName: 'query' });
+  assert.equal(sent[0].previewToken, token);
+  await f.context.chrome.runtime.sendMessage({ type: 'wecli_runtime_request' });
+  assert.equal(sent[1].previewToken, undefined);
+  f.window.location.href = 'https://example.com/other';
+  assert.equal((await f.message({ type: 'call_generation_preview', token, toolName: 'query' })).ok, false);
+});
+
+test('preview grants require the matching live tab and route; installed subdomain grants need a unique declared package', async () => {
+  const source = readFileSync(new URL('../background/service-worker.js', import.meta.url), 'utf8');
+  const grants = new Map([[token, { tabId: 7, url: 'https://search.example.com/all', allowedHosts: ['api.example.org'], expiresAt: Date.now() + 5000 }]]);
+  let adapters = [{ name: 'example.com', match: ['search.example.com'], runtime_allowed_hosts: ['api.example.org'] }];
+  const context = vm.createContext({ URL, Date, generationPreviewGrants: grants, normalizeRouteHosts: value => value || [],
+    createRuntimeHelperError: (code, message) => Object.assign(new Error(message), { code }),
+    getHostAdapterClient: () => ({ catalog: async () => ({ adapters }), manifest: async () => ({ managed: true }) }),
+  });
+  vm.runInContext(source.slice(source.indexOf('function previewRuntimeAllowedHosts('), source.indexOf('function assertRuntimeUrlAllowed(')), context);
+  const sender = { tab: { id: 7, url: 'https://search.example.com/all?q=example' }, frameId: 0 };
+  assert.deepEqual(context.previewRuntimeAllowedHosts(token, sender), ['api.example.org']);
+  for (const invalid of [{ ...sender, frameId: 1 }, { tab: { ...sender.tab, id: 8 } }, { tab: { ...sender.tab, url: 'https://search.example.com/other' } }]) assert.throws(() => context.previewRuntimeAllowedHosts(token, invalid), { code: 'PREVIEW_SESSION_EXPIRED' });
+  grants.delete(token); assert.throws(() => context.previewRuntimeAllowedHosts(token, sender), { code: 'PREVIEW_SESSION_EXPIRED' });
+  assert.deepEqual(await context.loadRuntimeAllowedHostsForTab(sender.tab), ['api.example.org']);
+  adapters.push({ name: 'another', match: ['*.example.com'], runtime_allowed_hosts: ['other.example.org'] });
+  assert.equal((await context.loadRuntimeAllowedHostsForTab(sender.tab)).length, 0);
+});

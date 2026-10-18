@@ -1,3 +1,4 @@
+import { workflowOriginTargets } from '../page-workflow-origins.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -36,27 +37,42 @@ export function writePackageDraft({ memory, adapterDir, supportBundle, paths }) 
   const evidence = { format: 2, name, commands: {}, ...(retained ? { retainedPackage: { name, digest: base.digest } } : {}) };
   const files = new Map(retained?.files || []);
   const runtimeFile = retained ? 'extension/internal/exploration-runtime.js' : 'extension/internal/runtime.js';
-  if (files.has(runtimeFile) && files.get(runtimeFile).toString('utf8') !== supportBundle.sharedRuntime.content) throw new Error('Existing exploration runtime changed; review compatibility before extending.');
-  files.set(runtimeFile, supportBundle.sharedRuntime.content);
+  if (supportBundle.sharedRuntime) {
+    if (files.has(runtimeFile) && files.get(runtimeFile).toString('utf8') !== supportBundle.sharedRuntime.content) throw new Error('Existing exploration runtime changed; review compatibility before extending.');
+    files.set(runtimeFile, supportBundle.sharedRuntime.content);
+  }
   const retainedIds = new Set(retained?.manifest.commands.map(command => command.id) || []);
   const commands = supportBundle.toolFiles.filter(file => !(retainedIds.has('check-login-status') && file.toolDefinition?.name === name + '.check_login_status')).map(file => {
     const tool = file.toolDefinition;
     if (!tool?.name?.startsWith(name + '.') || !file.v2Content) throw new Error('Generated command has no package definition.');
     const local = tool.name.slice(name.length + 1), id = draftCommandId(local);
     if (retainedIds.has(id)) throw new Error('Generated command would replace an existing command; choose an additive name.');
-    const module = `extension/commands/${id}.js`;
+    const runtime = tool.runtime || 'extension';
+    const module = `${runtime}/commands/${id}.js`;
     if (files.has(module)) throw new Error('Generated command file conflicts with an existing file.');
     files.set(module, file.v2Content);
     // Evidence belongs to the generation task; it never participates in package installation.
     evidence.commands[id] = { originalName: tool.name, safety: tool.access === 'write' ? 'write' : 'read', generationSource: tool.generationSource || null };
-    return { id, ...(local !== id ? { aliases: [local] } : {}), runtime: 'extension', module,
+    return { id, ...(local !== id ? { aliases: [local] } : {}), runtime, module,
+      ...(tool.execution ? { execution: tool.execution } : {}),
+      ...(tool.http ? { http: tool.http } : {}),
+      ...(tool.uiWrite ? { uiWrite: tool.uiWrite } : {}),
+      ...(tool.pageWrite ? { pageWrite: tool.pageWrite } : {}),
       description: tool.description, schema: tool.parameters, safety: tool.access === 'write' ? 'write' : 'read',
-      ...(retained ? { routeDomain: memory.siteHost || name, tabDomain: memory.siteHost || name } : {}),
+      ...(tool.pageRoute ? { pageRoute: tool.pageRoute } : {}),
+      ...(tool.pageStrategy ? { pageStrategy: tool.pageStrategy } : {}),
+      ...(tool.pageWorkflow ? { pageWorkflow: true } : {}),
+      ...(retained && runtime === 'extension' ? { routeDomain: memory.siteHost || name, tabDomain: memory.siteHost || name } : {}),
     };
   });
   const manifest = { ...(retained?.manifest || {}), schema_version: 2, name, version,
     description: retained?.manifest.description || memory.scaffoldSemanticHints?.manifestDescription || `Adapter for ${name}`,
     match: [...new Set([...(retained?.manifest.match || []), memory.siteHost || name])], commands: [...(retained?.manifest.commands || []), ...commands] };
+  for (const command of commands) {
+    const route = command.pageRoute;
+    const targets = route?.workflow ? workflowOriginTargets(route.workflow, route.origin) : route?.navigation?.resultOrigin ? [{ origin: route.navigation.resultOrigin }] : [];
+    for (const target of targets) { const host = new URL(target.origin).hostname; if (!manifest.match.includes(host)) manifest.match.push(host); }
+  }
   // API origins are explicit package grants; only structurally reviewed source endpoints contribute.
   const hosts = new Set();
   for (const command of Object.values(evidence.commands)) {
@@ -77,7 +93,7 @@ export function writePackageDraft({ memory, adapterDir, supportBundle, paths }) 
   fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n', { flag: 'wx' });
   return { packageFormat: 2, siteKey: name, adapterDir: root, generatedDir: path.join(root, 'extension/commands'),
     mode: 'isolated_package_draft', toolNames: commands.map(command => name + '.' + command.id),
-    files: { manifest: path.join(root, 'manifest.json'), sharedRuntime: path.join(root, runtimeFile), sourceEvidence: evidencePath },
+    files: { manifest: path.join(root, 'manifest.json'), ...(supportBundle.sharedRuntime ? { sharedRuntime: path.join(root, runtimeFile) } : {}), sourceEvidence: evidencePath },
     managedBaseline: { profile: catalog.profile, name, digest: base?.digest || null, source: base?.source || null },
     supportFiles: [], manifestUpdated: true, indexCatalogUpdated: false, registryCatalogUpdated: false, removedGeneratedFiles: [] };
 }

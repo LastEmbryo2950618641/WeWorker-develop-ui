@@ -33,6 +33,7 @@ import { resolveAdaptersDir, resolveUserAdaptersDir } from "./paths.js";
 import { findToolkitAdapter, loadToolkitAdapters } from "./adapter-registry.js";
 import { managedAdapterViews, managedAdapterView, managedAdapterSkill } from './adapter-views.js';
 import { runManagedAdapterCommand } from './managed-adapter-cli.js';
+import { formatCallOutput, resolveOutputFormat } from './output-format.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -79,6 +80,10 @@ export async function adapterHelpJson() {
     commands: [
       { name: "list", usage: "webcli adapter list [--json]", description: "列出已安装 adapter" },
       { name: "info <id>", usage: "webcli adapter info <id>", description: "查看 adapter 的工具列表" },
+      { name: "status", usage: "webcli adapter status [id]", description: "只读检查 v2 包候选、当前选择和失效诊断" },
+      { name: "validate", usage: "webcli adapter validate <dir> | --installed [id]", description: "静态检查 v2 包和 JavaScript，不执行命令" },
+      { name: "convention-audit", usage: "webcli adapter convention-audit <dir> | --installed [id]", description: "只读规范提示；不证明运行或副作用正确" },
+      { name: "eject", usage: "webcli adapter eject <id> --directory <new-dir>", description: "复制内置 v2 包到新的编辑目录；用 develop 显式选择" },
       { name: "install", usage: "webcli adapter install <id> | --url <url> | --file <path>", description: "安装 adapter（Hub/URL/本地文件）" },
       { name: "remove <id>", usage: "webcli adapter remove <id>", description: "移除 adapter" },
       { name: "skill <id>", usage: "webcli adapter skill <id> [--generated|--regenerate]", description: "输出/重新生成 SKILL.md" },
@@ -128,7 +133,41 @@ export async function adapterSiteHelpJson(adapterId) {
   };
 }
 
-export async function runAdapterCli(args) {
+export async function runAdapterCli(args, { outputFormat } = {}) {
+  if (args[0] === 'convention-audit') {
+    const { runConventionAudit } = await import('./adapter-conventions.js');
+    return runConventionAudit(args.slice(1), { outputFormat });
+  }
+  if (['status', 'validate'].includes(args[0])) {
+    const { runAdapterDiagnostics } = await import('./adapter-diagnostics.js');
+    return runAdapterDiagnostics(args, { outputFormat });
+  }
+  if (['eject', 'develop', 'use'].includes(args[0])) {
+    if (outputFormat !== undefined) resolveOutputFormat(outputFormat);
+    if (args.some(arg => ['--help', '-h'].includes(arg))) {
+      console.log(formatCallOutput({ usage: { eject: 'webcli adapter eject <id> --directory <new-directory-named-after-adapter>',
+        develop: 'webcli adapter develop <directory>', use: 'webcli adapter use <id> <builtin|user|development|disabled>' }[args[0]],
+      scope: 'Eject copies the built-in package without activation. Develop/use explicitly selects a source.' }, outputFormat ?? 'json')); return;
+    }
+    console.log(formatCallOutput(runManagedAdapterCommand(args), outputFormat ?? 'json')); return;
+  }
+  if (outputFormat !== undefined) {
+    resolveOutputFormat(outputFormat);
+    if (args[0] === 'list') return cmdList(args.slice(1), outputFormat);
+    if (args[0] === 'info') {
+      const adapters = await loadAdapterViews();
+      const matches = adapters.filter(adapter => adapter.id === args[1]);
+      if (matches.length !== 1) throw new Error('Adapter unavailable or ambiguous: ' + (args[1] || ''));
+      console.log(formatCallOutput(matches[0], outputFormat)); return;
+    }
+    if (['help', '-help', '--help', '-h'].includes(args[0])) {
+      console.log(formatCallOutput(await adapterHelpJson(), outputFormat)); return;
+    }
+    if (args[0] && (args.length === 1 || ['-help', '--help', '-h'].includes(args[1]))) {
+      console.log(formatCallOutput(await adapterSiteHelpJson(args[0]), outputFormat)); return;
+    }
+    throw new Error('Explicit output formats are supported for Adapter list, info and help.');
+  }
   const managed = runManagedAdapterCommand(args);
   if (managed) {
     console.log(JSON.stringify(managed, null, 2));
@@ -214,12 +253,16 @@ ${siteText}
 Commands:
   webcli adapter install --directory <dir>   Install a validated v2 package
   webcli adapter develop <dir>               Register a development package
+  webcli adapter eject <id> --directory <new-dir>  Copy a built-in v2 package for editing
   webcli adapter use <id> <source>           Select builtin/user/development/disabled
   webcli adapter install --url <url>         Install from URL (https only)
   webcli adapter install --file <path>       Install from local file
   webcli adapter list                        List installed adapters
   webcli adapter list --json                 List adapters with tools (JSON)
   webcli adapter info <id>                   Show adapter tools
+  webcli adapter status [id]                 Inspect active, disabled and invalid v2 packages
+  webcli adapter validate <dir>              Validate package structure and JavaScript without executing it
+  webcli adapter validate --installed [id]   Validate active v2 catalog packages
   webcli adapter skill <id>                  Print SKILL.md content
   webcli adapter skill <id> --generated      Print SKILL.generated.md content
   webcli adapter skill <id> --regenerate     Regenerate skill (generated adapters write SKILL.generated.md)
@@ -331,7 +374,7 @@ async function cmdInstall(args) {
   }
 }
 
-async function loadLegacyExtensionAdapters(excluded = new Set()) {
+async function loadLegacyExtensionAdapters(excluded = new Set(), namesOnly = false) {
   const result = [];
   for (const { id: directoryName, dir: adapterDir, source } of listAllAdapterDirs()) {
     if (excluded.has(directoryName)) continue;
@@ -340,7 +383,7 @@ async function loadLegacyExtensionAdapters(excluded = new Set()) {
       const manifest = JSON.parse(await readFile(manifestPath, "utf-8"));
       if (manifest.schema_version === 2) continue;
       if (excluded.has(manifest.id)) continue;
-      const tools = (await loadAdapterTools(directoryName, { adapterDir })).map((tool) => ({
+      const tools = (await loadAdapterTools(directoryName, { adapterDir, namesOnly })).map((tool) => ({
         name: tool.name,
         description: tool.description,
         adapterId: tool.adapterId || manifest.id,
@@ -372,8 +415,8 @@ async function loadLegacyExtensionAdapters(excluded = new Set()) {
   return result;
 }
 
-export async function loadAdapterViews({ extensionOnly = false, snapshot = managedAdapterViews() } = {}) {
-  const legacy = await loadLegacyExtensionAdapters(snapshot.managedNames);
+export async function loadAdapterViews({ extensionOnly = false, namesOnly = false, snapshot = managedAdapterViews() } = {}) {
+  const legacy = await loadLegacyExtensionAdapters(snapshot.managedNames, namesOnly);
   const toolkit = extensionOnly ? [] : loadToolkitAdapters({ ignoreInvalid: true }).map((adapter) => adapter.manifest);
   const managed = extensionOnly ? snapshot.adapters
     .filter((adapter) => adapter.tools.some((tool) => tool.runtime === 'extension'))
@@ -396,7 +439,7 @@ export async function findExtensionTool(toolName) {
   return matches[0] || null;
 }
 
-async function cmdList(args) {
+async function cmdList(args, outputFormat) {
   const jsonMode = args.includes("--json");
   const result = await loadAdapterViews();
   const adapterIds = new Set();
@@ -410,8 +453,8 @@ async function cmdList(args) {
     }
   }
 
-  if (jsonMode) {
-    console.log(JSON.stringify(result, null, 2));
+  if (jsonMode || outputFormat !== undefined) {
+    console.log(formatCallOutput(result, outputFormat ?? 'json'));
     return;
   }
   if (result.length === 0) {
@@ -454,7 +497,7 @@ async function cmdInfo(args) {
       console.log(`Adapter: ${managed.id}\nType: ${managed.adapter_type}\nVersion: ${managed.version}\nSource: ${managed.source}\nDigest: ${managed.digest}\n`);
       console.log(`Tools (${managed.tools.length}):`);
       for (const tool of managed.tools) {
-        console.log(`${tool.name} [${tool.runtime === 'wewright' ? 'Toolkit' : 'Extension'}] safety=${tool.safety}`);
+        console.log(`${tool.name} [${{ wewright: 'Toolkit', extension: 'Extension', http: 'HTTP' }[tool.runtime] || tool.runtime}] safety=${tool.safety}`);
         console.log(`  ${tool.description}`);
         if (tool.aliases.length) console.log('  Compatible names: ' + tool.aliases.join(', '));
         for (const param of tool.params) console.log(`  - ${param.name}: ${param.type}${param.required ? ' (required)' : ''}`);
@@ -649,7 +692,7 @@ export async function loadAdapterTools(adapterId, options = {}) {
 
   if (existsSync(indexPath)) {
     const source = await readFile(indexPath, "utf-8");
-    tools.push(...parseToolsFromSource(source, manifest));
+    tools.push(...parseToolsFromSource(source, manifest, { namesOnly: options.namesOnly }));
   }
 
   if (!includeSupportFiles || !existsSync(manifestPath)) {
@@ -663,7 +706,7 @@ export async function loadAdapterTools(adapterId, options = {}) {
     const supportPath = join(adapterDir, supportFile);
     if (!existsSync(supportPath)) continue;
     const source = await readFile(supportPath, "utf-8");
-    tools.push(...parseGeneratedToolsFromSource(source));
+    tools.push(...parseGeneratedToolsFromSource(source, { namesOnly: options.namesOnly }));
   }
 
   return applyDirectExecutionMetadata(dedupeToolsByName(tools), adapterDir, manifest);
@@ -751,7 +794,7 @@ function parseHiddenToolNamesFromSource(source) {
 /**
  * Parse tool definitions from adapter source code (regex-based, no eval).
  */
-export function parseToolsFromSource(source, manifest = {}) {
+export function parseToolsFromSource(source, manifest = {}, { namesOnly = false } = {}) {
   const tools = [];
   const hiddenToolNames = parseHiddenToolNamesFromSource(source);
 
@@ -786,6 +829,12 @@ export function parseToolsFromSource(source, manifest = {}) {
     // Limit block to the region before the next tool starts
     const end = i + 1 < toolPositions.length ? toolPositions[i + 1].index : expandedToolsSource.length;
     const block = expandedToolsSource.slice(index, end);
+
+    if (namesOnly) {
+      const name = staticCompletionName(block, 'publicName') || staticCompletionName(block, 'name');
+      if (name) tools.push({ name, aliases: [...staticCompletionAliases(block), ...aliasesForCanonical(manifest, name)] });
+      continue;
+    }
 
     // Extract description
     let description = "";
@@ -974,7 +1023,34 @@ function findMatchingDelimiter(source, openIndex, openChar, closeChar) {
   return -1;
 }
 
-function parseGeneratedToolsFromSource(source) {
+function staticCompletionName(objectSource, field) {
+  // Only portable literal names at object depth zero. Never accept string
+  // concatenation, template interpolation or a name inside a handler/schema.
+  const body = objectSource.slice(objectSource.indexOf('{') + 1);
+  const re = new RegExp(`(?:^|[,\\s])(?:${field}|["']${field}["'])\\s*:\\s*(["'\u0060])([A-Za-z0-9][A-Za-z0-9_.:-]*)\\1\\s*(?=[,}])`, 'g');
+  let match;
+  while ((match = re.exec(body))) {
+    const index = match.index + (match[0][0] === ',' || /\s/.test(match[0][0]) ? 1 : 0);
+    if (isTopLevelToolObjectStart(body, index)) return match[2];
+  }
+  return null;
+}
+
+function staticCompletionAliases(objectSource) {
+  const body = objectSource.slice(objectSource.indexOf('{') + 1);
+  const re = /(?:^|[,\s])(?:aliases|["']aliases["'])\s*:\s*\[([^\]]*)\]/g;
+  let match;
+  while ((match = re.exec(body))) {
+    if (!isTopLevelToolObjectStart(body, match.index + 1)) continue;
+    const items = match[1].split(',');
+    if (!items.at(-1).trim()) items.pop();
+    const literals = items.map(item => item.trim().match(/^(["'`])([A-Za-z0-9][A-Za-z0-9_.:-]*)\1$/));
+    if (literals.every(Boolean)) return literals.map(item => item[2]);
+  }
+  return [];
+}
+
+function parseGeneratedToolsFromSource(source, { namesOnly = false } = {}) {
   const tools = [];
   const callRe = /registerTool\s*\(\s*[^,]+,\s*\{/g;
   let match;
@@ -983,6 +1059,13 @@ function parseGeneratedToolsFromSource(source) {
     const objectEnd = findMatchingDelimiter(source, objectStart, "{", "}");
     if (objectEnd <= objectStart) continue;
     const objectSource = source.slice(objectStart, objectEnd + 1);
+    // Completion must never evaluate an author expression, including metadata
+    // getters and parameter schemas. Dynamic registrations are not guessed.
+    if (namesOnly) {
+      const name = staticCompletionName(objectSource, 'name');
+      if (name) tools.push({ name, aliases: staticCompletionAliases(objectSource) });
+      continue;
+    }
     const metadata = evaluateToolMetadataObject(objectSource);
     if (!metadata?.name) continue;
     tools.push({

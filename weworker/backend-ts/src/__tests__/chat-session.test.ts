@@ -23,6 +23,7 @@ vi.mock('../tools.js', () => ({
 }))
 vi.mock('../logger.js', () => ({ createLogger: () => ({ info() {}, error() {}, warn() {}, debug() {} }) }))
 vi.mock('../adapter-parser.js', () => ({ parseAllAdapters: () => new Map() }))
+vi.mock('../webcli-path.js', () => ({ resolveWebcliDir: () => path.join(mocks.directory, 'webcli') }))
 vi.mock('../user-directory-access.js', () => ({
   buildAgentFilesystemSettings: () => ({}),
   createUnifiedToolGuard: () => async () => ({ behavior: 'allow' }),
@@ -103,6 +104,11 @@ async function collect(messages: Message[], overrides: Record<string, unknown> =
 
 beforeEach(() => {
   mocks.directory = fs.mkdtempSync(path.join(os.tmpdir(), 'weworker-chat-session-test-'))
+  for (const name of ['webcli', 'webcli-browser', 'webcli-api-exploration']) {
+    const skillDir = path.join(mocks.directory, 'webcli/skills', name)
+    fs.mkdirSync(skillDir, { recursive: true })
+    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), `---\nname: ${name}\ndescription: Public read-only list fixture\n---\nRead https://example.com/items`)
+  }
   const builtinDir = path.join(mocks.directory, 'builtin')
   fs.mkdirSync(builtinDir, { recursive: true })
   fs.writeFileSync(path.join(builtinDir, '.profile.json'), JSON.stringify({ schema_version: 1, profile: 'public', adapters: [], legacy: [] }))
@@ -164,6 +170,30 @@ describe('desktop chat session reuse', () => {
     expect(sessions[0].received).toEqual(['第一问', '第二问'])
     expect(events.some((event) => event.type === 'error')).toBe(false)
     expect(listChatSessions()).toEqual([{ workId: 'work-a', busy: false, turns: 2 }])
+  })
+
+  it('rediscovers shared Skill body updates in an existing chat even when its index is unchanged', async () => {
+    const sessions = installFakeCli()
+    const first = [message('u1', '封装公开列表查询')]
+    await collect(first)
+    const file = path.join(mocks.directory, 'webcli/skills/webcli-api-exploration/SKILL.md')
+    fs.appendFileSync(file, '\nUpdated read-only verification contract')
+    await collect([...first, message('a1', 'reply 1', 'assistant'), message('u2', '继续查询')])
+    expect(mocks.query).toHaveBeenCalledTimes(2)
+    expect(sessions[0].closed).toBe(true)
+    expect(fs.readFileSync(path.join(mocks.directory, 'claude-config/skills/webcli-api-exploration/SKILL.md'), 'utf8')).toContain('Updated read-only verification contract')
+    expect(sessions[1].request.options.env.PATH.split(path.delimiter)[0]).toBe(path.join(mocks.directory, 'webcli'))
+  })
+
+  it('reports missing shared instructions before starting a model or reusing an old session', async () => {
+    const sessions = installFakeCli()
+    const first = [message('u1', '读取公开列表')]
+    await collect(first)
+    fs.renameSync(path.join(mocks.directory, 'webcli/skills/webcli-api-exploration'), path.join(mocks.directory, 'missing-skill'))
+    const events = await collect([...first, message('a1', 'reply 1', 'assistant'), message('u2', '继续探索')])
+    expect(events).toContainEqual(expect.objectContaining({ type: 'error', content: expect.stringContaining('重新构建 WebCLI') }))
+    expect(sessions[0].received).toHaveLength(1)
+    expect(mocks.query).toHaveBeenCalledTimes(1)
   })
 
   it('starts a fresh CLI from stored history when earlier messages changed', async () => {

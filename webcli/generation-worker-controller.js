@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { AsyncResource } from 'node:async_hooks';
 import { fork } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -227,9 +228,9 @@ export class GenerationWorkerController extends EventEmitter {
     session.closedSignal.promise.catch(() => {});
     child.stdout?.on('data', (chunk) => process.stderr.write(`[HarnessWorker] ${chunk}`));
     child.stderr?.on('data', (chunk) => process.stderr.write(chunk));
-    child.on('message', (message) => this.#handleWorkerMessage(session, message));
-    child.on('error', (error) => this.#handleWorkerError(session, error));
-    child.on('close', (code, signal) => this.#handleWorkerClose(session, code, signal));
+    child.on('message', AsyncResource.bind((message) => this.#handleWorkerMessage(session, message)));
+    child.on('error', AsyncResource.bind((error) => this.#handleWorkerError(session, error)));
+    child.on('close', AsyncResource.bind((code, signal) => this.#handleWorkerClose(session, code, signal)));
     const requestId = randomUUID();
     session.pendingCommands.set(requestId, session.command);
     session.commandTimer = setTimeout(() => {

@@ -47,6 +47,7 @@ describe('bridge Adapter reconnect snapshot', () => {
     try {
       const bridge = Object.create(WebSocketBridge.prototype)
       bridge._clients = new Set()
+      bridge._profiles = { connections: new Map(), register: (ws, msg) => ws._browserConnection ||= { contextId: 'example', ws, capabilities: msg.capabilities } }
       bridge._extensionWs = null
       bridge._broadcast = vi.fn()
       bridge._handleExtensionMessage = vi.fn()

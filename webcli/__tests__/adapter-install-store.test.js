@@ -9,6 +9,7 @@ import { readPackageDirectory, validatePackageFiles, writePackageDirectory } fro
 import { readAdapterState, withAdapterStoreLock } from '../adapter-state.js';
 import { assertInstalledAdapterOrigin, compareAdapterVersions, installAdapter, registerDevelopmentAdapter, removeInstalledAdapter, selectAdapter } from '../adapter-install-store.js';
 import { loadV2Adapters, resolveV2Tool } from '../adapter-package-v2.js';
+import { prepareGenerationRun } from '../generation-harness/existing-site.js';
 
 const roots = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -164,6 +165,19 @@ describe('unified catalog and installer', () => {
     expect(readPackageDirectory(join(paths.builtinDir, 'demo')).digest).toBe(original);
   });
 
+  it('allows fresh exploration after removing a user-only package', () => {
+    const { paths } = setup();
+    installAdapter({ files: files(), origin: local }, { paths });
+    removeInstalledAdapter('demo', { paths });
+    expect(readAdapterState(paths).selections.demo).toEqual({ source: 'disabled' });
+    expect(snapshot(paths).effective).toEqual([]);
+    expect(snapshot(paths).diagnostics).toEqual([]);
+    const memory = { siteKey: 'demo', siteHost: 'example.com' };
+    expect(prepareGenerationRun({ snapshot: { input: { memory } } }, { paths })).toBe(memory);
+    installAdapter({ files: files(), origin: local }, { paths });
+    expect(resolveCatalogTool('demo.list', { paths }).command.runtime).toBe('extension');
+  });
+
   it('keeps distinct profiles and explicit root ownership isolated', () => {
     const { root, paths } = setup();
     const custom = resolveAdapterPaths({ home: root, env: { WEWORKER_BUILD_PROFILE: 'custom', WEWORKER_BUILTIN_ADAPTERS_DIR: paths.builtinDir } });
@@ -218,7 +232,8 @@ describe('unified catalog and installer', () => {
     selectAdapter(name, 'user', { paths });
     removeInstalledAdapter(name, { paths });
     expect(snapshot(paths).effective).toHaveLength(0);
-    expect(readAdapterState(paths).selections[name].source).toBe('builtin');
+    expect(readAdapterState(paths).selections[name]).toEqual({ source: 'disabled' });
+    expect(snapshot(paths).diagnostics).toEqual([]);
   });
 });
 

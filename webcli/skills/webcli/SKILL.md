@@ -7,11 +7,19 @@ allowed-tools: Bash(webcli *), Bash(npm install *), Bash(npm view *)
 
 # WebCLI — 浏览器自动化
 
-通过 Chrome 扩展适配器操控网站。每个受支持的网站都有自己的适配器和专属工具。
+读取本安装包的使用说明：`webcli skills list --output-format=json` 列出随包 Skill，`webcli skills read webcli-browser` 或 `webcli skills read webcli-api-exploration` 返回原文；`--json` 返回内容信封。已知参考文件可传 `<skill>/references/<file>`。这些命令不安装、不执行 Skill；已安装 Adapter 的专属说明仍用 `webcli adapter skill <id>`。
+
+需要 shell 补全时，`webcli completion bash|zsh|fish` 输出脚本，在用户选定 shell 中加载；不要自动修改启动配置。补全首级命令/Adapter、二级命令和别名，不补业务参数。发现过程只读静态 catalog/help，不运行 Adapter、不启动 Bridge；旧版动态计算注册名不求值。
+
+通过 HTTP、Chrome 扩展或 Toolkit Adapter 调用网站能力；每个命令使用其声明的运行时。先查看 Adapter 信息，再决定是否需要浏览器、登录准备或业务页面。
+
+需要探索新网站 API 或生成 Adapter 时，使用随包提供的 `webcli-api-exploration` Skill，并先运行 `webcli call exploration.help`。该链路由当前 Agent 分析和编写代码；HTTP 模式只需 WebCLI，浏览器模式另需插件，不依赖桌面客户端或额外模型 Key。
+
+需要直接操作或检查页面时，使用随包提供的 `webcli-browser` Skill，先运行 `webcli call browser.help`。命名 session 在多个 CLI 进程之间共享绑定，浏览器命令与探索任务共用同一 Bridge。
 
 ## 环境准备（agent 自动完成，无需让用户操作）
 
-**第一步——每次使用前先确保 `webcli` 是最新版**。旧版本可能缺少适配器或修复，必须先比对版本、落后则更新：
+**第一步——核对当前入口与所需能力**。旧发布版可能缺少探索入口，版本号相同也不代表能力相同；已有工作区/开发版或桌面内置入口时保留该入口，不能机械地用 npm 发布版覆盖。下面仅用于准备普通全局发布版：
 
 ```bash
 REG=https://registry.npmjs.org
@@ -31,7 +39,7 @@ fi
 
 ## 首次准备（用户说「帮我完成 webcli 首次准备」时执行）
 
-当用户要求做首次准备、或这是本 skill 第一次被使用，按顺序执行，并**把结果直接回显给用户**（不要让用户自己去查）：
+当用户要求做首次准备、或首次使用需要浏览器的命令时，按顺序执行，并**把结果直接回显给用户**。仅运行 PUBLIC_API/AUTH_API 的任务不要求加载扩展或打开网页：
 
 1. 确保 `webcli` 已安装且为最新版（见上面的「环境准备」）。
 2. 取扩展目录并**原样给出完整路径**：
@@ -47,9 +55,9 @@ fi
    > 2. 打开右上角的**开发者模式**
    > 3. 点击**加载已解压的扩展程序**，选择这个目录：`<第 2 步输出的完整路径>`
    > 4. 确认列表里出现 **WeWorker Browser Adapter**，且已启用
-   > 5. 打开你要操作的网站，等 5 秒，然后回来告诉我
+   > 5. 页面型命令打开目标网站并等待就绪；后台命令仅在需要建立登录态时登录一次
 
-4. 用户完成后，跑一条只读命令验证扩展已连上（例如该站点的 `check_login_status`，或任意一次 `webcli call`）。
+4. 用户完成后，用 `webcli call profile.list` 检查连接，再运行目标只读命令。仅在该命令确需页面时使用页面登录检查。
 
 ## 唯一需要用户手动做的一步：加载 Chrome 扩展
 
@@ -63,7 +71,7 @@ fi
 3. 打开右上角的 **开发者模式**。
 4. 点击 **加载已解压的扩展程序**，选择上一步输出的目录。
 5. 确认列表中出现 **WeWorker Browser Adapter** 扩展且已启用。
-6. 打开或刷新目标网站——扩展会自动注入适配器，然后**等待至少 5 秒**。
+6. 页面型命令打开或刷新目标网站并等待就绪；后台 API 直接调用，按实际鉴权错误决定登录准备。
 
 扩展会自动重连 Bridge，无需重启服务。加载完成后，重新执行刚才失败的 `webcli call` 验证连接。
 
@@ -98,13 +106,19 @@ webcli call <domain>.<action> --args '{"key":"value","arr":[1,2]}'
 
 ### 打开浏览器
 
+调用输出可用 `--output-format=json|markdown|table|plain|csv|yaml`（别名 md/yml）。业务默认终端 markdown、管道 JSON；browser/exploration/profile 默认 JSON，也接受显式格式。JSON/YAML 保留完整结构与 trace 信封，CSV/table 展示行，plain 适合文本。不要使用业务 `--format` 代替输出选项。console/network --follow 固定 JSONL，不能指定 CSV/YAML；错误退出码不因展示格式变化。
+
+AdapterHub 的结果、help 和错误也支持显式输出格式，仍须遵守来源/权限变更和发布确认；显示格式不是授权。`adapter status [id]` 展示 v2 包候选、当前选择和失效原因，`adapter validate <directory>` 或 `adapter validate --installed [id]` 只做包/摘要/JavaScript 静态检查。`executed:false` 不能代替实际读取或副作用验证；Toolkit Python 和冻结 legacy 不在此语法检查范围。
+
+编辑内置 v2 包时，`adapter eject <id> --directory <new-directory>` 复制到包名相同的新目录（父目录须存在），不自动激活或覆盖。先静态检查与实际验证，再用 `adapter develop <directory>` 显式选择；`adapter use <id> builtin` 切回且保留编辑文件。eject/develop/use 支持六类输出，不自动删除本地 override。
+
 ```bash
 webcli call open_browser --args '{"url":"<url>"}'
 ```
 
 使用目标适配器 Skill 文档里的 **Homepage** URL——它带有正确的协议（http/https）和路径。不要猜测或默认用 https，部分站点只支持 http。
 
-打开受支持的网站后，**等待至少 5 秒**再调用任何工具——适配器需要时间注入并注册。
+仅页面型命令需要打开业务网页并等待注入完成。先用 `adapter info/skill` 查看具体命令：PUBLIC_API/AUTH_API 无浏览器依赖；COOKIE_API 和 Extension 后台 API 可以复用浏览器登录态而无需业务页。Extension 后台是否还使用页面 helper，以其代码和实际验收为准，不凭登录要求推断必须开页。
 
 ### 截图
 
@@ -124,11 +138,16 @@ webcli adapter skill <id>        # 输出某适配器的 SKILL.md
 
 ## 规则
 
-1. 调用任何适配器工具前，确保目标网站已在 Chrome 中打开，必要时用 `open_browser`。
+1. 调用前检查命令运行时与鉴权说明；已有后台 API 直接调用。只有实际依赖页面或明确需要重新登录时才打开网站，不能给所有 Adapter 增加开页前置步骤。
 2. 用 `open_browser` 时，始终使用适配器 Skill 文档里的 **Homepage** URL——它带有正确的协议（http vs https）和路径，不要默认 https。
-3. `open_browser` 之后，等待至少 5 秒再调用该站点的工具。
+3. 页面型命令打开网站后等待页面和 Adapter 就绪；后台型命令不等待页面注入。
 4. 工具名遵循 `<domain>.<action>` 格式，如 `jd.com.search_products`。
 5. 参数优先用 `--key=value`；数组/对象用 `--args '<json>'`；重复 flag 会聚合成数组。数字文本保持字符串，由适配器按自身 schema 解析。
 6. 工具返回错误时，最多重试 2 次。仍失败则告知用户。
-7. 如果调用报 `Extension not connected` / `Chrome扩展未连接`，不要盲目重试——这是 Chrome 扩展未加载（或目标站页面没打开）。引导用户完成上面的 **加载 Chrome 扩展**，然后重试。
-8. 需要登录的站点，先调用 `<domain>.check_login_status`。
+7. 如果调用报 `Extension not connected` / `Chrome扩展未连接`，检查浏览器、插件和 Bridge 连接；该错误不能证明需要业务页面。
+8. 登录态按命令实际 Cookie、宿主环境或缓存来源检查。仅在包确有对应工具且其运行时适合时使用登录检查；页面就绪辅助命令不能证明后台鉴权可用。
+
+
+### 静态规范审计
+
+`webcli adapter convention-audit <directory>` 或 `--installed [id]` 不执行命令，复用 v2 包/来源/摘要校验并输出七类提示。未声明 safety 是配置事实；字段遗漏、混合大小写、limit 截断、catch 空返回、占位回退和缺反向写操作是启发式，需要按业务核实，不凭提示自动改名、删除或添加逆操作。结果 executed:false，六种格式保留 findings，存在提示/无效包退出 1；无提示不能代替真实调用和写效果验证。动态/helper/Toolkit/legacy 未覆盖。

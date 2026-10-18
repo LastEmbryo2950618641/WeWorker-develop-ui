@@ -1,7 +1,7 @@
 import { inspectPackageRegistration, readGenerationEvidence, resolveDraftToolName } from './package-inspection.js';
 import { verifyRetainedPackage } from './existing-site.js';
 
-export function validatePackageDraft({ adapterDir, expectedSiteKey = '', expectedToolNames = [] }) {
+export function validatePackageDraft({ adapterDir, expectedSiteKey = '', expectedToolNames = [], paths, repairScope }) {
   const errors = [];
   const fail = (code, message) => errors.push({ code, message, severity: 'error' });
   let checkedFiles = 0;
@@ -11,7 +11,7 @@ export function validatePackageDraft({ adapterDir, expectedSiteKey = '', expecte
     checkedFiles = pkg.files.size;
     packageDigest = pkg.digest;
     const evidence = readGenerationEvidence(adapterDir);
-    const retained = verifyRetainedPackage(pkg, evidence);
+    const retained = verifyRetainedPackage(pkg, evidence, { paths, repairScope });
     if (expectedSiteKey && manifest.name !== expectedSiteKey) fail('MANIFEST_ID_MISMATCH', 'Package identity differs from the planned site.');
     const expected = expectedToolNames.map(name => resolveDraftToolName(manifest, name));
     if (new Set(expected).size !== expected.length) fail('DUPLICATE_TOOL_NAME', 'Planned names resolve to the same command.');

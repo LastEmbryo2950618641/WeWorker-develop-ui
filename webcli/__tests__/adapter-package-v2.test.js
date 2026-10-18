@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { adapterPermissions } from '../adapter-catalog.js';
 import {
   findV2Adapter,
   loadV2Adapters,
@@ -22,6 +23,20 @@ function makeAdapterDir(root, name, { manifest, files = {} } = {}) {
   }
   return adapterRoot;
 }
+
+it('requires complete manifest page navigation bindings and preserves read-only workflow scope', () => {
+  const manifest = v2Manifest(), command = manifest.commands[0];
+  Object.assign(command, { safety: 'read', pageStrategy: 'UI_SELECTOR', pageWorkflow: true, pageRoute: { origin: 'https://blog.example.com', pathname: '/start',
+    navigation: { pathname: '/items/:id', pathParameters: [{ segmentIndex: 1, name: 'itemId', description: 'Public item identifier' }] } } });
+  expect(() => validateV2Manifest(manifest)).not.toThrow();
+  expect(adapterPermissions(manifest)).toContain('page-navigation:' + JSON.stringify(command.pageRoute));
+  for (const pathname of ['//example.org/:id', '/items/:id?other=x', '/items/:id/extra/:id', '/items/007']) {
+    command.pageRoute.navigation.pathname = pathname; expect(() => validateV2Manifest(manifest)).toThrow(/navigation/);
+  }
+  command.pageRoute.navigation.pathname = '/items/:id'; command.pageRoute.pathname = '/items/:id';
+  expect(() => validateV2Manifest(manifest)).not.toThrow();
+  command.safety = 'write'; expect(() => validateV2Manifest(manifest)).toThrow(/pageRoute/);
+});
 
 it('validates requires_confirmation as a package boolean, without changing write classification', () => {
   const manifest = v2Manifest();
@@ -64,6 +79,20 @@ function v2Manifest(name = "blog", overrides = {}) {
     ...overrides,
   };
 }
+
+it('limits page query routes to exact same-origin foreground read paths', () => {
+  const manifest = v2Manifest(); const command = manifest.commands[0];
+  Object.assign(command, { safety: 'read', pageStrategy: 'UI_SELECTOR', pageWorkflow: true,
+    pageRoute: { origin: 'https://blog.example.com', pathname: '/search', additionalPaths: ['/results'] } });
+  expect(() => validateV2Manifest(manifest)).not.toThrow();
+  for (const pathname of ['//example.org/results', 'https://example.org/results', '/results?q=example', '/a/../results']) {
+    command.pageRoute.additionalPaths = [pathname]; expect(() => validateV2Manifest(manifest)).toThrow(/additionalPaths/);
+  }
+  command.pageRoute.additionalPaths = ['/results']; command.safety = 'write';
+  expect(() => validateV2Manifest(manifest)).toThrow(/pageRoute/);
+  command.safety = 'read'; command.pageStrategy = 'INTERCEPT';
+  expect(() => validateV2Manifest(manifest)).toThrow(/pageWorkflow/);
+});
 
 const defaultFiles = {
   "extension/commands/search-blog.js": "(function(){})();",
@@ -127,6 +156,27 @@ describe("validateV2Manifest", () => {
       expect(() => validateV2Manifest(v2Manifest("blog", { runtime_allowed_hosts: runtimeAllowedHosts }), "blog"))
         .toThrow(/runtime_allowed_hosts/);
     }
+  });
+
+  it('limits page routes to exact declared foreground read origins and paths', () => {
+    const manifest = v2Manifest('blog');
+    const command = manifest.commands[0];
+    const valid = { origin: 'https://blog.example.com', pathname: '/items' };
+    command.pageRoute = valid;
+    expect(validateV2Manifest(manifest).commands[0].pageRoute).toEqual(valid);
+    for (const route of [null, {}, { ...valid, pathname: '//other.example.org' },
+      { ...valid, origin: 'https://api.example.org' }, { ...valid, origin: 'https://user:placeholder@blog.example.com' },
+      { ...valid, pathname: '/items?q=example' }, { ...valid, pathname: '/a/../items' },
+      { ...valid, pathname: '/items#example' }, { ...valid, extra: true }]) {
+      command.pageRoute = route;
+      expect(() => validateV2Manifest(manifest)).toThrow(/pageRoute/);
+    }
+    command.pageRoute = valid;
+    command.safety = 'write';
+    expect(() => validateV2Manifest(manifest)).toThrow(/pageRoute/);
+    command.safety = 'read';
+    command.execution = { type: 'api', runtime: 'background' };
+    expect(() => validateV2Manifest(manifest)).toThrow(/pageRoute/);
   });
 
   it("rejects wrong schema_version", () => {

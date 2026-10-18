@@ -1,14 +1,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
+import { runHttpTool } from '../http-runner.js';
 import { isPackageDraft, packageDraftBundle, readGenerationEvidence } from './package-inspection.js';
 import { verifyRetainedPackage } from './existing-site.js';
+import { resolveUiWrite, validateUiEffect, uiWriteSuccess, uiWriteFailure, uiWriteMockSuccess } from '../exploration-ui-write.js';
+import { resolvePageWrite } from '../exploration-extension-write.js';
 
 function error(code, message, extra = {}) {
   return { code, message, severity: 'error', ...extra };
 }
 
-function subsetMatches(actual, expected) {
+export function subsetMatches(actual, expected) {
   if (expected === null || typeof expected !== 'object') return Object.is(actual, expected);
   if (Array.isArray(expected)) {
     return Array.isArray(actual) && expected.length === actual.length
@@ -54,9 +57,9 @@ function makeResponse(spec = {}) {
   };
 }
 
-function normalizeObservedRequest(url, options = {}) {
-  let body = options.body;
-  if (typeof body === 'string') {
+export function normalizeObservedRequest(url, options = {}) {
+  let body = options.json !== undefined ? options.json : options.body;
+  if (options.json === undefined && typeof body === 'string') {
     try { body = JSON.parse(body); } catch {}
   }
   return {
@@ -67,7 +70,15 @@ function normalizeObservedRequest(url, options = {}) {
   };
 }
 
-function compareRequest(observed, expected) {
+export function normalizeHttpWriteRequest(input) {
+  const observed = normalizeObservedRequest(input.url, input);
+  const headers = new Headers(input.headers || {});
+  if (input.json !== undefined) headers.set('content-type', 'application/json');
+  else if (typeof input.body === 'string' && !headers.has('content-type')) headers.set('content-type', 'text/plain;charset=UTF-8');
+  return { ...observed, headers: Object.fromEntries(headers) };
+}
+
+export function compareRequest(observed, expected) {
   if (!expected || typeof expected !== 'object') return false;
   if (String(observed.method) !== String(expected.method || 'GET').toUpperCase()) return false;
   if (String(observed.url) !== String(expected.url || '')) return false;
@@ -76,7 +87,13 @@ function compareRequest(observed, expected) {
   return true;
 }
 
-export async function verifyGeneratedWriteTools({ adapterDir, expectedSiteKey = '' }) {
+export function compareHttpWriteRequest(observed, expected) {
+  const headers = new Headers(expected?.headers || {});
+  if (expected?.body != null && !headers.has('content-type')) headers.set('content-type', typeof expected.body === 'string' ? 'text/plain;charset=UTF-8' : 'application/json');
+  return compareRequest(observed, expected) && exactMatches(observed.headers, Object.fromEntries(headers));
+}
+
+export async function verifyGeneratedWriteTools({ adapterDir, expectedSiteKey = '', paths, repairScope, signal }) {
   const errors = [];
   const cases = [];
   const requests = [];
@@ -113,7 +130,7 @@ export async function verifyGeneratedWriteTools({ adapterDir, expectedSiteKey = 
   try {
     if (isPackageDraft(adapterDir)) {
       const bundle = packageDraftBundle(adapterDir);
-      const retained = verifyRetainedPackage(bundle.pkg, readGenerationEvidence(adapterDir));
+      const retained = verifyRetainedPackage(bundle.pkg, readGenerationEvidence(adapterDir), { paths, repairScope });
       const fixtures = readGenerationEvidence(adapterDir, 'write-verification.json', { optional: true });
       const rawHandlers = new Map();
       window.__webmcpRegister = () => {};
@@ -121,8 +138,30 @@ export async function verifyGeneratedWriteTools({ adapterDir, expectedSiteKey = 
       const register = window.__webcliRegisterCommand;
       window.__webcliRegisterCommand = (id, handler) => { rawHandlers.set(id, handler); register(id, handler); };
       for (const script of bundle.scripts.slice(1)) new vm.Script(script.source).runInContext(context, { timeout: 1000 });
-      packageWriteTools = bundle.manifest.commands.filter(command => command.safety === 'write' && !retained.has(command.id)).map(command => ({
-        name: `${bundle.manifest.name}.${command.id}`, handler: rawHandlers.get(command.id), writeVerification: fixtures?.commands?.[command.id],
+      packageWriteTools = bundle.pkg.commands.filter(command => command.safety === 'write' && !retained.has(command.id)).map(command => ({
+        name: command.name, httpRuntime: command.runtime === 'http' || Boolean(command.pageWrite || command.uiWrite), writeVerification: command.uiWrite ? { ...fixtures?.commands?.[command.id], expectedRequest: fixtures?.commands?.[command.id]?.expectedSubmission,
+          successResponse: { status: 200 }, successExpectation: uiWriteSuccess, failureResponse: { status: 409 }, failureExpectation: uiWriteFailure } : fixtures?.commands?.[command.id],
+        handler: command.uiWrite ? async args => {
+          if (args.__confirmed !== true) return { blocked: true, requiresConfirmation: true };
+          const fixture = fixtures?.commands?.[command.id];
+          validateUiEffect(command, fixture);
+          const request = resolveUiWrite(command, args);
+          requests.push(normalizeHttpWriteRequest({ url: request.url, method: request.method, json: request.body }));
+          // A model of the declared submission, never a mocked network response.
+          return structuredClone(responseSpec.status >= 400 ? uiWriteFailure : uiWriteMockSuccess(command));
+        } : command.pageWrite ? async args => {
+          if (args.__confirmed !== true) return { blocked: true, requiresConfirmation: true };
+          const request = resolvePageWrite(command, args);
+          requests.push(normalizeHttpWriteRequest({ url: request.url, method: request.method, json: request.body }));
+          return responseSpec.status >= 400 ? { ok: false, errorCode: 'PAGE_WRITE_HTTP_STATUS' } : structuredClone(responseSpec.body ?? {});
+        } : command.runtime === 'http' ? async args => (await runHttpTool({ adapter: { root: adapterDir, digest: bundle.pkg.digest }, command }, args, {
+          timeoutMs: 2000, signal,
+          mockRequest: async input => {
+            requests.push(normalizeHttpWriteRequest(input));
+            if (responseSpec.status >= 400) throw Object.assign(new Error('HTTP mock status failure.'), { code: 'HTTP_STATUS' });
+            return structuredClone(responseSpec.body ?? {});
+          },
+        })).result : rawHandlers.get(command.id),
       }));
     } else {
     for (const supportFile of safeSupportFiles(adapterDir)) {
@@ -142,6 +181,7 @@ export async function verifyGeneratedWriteTools({ adapterDir, expectedSiteKey = 
   const siteStore = window.__webmcpGeneratedSupport?.[expectedSiteKey];
   const writeTools = packageWriteTools || (Array.isArray(siteStore?.tools) ? siteStore.tools : []).filter((tool) => tool?.access === 'write');
   for (const tool of writeTools) {
+    if (signal?.aborted) return { passed: false, validator: 'write_tool_mock_validator_v1', errors: [error('ABORTED', 'Write mock verification cancelled.')], cases };
     const fixture = tool.writeVerification;
     if (!fixture || typeof fixture !== 'object') {
       errors.push(error('MISSING_WRITE_VERIFICATION', `write tool ${tool.name} is missing writeVerification`, { toolName: tool.name }));
@@ -192,7 +232,7 @@ export async function verifyGeneratedWriteTools({ adapterDir, expectedSiteKey = 
       continue;
     }
     const observed = requests[requests.length - 1];
-    if (requests.length !== Number(fixture.expectedRequestCount || 1) || !compareRequest(observed, fixture.expectedRequest)) {
+    if (requests.length !== Number(fixture.expectedRequestCount || 1) || !(tool.httpRuntime ? compareHttpWriteRequest : compareRequest)(observed, fixture.expectedRequest)) {
       errors.push(error('WRITE_REQUEST_MISMATCH', `confirmed ${tool.name} request does not match reviewed fixture`, {
         toolName: tool.name,
         observed,

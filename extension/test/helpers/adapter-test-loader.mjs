@@ -1,3 +1,9 @@
+import { browserResponseEvidence } from '../../background/browser-network.js';
+import { recordBrowserObservation, clearBrowserObservations } from '../../background/browser-observations.js';
+import { recordBrowserEvent, clearBrowserEvents } from '../../background/browser-events.js';
+import { recordBrowserFrameEvent, clearBrowserFrames } from '../../background/browser-frames.js';
+import { recordBrowserDownload, clearBrowserDownloads } from '../../background/browser-downloads.js';
+import { executeInterceptRead } from '../../background/intercept-read.js';
 import { scopedGenerationPreviewScripts } from '../../background/generation-preview-bundle.js';
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -155,6 +161,13 @@ export function runServiceWorkerInContext(context, options = {}) {
     /import\s*\{[\s\S]*?\}\s*from\s*['"]\.\/generation-output-validator\.js['"];?\s*/,
     '',
   )
+  context.recordBrowserObservation = recordBrowserObservation
+  context.recordBrowserEvent = recordBrowserEvent
+  context.clearBrowserEvents = clearBrowserEvents
+  Object.assign(context, { recordBrowserFrameEvent, clearBrowserFrames, recordBrowserDownload, clearBrowserDownloads })
+  context.clearBrowserObservations = clearBrowserObservations
+  context.browserResponseEvidence = browserResponseEvidence
+  context.executeInterceptRead = executeInterceptRead
   context.scopedGenerationPreviewScripts = scopedGenerationPreviewScripts
   context.selectCompatibleCaptureBoundEntry = selectCompatibleCaptureBoundEntry
   context.createHostAdapterClient = createHostAdapterClient

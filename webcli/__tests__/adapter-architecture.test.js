@@ -29,6 +29,18 @@ function makeAdapter(root, name = 'demo') {
 }
 
 describe('host Adapter paths', () => {
+  it.each(['webcli-dist', 'bridge-dist'])('uses prepared extension resources from desktop development %s', (entry) => {
+    const root = fixture();
+    const baseDir = join(root, 'weworker/build', entry);
+    mkdirSync(join(baseDir, 'extension/adapters'), { recursive: true });
+    writeFileSync(join(root, 'weworker/build-profile.json'), '{}');
+    expect(() => resolveExtensionDir({ env: {}, baseDir })).toThrow(/prepare/);
+    const prepared = join(root, 'weworker/build/extension-dist');
+    mkdirSync(prepared);
+    expect(resolveExtensionDir({ env: {}, baseDir })).toBe(prepared);
+    const resources = join(root, 'resources');
+    expect(resolveExtensionDir({ env: { WEWORKER_RESOURCES_PATH: resources }, baseDir })).toBe(join(resources, 'extension'));
+  });
   it('uses a stable user root even if the standalone legacy directory exists', () => {
     const home = fixture();
     mkdirSync(join(home, '.webcli/adapters'), { recursive: true });

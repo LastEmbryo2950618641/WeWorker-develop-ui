@@ -15,7 +15,7 @@
 3. 使用完整工具名称，例如 `jd.com.search_products`。
 4. 参数直接使用 `--key=value`；数组和对象可使用 JSON 字面量，字段必须匹配 Skill 文档中的参数定义。
 
-对于没有对应 Skill 的网站，你没有操作能力，应明确告知用户当前不支持该网站。
+{{new_adapter_guidance}}
 {{native_command_capability}}
 
 ## 大结果读取规则

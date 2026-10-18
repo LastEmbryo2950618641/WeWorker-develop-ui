@@ -1,4 +1,5 @@
 /** Shared Adapter help rendered from the effective catalog. */
+import { formatCallOutput } from './output-format.js';
 
 function schemaToParams(schema) {
   const properties = schema?.properties || {};
@@ -167,16 +168,16 @@ export function suggestAdapters(models, keyword) {
     .map((m) => m.id);
 }
 
-export async function runAdapterHelp(args) {
+export async function runAdapterHelp(args, { outputFormat } = {}) {
   const { loadAdapterViews } = await import('./adapter-cli.js');
   const models = (await loadAdapterViews()).map((adapter) => toAdapterHelpModel(adapter));
-  if (args.length === 1) return renderGlobalHelp(models);
+  if (args.length === 1) return outputFormat !== undefined ? formatCallOutput(models, outputFormat) : renderGlobalHelp(models) + '\n\nBrowser: webcli call browser.help\nAPI exploration: webcli call exploration.help (standalone; current agent authors the Adapter).';
   const adapter = models.find((model) => model.id === args[0])
     || models.find((model) => model.commands.some((command) => command.aliases?.includes(args[0])));
   if (!adapter) throw new Error('Adapter unavailable: ' + args[0]);
-  if (args.length === 2) return renderAdapterHelp(adapter);
+  if (args.length === 2) return outputFormat !== undefined ? formatCallOutput(adapter, outputFormat) : renderAdapterHelp(adapter);
   const command = adapter.commands.find((entry) => entry.id === args[1] || entry.name === args[1]
     || entry.aliases?.includes(args[1]) || entry.aliases?.includes(adapter.id + '.' + args[1]));
   if (!command) throw new Error('Adapter command unavailable: ' + args[1]);
-  return renderCommandHelp(adapter, command);
+  return outputFormat !== undefined ? formatCallOutput(command, outputFormat) : renderCommandHelp(adapter, command);
 }

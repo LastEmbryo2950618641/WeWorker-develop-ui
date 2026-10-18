@@ -364,12 +364,28 @@ export function inferOutputContract(_tool = {}, candidate = null) {
     : { kind: 'json' };
 }
 
-export function buildRuntimeTestCases({ registeredTools = [], plan = null, memory = {} } = {}) {
+export function buildRuntimeTestCases({ registeredTools = [], plan = null, memory = {}, repairedToolNames = [] } = {}) {
   const planTools = Array.isArray(plan?.tools) ? plan.tools : [];
   let fallbackListIndex = 0;
   return registeredTools.map((tool) => {
+    if (tool.generationSource?.version === 'page-source-v1') {
+      const observation = (memory.pageSources || []).find(item => item.id === tool.generationSource.fingerprint);
+      const planTool = findPlanTool(tool, planTools);
+      const bound = observation && planTool?.risk === 'read' && planTool.sourcePageId === observation.id
+        && planTool.strategy === observation.source.strategy;
+      return { toolName: tool.name, caseId: '', arguments: {}, argumentSources: {}, captureBound: false,
+        missingRequired: [], validationErrors: [], execute: false, unverifiable: !bound,
+        risk: { level: bound ? 'read' : 'unknown', confidence: bound ? 0.95 : 0, signals: ['page_source_binding'] },
+        sourceEvidence: bound ? tool.generationSource : null,
+        contract: { kind: bound ? 'page_observation' : 'json', ...(bound ? { observedShape: observation.shape } : {}) },
+        skipReason: bound ? 'authored_verification_required' : 'missing_page_source_binding' };
+    }
     const isLoginUtility = /(?:^|\.)check[-_]login[-_]status$/i.test(String(tool.name || ''));
-    const candidate = isLoginUtility ? null : findCapturedCandidate(tool, memory, fallbackListIndex);
+    const planTool = findPlanTool(tool, planTools);
+    // A utility explicitly selected by the service's repair scope still needs
+    // fresh evidence and authored cases. Never auto-execute the login helper.
+    const repairedUtility = repairedToolNames.includes(tool.name) && planTool?.risk === 'read' && Boolean(tool.generationSource?.fingerprint);
+    const candidate = isLoginUtility && !repairedUtility ? null : findCapturedCandidate(tool, memory, fallbackListIndex);
     const sourceKind = candidate && (memory.listApiCandidates || []).includes(candidate)
       ? 'passive_list'
       : candidate ? 'action_capture' : '';
@@ -380,7 +396,6 @@ export function buildRuntimeTestCases({ registeredTools = [], plan = null, memor
       && candidateEvidence
       && tool.generationSource.fingerprint === candidateEvidence.fingerprint;
     const sourceEvidence = toolEvidenceMatches ? tool.generationSource : candidateEvidence;
-    const planTool = findPlanTool(tool, planTools);
     const unverifiable = Boolean(planTool?.unverifiable && typeof planTool.unverifiable === 'object');
     const risk = classifyGeneratedToolRisk({ tool, planTool, candidate, sourceKind });
     if (candidate && (memory.listApiCandidates || []).includes(candidate)) fallbackListIndex += 1;

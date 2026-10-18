@@ -15,7 +15,7 @@ let bridge;
 let ws;
 async function start(overrides = {}) {
   await bridge._handleClientRequest({ type: 'client_action_capture_start', id: 'start-1', tabId: 7, siteKey: 'example.com', actionName: 'like_article', modelConfig: config, ...overrides });
-  return bridge._send.mock.calls.at(-1)?.[0];
+  return bridge._request.mock.calls.at(-1)?.[0];
 }
 async function analyze(analysisContextId, captureResult = capture) {
   await bridge._handleAnalyzeActionCaptureResult({ id: 'analysis-1', analysisContextId, captureResult }, ws);
@@ -23,11 +23,11 @@ async function analyze(analysisContextId, captureResult = capture) {
 }
 
 beforeEach(() => {
-  vi.spyOn(WebSocketBridge.prototype, '_startServer').mockImplementation(() => {});
-  bridge = new WebSocketBridge();
+  bridge = Object.create(WebSocketBridge.prototype);
+  bridge._captureModelContexts = new Map();
   bridge._extensionCapabilities = ['action_capture_model_context_v1'];
-  bridge._send = vi.fn().mockReturnValue(true);
-  bridge._broadcast = vi.fn();
+  bridge._request = vi.fn().mockResolvedValue({ ok: true });
+  bridge._reply = vi.fn();
   ws = { send: vi.fn() };
   analyzeActionCaptureResult.mockClear();
 });
@@ -73,10 +73,10 @@ describe('client capture model context', () => {
   });
 
   it('releases contexts on failed starts, send failures and disconnect cleanup', async () => {
+    bridge._request.mockRejectedValueOnce(new Error('fixture failure'));
     await start();
-    bridge._handleExtensionMessage({ type: 'call_tool_error', id: 'start-1', error: 'fixture failure' });
     expect(bridge._captureModelContexts.size).toBe(0);
-    bridge._send.mockReturnValueOnce(false);
+    bridge._request.mockRejectedValueOnce(new Error('fixture send failure'));
     await start();
     expect(bridge._captureModelContexts.size).toBe(0);
     await start();
@@ -87,20 +87,20 @@ describe('client capture model context', () => {
   it('bounds retained contexts without evicting a running capture', async () => {
     for (let i = 0; i < 65; i++) await start({ id: `start-${i}` });
     expect(bridge._captureModelContexts.size).toBe(64);
-    expect(bridge._send).toHaveBeenCalledTimes(64);
-    expect(bridge._broadcast).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'call_tool_error' }));
+    expect(bridge._request).toHaveBeenCalledTimes(64);
+    expect(bridge._reply).toHaveBeenLastCalledWith(undefined, expect.objectContaining({ type: 'call_tool_error' }));
   });
 
   it('requires a compatible extension instead of silently reverting to standalone config', async () => {
     bridge._extensionCapabilities = ['action_capture_v1'];
     await start();
-    expect(bridge._send).not.toHaveBeenCalled();
-    expect(bridge._broadcast).toHaveBeenCalledWith(expect.objectContaining({ error: expect.stringContaining('重载浏览器扩展') }));
+    expect(bridge._request).not.toHaveBeenCalled();
+    expect(bridge._reply).toHaveBeenCalledWith(undefined, expect.objectContaining({ error: expect.stringContaining('重载浏览器扩展') }));
   });
 
   it('preserves standalone calls while rejecting invalid injected config', async () => {
     await start({ modelConfig: null });
-    expect(bridge._send).not.toHaveBeenCalled();
+    expect(bridge._request).not.toHaveBeenCalled();
     await bridge._handleAnalyzeActionCaptureResult({ id: 'legacy', captureResult: capture }, ws);
     expect(analyzeActionCaptureResult).toHaveBeenCalledWith({ captureResult: capture, modelConfig: undefined });
   });
@@ -115,4 +115,15 @@ describe('client capture model context', () => {
     expect(JSON.stringify(ws.send.mock.calls)).not.toContain('private');
     expect(bridge._captureModelContexts.size).toBe(0);
   });
+});
+
+it('rejects model context consumption from a different browser socket', async () => {
+  const connection = { contextId: 'example-owner' };
+  bridge._route = { getStore: () => ({ connection }) };
+  const forwarded = await start();
+  ws._browserConnection = { contextId: 'example-other' };
+  expect(await analyze(forwarded.analysisContextId)).toMatchObject({ ok: false });
+  expect(analyzeActionCaptureResult).not.toHaveBeenCalled();
+  ws._browserConnection = connection;
+  expect(await analyze(forwarded.analysisContextId)).toMatchObject({ ok: true });
 });

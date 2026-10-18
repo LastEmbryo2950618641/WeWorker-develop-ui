@@ -6,6 +6,11 @@ import { fileURLToPath } from 'url'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const WEBCLI_DIR = resolve(__dirname, '..')
 
+it('recognizes bare follow only for browser console/network without coercing business arguments', () => {
+  for (const command of ['console', 'network']) expect(runIndexHelper(`m.resolveCliInvocation(['call', 'browser.${command}', '--session=example', '--follow'])`)).toMatchObject({type:'call',toolName:`browser.${command}`,flagArgs:{session:'example',follow:true}})
+  expect(runIndexHelper(`m.resolveCliInvocation(['call', 'example.query', '--follow=true'])`).flagArgs.follow).toBe(true)
+})
+
 function runIndexHelper(expression) {
   const script = `
     import('./index.js')

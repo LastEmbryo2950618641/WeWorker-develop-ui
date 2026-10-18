@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { resolveAdaptersDir } from './paths.js';
 import { bindGenerationPlan } from './generation-harness/plan-binding.js';
+import { resolvePathRequest } from './generation-harness/path-parameters.js';
 import { draftCommandId, resolveGeneratedPackageRoot, writePackageDraft } from './generation-harness/package-draft.js';
 import {
     buildApiSourceEvidence,
@@ -51,6 +52,10 @@ export function writeScaffoldFromSiteMemory(memory, options = {}) {
     const actionCandidates = applySemanticToolNamesToCandidates(initialActionCandidates, semanticConfig);
     const primaryToolName = primary ? semanticConfig.getToolName(`${memory.siteKey}.search_records`) : '';
     const secondaryToolName = primary && secondary ? semanticConfig.getToolName(`${memory.siteKey}.fetch_summary_groups`) : '';
+    const additionalLists = memory.generationPlanBound ? memory.listApiCandidates.slice(2).map((candidate, index) => {
+        const sourceToolName = `${memory.siteKey}.query_read_${index + 3}`;
+        return { candidate, sourceToolName, toolName: semanticConfig.getToolName(sourceToolName) };
+    }) : [];
     const detailToolName = semanticConfig.getToolName(`${memory.siteKey}.list_detail_candidates`);
     if (!primary && actionCandidates.length === 0) {
         throw new Error(`no reusable list or action api candidates available for ${memory.siteKey}`);
@@ -61,6 +66,7 @@ export function writeScaffoldFromSiteMemory(memory, options = {}) {
     const semanticToolNames = collectSemanticReadToolNames(memory.siteKey, actionCandidates);
     const toolNames = buildGeneratedToolNames(memory.siteKey, {
         allowedToolNames: memory.generationPlanToolNames,
+        additionalLists,
         hasPrimary: Boolean(primary),
         hasSecondary: Boolean(primary && secondary),
         includeDetailHints,
@@ -72,6 +78,7 @@ export function writeScaffoldFromSiteMemory(memory, options = {}) {
         detailToolName
     });
     const supportBundle = buildSupportBundle(memory, {
+        additionalLists,
         adapterDir,
         sharedRuntimeRel,
         supportFileRel,
@@ -84,7 +91,8 @@ export function writeScaffoldFromSiteMemory(memory, options = {}) {
         secondaryToolName,
         detailToolName
     });
-    if (options.packageFormat === 2) return writePackageDraft({ memory, adapterDir, supportBundle, paths: options.adapterPaths });
+    if (options.packageFormat === 2) return writePackageDraft({ memory, adapterDir,
+        supportBundle: { ...supportBundle, toolFiles: [...supportBundle.toolFiles, ...(options.additionalTools || [])] }, paths: options.adapterPaths });
     fs.mkdirSync(generatedDir, { recursive: true });
     const retainedGeneratedToolSupportFiles = collectRetainedGeneratedToolSupportFiles(manifestPath, adapterDir, supportBundle.supportFiles);
     const finalToolNames = mergeToolNamesWithRetainedGeneratedTools(memory.siteKey, toolNames, retainedGeneratedToolSupportFiles);
@@ -534,6 +542,7 @@ function buildSupportBundle(memory, context) {
     const actionHintRegistry = buildActionHintRegistry(memory.siteKey, context.actionCandidates, semanticReadCandidate);
     const toolNames = buildGeneratedToolNames(memory.siteKey, {
         allowedToolNames: memory.generationPlanToolNames,
+        additionalLists: context.additionalLists,
         hasPrimary: Boolean(context.primary),
         hasSecondary: Boolean(context.primary && context.secondary),
         includeDetailHints: context.includeDetailHints,
@@ -564,6 +573,12 @@ function buildSupportBundle(memory, context) {
             parameterDescriptions: context.semanticConfig.getToolOverride(`${memory.siteKey}.fetch_summary_groups`)?.parameterDescriptions || {},
             parameterUiHints: context.semanticConfig.getToolOverride(`${memory.siteKey}.fetch_summary_groups`)?.parameterUiHints || {}
         }));
+    }
+    for (const { candidate, sourceToolName, toolName } of context.additionalLists || []) {
+        const override = context.semanticConfig.getToolOverride(sourceToolName) || {};
+        toolModules.push(buildListToolModule({ siteKey: memory.siteKey, candidate, toolName,
+            description: override.description || '查询已观察到的接口',
+            parameterDescriptions: override.parameterDescriptions, parameterUiHints: override.parameterUiHints }));
     }
     for (const candidate of context.actionCandidates){
         toolModules.push(...buildActionToolModules(memory.siteKey, candidate, context.semanticConfig));
@@ -1313,13 +1328,14 @@ function resolveGenerationSource(candidate, sourceKind) {
 }
 function buildRequestInvokeLine(input) {
     const method = (input.method || 'POST').toUpperCase();
+    const endpoint = input.urlRef || serializeJsValue(input.transport === 'get_query' ? stripRequestUrlQuery(input.url) : input.url);
     if (input.transport === 'get_query') {
-        return `    return fetchGet(${serializeJsValue(stripRequestUrlQuery(input.url))}, ${input.payloadRef});`;
+        return `    return fetchGet(${endpoint}, ${input.payloadRef});`;
     }
     if (input.transport === 'post_form') {
-        return `    return postForm(${serializeJsValue(input.url)}, ${input.payloadRef});`;
+        return `    return postForm(${endpoint}, ${input.payloadRef});`;
     }
-    return `    return sendJson(${serializeJsValue(input.url)}, ${serializeJsValue(method)}, ${input.payloadRef});`;
+    return `    return sendJson(${endpoint}, ${serializeJsValue(method)}, ${input.payloadRef});`;
 }
 function buildActionToolDescription(candidate, transport) {
     if (transport === 'get_query') {
@@ -1362,11 +1378,24 @@ function buildListToolModule(input) {
         ...((candidate.sourceEvidence?.bodyKeys) || [])
     ].filter((key)=>!isSensitiveKnowledgeKey(key));
     const schema = applySemanticParameterUiHints(buildCapturedFieldsSchema(defaults, '列表请求中的默认字段', parameterDescriptions, parameterNames), parameterUiHints);
+    const pathParameters = candidate.pathParameters || [];
+    for (const { name, description } of pathParameters) schema.properties[name] = { type: 'string', minLength: 1, maxLength: 512, description };
+    if (pathParameters.length) schema.required = [...new Set([...(schema.required || []), ...pathParameters.map(item => item.name)])];
+    const endpoint = pathParameters.length ? new URL(candidate.url) : null;
+    // Replace authored slots before serializing to avoid retaining an observed
+    // slug when the Agent parameterizes a non-numeric identifier.
+    if (endpoint) {
+        const segments = endpoint.pathname.slice(1).split('/');
+        for (const binding of pathParameters) segments[binding.segmentIndex] = ':id';
+        endpoint.pathname = '/' + segments.join('/');
+    }
+    const pathSetup = pathParameters.length ? `    let request;\n    try { request = (${resolvePathRequest.toString()})(${serializeJsValue(endpoint.href)}, ${serializeJsValue(pathParameters)}, params); }\n    catch (error) { return { ok: false, error: { code: error.code || 'INVALID_PATH_PARAMETER', message: error.message } }; }\n` : '';
     const invokeLine = buildRequestInvokeLine({
         url: candidate.url,
+        ...(pathParameters.length ? { urlRef: 'request.url' } : {}),
         method: candidate.method,
         transport,
-        payloadRef: 'params'
+        payloadRef: pathParameters.length ? 'request.params' : 'params'
     });
     return createGeneratedToolModule(siteKey, toolName, `  async function ${functionName}(args = {}) {
     const params = {
@@ -1374,7 +1403,7 @@ function buildListToolModule(input) {
       ...(args || {}),
     };
 
-${invokeLine}
+${pathSetup}${invokeLine}
   }`, buildGeneratedToolDefinitionSource({
         toolName,
         description,
@@ -2519,6 +2548,7 @@ function buildGeneratedToolNames(siteKey, context) {
     ];
     if (context.hasPrimary) names.push(context.primaryToolName || `${siteKey}.search_records`);
     if (context.hasSecondary) names.push(context.secondaryToolName || `${siteKey}.fetch_summary_groups`);
+    for (const item of context.additionalLists || []) names.push(item.toolName);
     for (const candidate of context.actionCandidates){
         names.push(candidate.toolName);
     }

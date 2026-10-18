@@ -14,18 +14,20 @@ export function createAdapterPublisher({ adaptersDir = resolveAdaptersDir(), pat
     const draft = run.snapshot.artifacts?.draft;
     const workspace = run.snapshot.artifacts?.workspace;
     const validation = run.snapshot.artifacts?.staticValidation;
+    const repairScope = run.snapshot.repairScope;
     if (!draft?.adapterDir) throw new Error('generation run does not contain a draft adapter');
     if (!validation?.passed) throw new Error('generation run draft has not passed static validation');
     const managed = isPackageDraft(draft.adapterDir);
     if ((draft.packageFormat === 2) !== managed) throw new Error('Draft package format changed; recreate its installation review.');
     if (!managed && !workspace?.sourceFingerprint && !workspace?.publishBaselineFingerprint) throw new Error('generation run is missing source adapter fingerprint');
     if (managed) {
-      const revalidated = validateAdapterDraft({ adapterDir: draft.adapterDir, expectedSiteKey: run.snapshot.siteKey, expectedToolNames: draft.toolNames });
+      const revalidated = validateAdapterDraft({ adapterDir: draft.adapterDir, expectedSiteKey: run.snapshot.siteKey, expectedToolNames: draft.toolNames, paths, repairScope });
       if (!revalidated.passed || revalidated.packageDigest !== validation.packageDigest) throw new Error('Draft changed after validation; validate again before installation.');
     }
     const writeVerification = await verifyGeneratedWriteTools({
       adapterDir: draft.adapterDir,
       expectedSiteKey: run.snapshot.siteKey,
+      paths, repairScope,
     });
     if (!writeVerification.passed) {
       const error = new Error(`generation run write tools have not passed mock verification (${writeVerification.errors.length} errors)`);
@@ -45,7 +47,7 @@ export function createAdapterPublisher({ adaptersDir = resolveAdaptersDir(), pat
       const retention = readGenerationEvidence(draft.adapterDir);
       const expectedRetention = run.snapshot.input?.memory?.generationBaseline;
       if (expectedRetention && (retention.retainedPackage?.digest !== expectedRetention.digest || retention.retainedPackage?.name !== expectedRetention.name)) throw adapterError('RETAINED_ADAPTER_CHANGED', 'Existing package retention evidence changed.');
-      verifyRetainedPackage(pkg, retention, { paths: adapterPaths });
+      verifyRetainedPackage(pkg, retention, { paths: adapterPaths, repairScope });
       if (pkg.digest !== validation.packageDigest) throw new Error('Draft changed during installation review.');
       const review = describeGeneratedInstall(draft, { paths: adapterPaths, pkg });
       if (review.baselineDigest !== baseline.digest) throw adapterError('ADAPTER_BASE_CHANGED', 'Adapter changed since this draft was created.');

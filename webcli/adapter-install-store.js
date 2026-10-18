@@ -232,7 +232,10 @@ export function removeInstalledAdapter(name, options = {}) {
     const next = structuredClone(state);
     next.selections = Object.assign(Object.create(null), next.selections);
     delete next.installations[name];
-    next.selections[name] = { source: 'builtin' };
+    // Retain a tombstone to suppress stale legacy copies, but do not select a
+    // nonexistent builtin: that would block fresh exploration after removal.
+    const hasBuiltin = buildAdapterCatalog({ paths, state }).candidates.some(entry => entry.name === name && entry.source === 'builtin');
+    next.selections[name] = { source: hasBuiltin ? 'builtin' : 'disabled' };
     next.revision++;
     const after = buildAdapterCatalog({ paths, state: next });
     if (after.diagnostics.some((item) => item.code === 'ADAPTER_DOMAIN_CONFLICT' && item.names?.includes(name))) {

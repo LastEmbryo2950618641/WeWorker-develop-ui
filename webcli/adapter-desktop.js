@@ -28,6 +28,11 @@ export function describeDesktopAdapters(options = {}) {
   const catalog = options.catalog || buildAdapterCatalog(options);
   if (catalog.diagnostics.some((item) => !item.name && !item.names)) throw new Error('Adapter catalog requires inspection.');
   const names = new Set(catalog.candidates.filter((entry) => entry.source !== 'unmanaged').map((entry) => entry.name));
+  // Uninstall retains a disabled selection to suppress legacy fallback. There
+  // may be no package or diagnostic left, but desktop discovery must honor it.
+  for (const [name, selection] of Object.entries(catalog.selections)) {
+    if (selection?.source === 'disabled') names.add(name);
+  }
   for (const item of catalog.diagnostics) {
     if (item.source === 'unmanaged') continue;
     if (item.name) names.add(item.name);
