@@ -267,6 +267,114 @@ test("adapter refresh waits for the active background call before closing offscr
   assert.deepEqual(events, ['started', 'result', 'close']);
 });
 
+test('batch refresh reserves later tab queues before waiting on the first tab', async () => {
+  const worker = loadServiceWorker({ tabs: [7, 8].map(id => ({ id, url: 'https://example.com/', status: 'complete' })) });
+  const runtime = createHostAdapterRuntime({}), order = [];
+  worker.context.getHostAdapterRuntime = () => runtime;
+  worker.context.loadAdapterManifestAnywhere = async () => null;
+  worker.context.sendTabMessage = async () => ({});
+  worker.context.waitForTabLoad = async () => {};
+  worker.context.injectAdapters = async () => {};
+  worker.context.waitForDomainTools = async () => null;
+  worker.context.chrome.tabs.get = async id => ({ id, url: 'https://example.com/', status: 'complete' });
+  worker.context.chrome.tabs.reload = async id => { order.push('reload-' + id); };
+  let release;
+  const active = runtime.exclusive(7, () => new Promise(resolve => { release = resolve; }));
+  await new Promise(setImmediate);
+  const refresh = worker.context.refreshAdapterTabs('example.com');
+  await new Promise(setImmediate);
+  const later = runtime.exclusive(8, async () => order.push('later-exploration'));
+  await new Promise(setImmediate); assert.deepEqual(order, []);
+  release(); await active; await refresh; await later;
+  assert.deepEqual(order, ['reload-7', 'reload-8', 'later-exploration']);
+});
+
+test('catalog refresh uses one tab snapshot and reload per document even when several adapters match', async () => {
+  const worker = loadServiceWorker(), runtime = createHostAdapterRuntime({});
+  const tabs = [{ id: 7, url: 'https://example.com/', status: 'complete' }], reloads = [], cleared = [];
+  let queries = 0;
+  worker.context.getHostAdapterRuntime = () => runtime;
+  worker.context.chrome.tabs.query = async () => { queries++; return [...tabs]; };
+  worker.context.chrome.tabs.get = async id => tabs.find(tab => tab.id === id);
+  worker.context.loadAdapterManifestAnywhere = async id => ({ id, match: ['example.com'] });
+  worker.context.sendTabMessage = async (id, msg) => { cleared.push([id, msg.siteKey]); return {}; };
+  worker.context.waitForTabLoad = async () => {};
+  worker.context.injectAdapters = async () => {};
+  worker.context.waitForDomainTools = async () => null;
+  worker.context.chrome.tabs.reload = async id => {
+    reloads.push(id);
+    tabs.push({ id: 8, url: 'https://example.com/new', status: 'complete' });
+  };
+  const result = await worker.context.refreshAdapterTabBatch(['example-first', 'example-second', 'example-first']);
+  assert.equal(queries, 1); assert.deepEqual(reloads, [7]); assert.equal(result.refreshedTabs, 1);
+  assert.deepEqual(cleared, [[7, 'example-first'], [7, 'example-second']]);
+});
+
+test('reconnect snapshots serialize and skip only the successfully refreshed identical catalog', async () => {
+  const worker = loadServiceWorker(), calls = [];
+  let catalog = { profile: 'public', revision: 1, managedNames: ['example'], adapters: [{ name: 'example', _hostSnapshot: { profile: 'public', digest: 'example-first' } }] };
+  worker.context.doRefreshRegistry = async () => ({ adapters: ['example'] });
+  worker.context.getHostAdapterClient = () => ({ catalog: async () => catalog });
+  worker.context.refreshAdapterTabBatch = async ids => { calls.push([...ids]); return { refreshedTabs: 1 }; };
+  const concurrent = await Promise.all([worker.context.refreshAdapterState({ sync: true }), worker.context.refreshAdapterState({ sync: true })]);
+  assert.deepEqual(concurrent.map(result => result.refreshedTabs), [1, 0]); assert.equal(calls.length, 1);
+  catalog = { ...catalog, adapters: [{ name: 'example', _hostSnapshot: { profile: 'public', digest: 'example-changed' } }] };
+  assert.equal((await worker.context.refreshAdapterState({ sync: true })).refreshedTabs, 1);
+  assert.equal((await worker.context.refreshAdapterState({ adapters: ['example'] })).refreshedTabs, 0);
+  catalog = { ...catalog, revision: 2 };
+  worker.context.refreshAdapterTabBatch = async () => { throw Error('example refresh failed'); };
+  await assert.rejects(worker.context.refreshAdapterState({ sync: true }), /failed/);
+  worker.context.refreshAdapterTabBatch = async () => ({ refreshedTabs: 1 });
+  assert.equal((await worker.context.refreshAdapterState({ sync: true })).refreshedTabs, 1);
+  catalog = null;
+  assert.equal((await worker.context.refreshAdapterState({ sync: true })).refreshedTabs, 1);
+});
+
+test('managed refresh preserves documents, skips current snapshots and reinjects changed packages', async () => {
+  const tabs = [7, 8].map(id => ({ id, url: 'https://example.com/', status: 'complete' }));
+  const worker = loadServiceWorker({ tabs }), runtime = createHostAdapterRuntime({ bundle: async () => ({}), prepare: async () => {}, clear: async () => {}, inject: async () => {} });
+  const manifest = { name: 'example', match: ['example.com'], _hostSnapshot: { profile: 'public', digest: 'example-new' } }, reloads = [];
+  await runtime.execute(7, manifest, tabs[0].url);
+  await runtime.execute(8, { ...manifest, _hostSnapshot: { ...manifest._hostSnapshot, digest: 'example-old' } }, tabs[1].url);
+  worker.context.getHostAdapterRuntime = () => runtime;
+  worker.context.chrome.tabs.get = async id => tabs.find(tab => tab.id === id);
+  worker.context.chrome.tabs.reload = async id => { reloads.push(id); };
+  worker.context.loadAdapterManifestAnywhere = async () => manifest;
+  worker.context.sendTabMessage = async () => ({});
+  worker.context.waitForTabLoad = async () => {};
+  const injections = [];
+  worker.context.injectAdapters = async id => { injections.push(id); };
+  worker.context.waitForDomainTools = async () => null;
+  assert.equal((await worker.context.refreshAdapterTabs('example')).refreshedTabs, 1);
+  assert.deepEqual(reloads, []);
+  assert.deepEqual(injections, [7, 8]);
+});
+
+test('same catalog fingerprint does not suppress a distinct package notification', async () => {
+  const worker = loadServiceWorker(), calls = [];
+  const catalog = { profile: 'public', revision: 1, managedNames: ['first', 'second'], adapters: [] };
+  worker.context.doRefreshRegistry = async () => ({ adapters: ['first', 'second'] });
+  worker.context.getHostAdapterClient = () => ({ catalog: async () => catalog });
+  worker.context.refreshAdapterTabBatch = async ids => { calls.push([...ids]); return { refreshedTabs: 1 }; };
+  assert.equal((await worker.context.refreshAdapterState({ adapters: ['first'] })).refreshedTabs, 1);
+  assert.equal((await worker.context.refreshAdapterState({ adapters: ['second'] })).refreshedTabs, 1);
+  assert.equal((await worker.context.refreshAdapterState({ sync: true })).refreshedTabs, 0);
+  assert.deepEqual(calls, [['first'], ['second']]);
+});
+
+test('refresh never clears or reloads a tab that navigated after the catalog snapshot', async () => {
+  const worker = loadServiceWorker({ tabs: [{ id: 7, url: 'https://example.com/', status: 'complete' }] });
+  worker.context.loadAdapterManifestAnywhere = async () => null;
+  worker.context.chrome.tabs.get = async () => ({ id: 7, url: 'https://example.org/', status: 'complete' });
+  const effects = [];
+  worker.context.chrome.tabs.reload = async () => effects.push('reload');
+  worker.context.sendTabMessage = async () => effects.push('clear');
+  worker.context.injectAdapters = async () => {};
+  worker.context.waitForDomainTools = async () => null;
+  assert.equal((await worker.context.refreshAdapterTabs('example.com')).refreshedTabs, 0);
+  assert.deepEqual(effects, []);
+});
+
 test("managed foreground commands reuse an existing subdomain tab via suffix match", async () => {
   const manifest = { name: 'fixture', match: ['example.com', 'www.example.com'],
     _hostSnapshot: { name: 'fixture', profile: 'public', digest: 'fixture-digest' },

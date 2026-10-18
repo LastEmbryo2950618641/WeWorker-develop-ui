@@ -20,6 +20,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, w
 import { homedir } from "os";
 import { basename, dirname, join, resolve, sep } from "path";
 import { zipSync } from "fflate";
+import { formatCallOutput, resolveOutputFormat } from "./output-format.js";
 import { readAdapt } from "./adapterhub-package.js";
 import { readAdapterPackage } from "./adapterhub-package-v2.js";
 import { resolveAdaptersDir, resolveUserAdaptersDir, resolveAdapterPaths } from "./paths.js";
@@ -345,19 +346,19 @@ function printScenarios(adapter, indent = "") {
 
 // ─── 命令实现 ─────────────────────────────────────────────────────────────────
 
-async function cmdList(args) {
+async function cmdList(args, emit = value => console.log(JSON.stringify(value, null, 2))) {
   const p = parseArgs(args, {
     flags: ["json", "installed"],
     values: { q: {}, origin: { choices: ["official", "user"] }, runtime: { choices: ["extension", "wewright"] }, sort: { choices: ["favorites", "downloads", "recent", "name"] } },
     positionalUsage: "（可省略）", maxPositional: 1,
   });
-  if (p.flags.has("installed")) return cmdInstalled(args.filter((a) => a !== "--installed"));
+  if (p.flags.has("installed")) return cmdInstalled(args.filter((a) => a !== "--installed"), emit);
   if (p.positionals.length) {
     const t = p.positionals[0];
     if (t === "commands") throw new UsageError("命令维度已下线：Adapter（站点）是唯一分发单位。使用 webcli adapterhub list 查看全部 adapter。");
     if (t === "sites") {
       const data = await listSites({ q: p.values.get("q") || "" });
-      if (p.flags.has("json")) return console.log(JSON.stringify(data, null, 2));
+      if (p.flags.has("json")) return emit(data);
       const items = data.items || [];
       console.log(`v1 站点存量（冻结）：${data.total ?? items.length} 项`);
       for (const s of items) console.log(`  ${s.domain || s.id || ""}`);
@@ -369,7 +370,7 @@ async function cmdList(args) {
   const sort = p.values.get("sort") || "";
   const runtime = p.values.get("runtime") || "";
   const { items, total } = await listAllAdapters(origin || runtime || sort ? { origin, runtime, sort } : {});
-  if (p.flags.has("json")) return console.log(JSON.stringify({ total, items }, null, 2));
+  if (p.flags.has("json")) return emit({ total, items });
   if (!items.length) { console.log("AdapterHub 目录为空。"); return; }
   console.log(`AdapterHub Adapter（共 ${total} 个）：\n`);
   for (const item of items) {
@@ -379,12 +380,12 @@ async function cmdList(args) {
   }
 }
 
-async function cmdFind(args) {
+async function cmdFind(args, emit = value => console.log(JSON.stringify(value, null, 2))) {
   const p = parseArgs(args, { flags: ["json"], positionalUsage: "关键词", maxPositional: 1, minPositional: 1 });
   const keyword = p.positionals[0];
   rejectCommandTarget(keyword);
   const { items, total } = await listAllAdapters({ q: keyword });
-  if (p.flags.has("json")) return console.log(JSON.stringify({ total, items }, null, 2));
+  if (p.flags.has("json")) return emit({ total, items });
   if (!items.length) { console.log(`没有找到匹配「${keyword}」的 Adapter。`); return; }
   console.log(`「${keyword}」匹配 ${total} 个 Adapter：\n`);
   for (const item of items) {
@@ -392,7 +393,7 @@ async function cmdFind(args) {
   }
 }
 
-async function cmdInfo(args) {
+async function cmdInfo(args, emit = value => console.log(JSON.stringify(value, null, 2))) {
   const p = parseArgs(args, { flags: ["json"], positionalUsage: "adapter 名称", maxPositional: 1, minPositional: 1 });
   const target = p.positionals[0];
   rejectCommandTarget(target);
@@ -403,11 +404,11 @@ async function cmdInfo(args) {
   } catch (err) {
     if (err.status !== 404) throw err;
     const site = await getSite(name); // v1 冻结回退
-    if (p.flags.has("json")) return console.log(JSON.stringify(site, null, 2));
+    if (p.flags.has("json")) return emit(site);
     console.log(`Site(v1): ${site.domain || name}`);
     return;
   }
-  if (p.flags.has("json")) return console.log(JSON.stringify(adapter, null, 2));
+  if (p.flags.has("json")) return emit(adapter);
   console.log(`Adapter: ${adapter.display || adapter.name}${adapter.origin === "user" ? "（用户上传）" : "（官方内置）"}`);
   console.log(`  名称/域名: ${adapter.name}`);
   console.log(`  版本: v${adapter.version}`);
@@ -422,7 +423,7 @@ async function cmdInfo(args) {
   console.log(`\n安装: webcli adapterhub install ${adapter.name}`);
 }
 
-async function cmdVersions(args) {
+async function cmdVersions(args, emit = value => console.log(JSON.stringify(value, null, 2))) {
   const p = parseArgs(args, { flags: ["json"], positionalUsage: "adapter 名称", maxPositional: 1, minPositional: 1 });
   const target = p.positionals[0];
   rejectCommandTarget(target);
@@ -438,7 +439,7 @@ async function cmdVersions(args) {
     }
     throw err;
   }
-  if (p.flags.has("json")) return console.log(JSON.stringify(data, null,  2));
+  if (p.flags.has("json")) return emit(data);
   const items = data.items || [];
   console.log(`Adapter ${name} 版本历史（${items.length} 个）：\n`);
   for (const v of items) {
@@ -446,13 +447,13 @@ async function cmdVersions(args) {
   }
 }
 
-async function cmdCommands(args) {
+async function cmdCommands(args, emit = value => console.log(JSON.stringify(value, null, 2))) {
   const p = parseArgs(args, { flags: ["json"], positionalUsage: "adapter 名称", maxPositional: 1, minPositional: 1 });
   const target = p.positionals[0];
   rejectCommandTarget(target);
   const { name } = parseTarget(target);
   const data = await getAdapterCommands(name);
-  if (p.flags.has("json")) return console.log(JSON.stringify(data, null, 2));
+  if (p.flags.has("json")) return emit(data);
   const items = data.items || [];
   console.log(`Adapter ${name} 命令清单（${items.length} 个）：\n`);
   for (const c of items) {
@@ -470,7 +471,7 @@ async function cmdCommands(args) {
   console.log(`\n安装: webcli adapterhub install ${name}`);
 }
 
-async function cmdDownload(args) {
+async function cmdDownload(args, emit = value => console.log(JSON.stringify(value, null, 2))) {
   const p = parseArgs(args, {
     flags: ["json"],
     values: { output: {}, "o": { alias: "output" }, version: {} },
@@ -501,11 +502,11 @@ async function cmdDownload(args) {
   fallback = downloaded.manifest.name || downloaded.manifest.domain ? `${sanitizeFileName(downloaded.manifest.name || downloaded.manifest.domain)}.adapt` : fallback;
   const dest = outFile || fallback;
   writeFileSync(dest, buffer);
-  if (p.flags.has("json")) return console.log(JSON.stringify({ path: resolve(dest), size: buffer.length, name: downloaded.manifest.name || downloaded.manifest.domain || name, ...(downloaded.manifest.version ? { version: downloaded.manifest.version } : {}) }, null, 2));
+  if (p.flags.has("json")) return emit({ path: resolve(dest), size: buffer.length, name: downloaded.manifest.name || downloaded.manifest.domain || name, ...(downloaded.manifest.version ? { version: downloaded.manifest.version } : {}) });
   console.log(`✓ 已下载: ${dest}（${Math.round(buffer.length / 1024)} KB${versionArg ? `，指定版本 v${versionArg}` : ""}）`);
 }
 
-async function cmdValidate(args) {
+async function cmdValidate(args, emit = value => console.log(JSON.stringify(value, null, 2))) {
   const p = parseArgs(args, { flags: ["json"], positionalUsage: "包文件 .adapt", maxPositional: 1, minPositional: 1 });
   const file = p.positionals[0];
   const abs = resolve(file);
@@ -513,19 +514,19 @@ async function cmdValidate(args) {
   const bytes = readFileSync(abs);
   try {
     const pkg = readAdapterPackage(bytes);
-    if (p.flags.has("json")) return console.log(JSON.stringify({ valid: true, schemaVersion: 2, name: pkg.manifest.name, version: pkg.manifest.version, files: pkg.files.size, sha256: pkg.sha256, commands: (pkg.manifest.commands || []).map((c) => c.id) }, null, 2));
+    if (p.flags.has("json")) return emit({ valid: true, schemaVersion: 2, name: pkg.manifest.name, version: pkg.manifest.version, files: pkg.files.size, sha256: pkg.sha256, commands: (pkg.manifest.commands || []).map((c) => c.id) });
     console.log(`✓ 包校验通过: ${pkg.manifest.name} v${pkg.manifest.version}（${pkg.files.size} 个文件, sha256:${pkg.sha256.slice(7, 23)}…）`);
     console.log(`  命令: ${(pkg.manifest.commands || []).map((c) => c.id).join(", ")}`);
   } catch (v2Error) {
     try {
       const pkg = readAdapt(bytes);
-      if (p.flags.has("json")) return console.log(JSON.stringify({ valid: true, schemaVersion: 1, scope: pkg.manifest.scope, path: abs, sha256: pkg.sha256 }, null, 2));
+      if (p.flags.has("json")) return emit({ valid: true, schemaVersion: 1, scope: pkg.manifest.scope, path: abs, sha256: pkg.sha256 });
       console.log(`Valid v1 ${pkg.manifest.scope} package (frozen): ${basename(abs)} (${pkg.sha256})`);
     } catch { throw v2Error; }
   }
 }
 
-async function cmdInstall(args) {
+async function cmdInstall(args, emit = value => console.log(JSON.stringify(value, null, 2))) {
   const p = parseArgs(args, {
     flags: ["force", "reload", "json", "allow-permission-change", "change-source"],
     values: { version: {} },
@@ -553,12 +554,12 @@ async function cmdInstall(args) {
     if (local?.version && !force && !decisions.allowSourceChange) {
       const cmp = compareVersions(pre.manifest.version, local.version);
       if (cmp === 0) {
-        if (json) { console.log(JSON.stringify({ name: pre.manifest.name, version: local.version, action: "already-latest" }, null, 2)); return; }
+        if (json) { emit({ name: pre.manifest.name, version: local.version, action: "already-latest" }); return; }
         console.log(`✓ ${pre.manifest.name} 已是同版本（v${local.version}）。用 --force 强制重装。`);
         return;
       }
       if (cmp < 0) {
-        if (json) { process.exitCode = 1; console.log(JSON.stringify({ name: pre.manifest.name, localVersion: local.version, packageVersion: pre.manifest.version, action: "downgrade-blocked" }, null, 2)); return; }
+        if (json) { process.exitCode = 1; emit({ name: pre.manifest.name, localVersion: local.version, packageVersion: pre.manifest.version, action: "downgrade-blocked" }); return; }
         console.error(`! 包版本 v${pre.manifest.version} 低于本地 v${local.version}（降级）。用 --force 确认降级安装。`);
         process.exitCode = 1;
         return;
@@ -567,7 +568,7 @@ async function cmdInstall(args) {
     const { pkg } = installAdapterPackage(bytes, {}, { ...decisions, origin: { kind: "local" } });
     const localResult = { name: pkg.manifest.name, version: pkg.manifest.version, action: local ? "upgraded" : "installed", source: "local", path: join(installDir(), pkg.manifest.name) };
     if (reload) Object.assign(localResult, await reloadExtensionBestEffort({ json }));
-    if (json) { console.log(JSON.stringify(localResult, null, 2)); return; }
+    if (json) { emit(localResult); return; }
     console.log(`✓ 已从本地包安装: ${pkg.manifest.name} v${pkg.manifest.version} → ${join(installDir(), pkg.manifest.name)}`);
     if (!reload) console.log("→ 请在 chrome://extensions 重载扩展生效");
     return;
@@ -588,7 +589,7 @@ async function cmdInstall(args) {
     await installSite(name);
     const siteResult = { name, action: "installed", source: "v1-site" };
     if (reload) Object.assign(siteResult, await reloadExtensionBestEffort({ json }));
-    if (json) { console.log(JSON.stringify(siteResult, null, 2)); return; }
+    if (json) { emit(siteResult); return; }
     return;
   }
 
@@ -614,12 +615,12 @@ async function cmdInstall(args) {
   if (local?.version) {
     const cmp = compareVersions(targetVersion, local.version);
     if (cmp === 0 && !force && !decisions.allowSourceChange) {
-      if (json) return console.log(JSON.stringify({ ...result, version: local.version, action: "already-latest" }, null, 2));
+      if (json) return emit({ ...result, version: local.version, action: "already-latest" });
       console.log(`✓ ${remote.name} 已是最新（v${local.version}）。用 --force 强制重装。`);
       return;
     }
     if (cmp < 0 && !force) {
-      if (json) { process.exitCode = 1; console.log(JSON.stringify({ ...result, localVersion: local.version, remoteVersion: targetVersion, action: "downgrade-blocked" }, null, 2)); return; }
+      if (json) { process.exitCode = 1; emit({ ...result, localVersion: local.version, remoteVersion: targetVersion, action: "downgrade-blocked" }); return; }
       console.error(`! 线上版本 v${targetVersion} 低于本地 v${local.version}（降级）。用 --force 确认降级安装。`);
       process.exitCode = 1;
       return;
@@ -645,7 +646,7 @@ async function cmdInstall(args) {
 
   if (json) {
     if (reload) Object.assign(result, await reloadExtensionBestEffort({ json }));
-    console.log(JSON.stringify(result, null, 2));
+    emit(result);
   } else {
     console.log(`✓ Adapter 已安装: ${pkg.manifest.name} v${pkg.manifest.version} → ${result.installedAt}`);
     printScenarios(remote);
@@ -657,7 +658,7 @@ async function cmdInstall(args) {
   else if (!reload && !json) console.log("→ 请在 chrome://extensions 重载扩展生效");
 }
 
-async function cmdUpdate(args) {
+async function cmdUpdate(args, emit = value => console.log(JSON.stringify(value, null, 2))) {
   const p = parseArgs(args, { flags: ["all", "force", "json", "dry-run", "allow-permission-change"], positionalUsage: "adapter 名称或 --all", maxPositional: 1 });
   const force = p.flags.has("force");
   const dryRun = p.flags.has("dry-run");
@@ -707,20 +708,20 @@ async function cmdUpdate(args) {
     }
   }
   const summary = { updated, upToDate, newer, delisted, skipped, dryRun };
-  if (json) return console.log(JSON.stringify({ summary, plan }, null, 2));
+  if (json) return emit({ summary, plan });
   console.log(`\n完成：${updated} 更新 · ${upToDate} 已最新${newer ? ` · ${newer} 本地更新` : ""}${delisted ? ` · ${delisted} 已下架` : ""}${skipped ? ` · ${skipped} 占位跳过` : ""}${dryRun ? "（--dry-run，未实际执行）" : ""}`);
 }
 
-function cmdInstalled(args) {
+function cmdInstalled(args, emit = value => console.log(JSON.stringify(value, null, 2))) {
   const p = parseArgs(args, { flags: ["json"], maxPositional: 0 });
   const ids = localAdapterIds();
   const items = ids.map((id) => ({ name: id, version: readLocalManifest(id)?.version || "?" }));
-  if (p.flags.has("json")) return console.log(JSON.stringify({ items, total: items.length }, null, 2));
+  if (p.flags.has("json")) return emit({ items, total: items.length });
   console.log(`本地已安装 ${ids.length} 个 Adapter：\n`);
   for (const item of items) console.log(`  ${item.name.padEnd(30)} v${item.version}`);
 }
 
-async function cmdRemove(args) {
+async function cmdRemove(args, emit = value => console.log(JSON.stringify(value, null, 2))) {
   const p = parseArgs(args, { flags: ["reload", "json"], positionalUsage: "adapter 名称", maxPositional: 1, minPositional: 1 });
   const target = p.positionals[0];
   rejectCommandTarget(target);
@@ -729,7 +730,7 @@ async function cmdRemove(args) {
   if (id) {
     const removal = removeInstalledAdapter(id);
     if (p.flags.has("reload")) Object.assign(removal, await reloadExtensionBestEffort({ json }));
-    if (json) { console.log(JSON.stringify(removal, null, 2)); return; }
+    if (json) { emit(removal); return; }
     console.log(`✓ Adapter 已卸载: ${id}`);
     if (!p.flags.has("reload")) console.log("→ 请在 chrome://extensions 重载扩展生效");
     return;
@@ -744,7 +745,7 @@ async function cmdRemove(args) {
   saveState(current);
   const removal = { name: match.site.domain, action: "removed", source: "v1-site" };
   if (p.flags.has("reload")) Object.assign(removal, await reloadExtensionBestEffort({ json }));
-  if (json) { console.log(JSON.stringify(removal, null, 2)); return; }
+  if (json) { emit(removal); return; }
   console.log(`Removed ${match.site.domain}`);
   if (!p.flags.has("reload")) console.log("→ 请在 chrome://extensions 重载扩展生效");
 }
@@ -782,7 +783,7 @@ function packDirectory(dir) {
   return Buffer.from(zipSync(files, { level: 9 }));
 }
 
-function cmdPack(args) {
+function cmdPack(args, emit = value => console.log(JSON.stringify(value, null, 2))) {
   const p = parseArgs(args, {
     flags: ["json"],
     values: { output: {}, "o": { alias: "output" } },
@@ -796,35 +797,35 @@ function cmdPack(args) {
   const dest = p.values.get("output") || `${pkg.manifest.name}.adapt`;
   writeFileSync(dest, bytes);
   if (p.flags.has("json")) {
-    return console.log(JSON.stringify({ path: resolve(dest), name: pkg.manifest.name, version: pkg.manifest.version, files: pkg.files.size, size: bytes.length, sha256: pkg.sha256 }, null, 2));
+    return emit({ path: resolve(dest), name: pkg.manifest.name, version: pkg.manifest.version, files: pkg.files.size, size: bytes.length, sha256: pkg.sha256 });
   }
   console.log(`✓ 已打包: ${dest}（${pkg.manifest.name} v${pkg.manifest.version}, ${pkg.files.size} 文件, ${Math.round(bytes.length / 1024)} KB, sha256:${pkg.sha256.slice(7, 23)}…）`);
 }
 
-async function cmdInit(args) {
+async function cmdInit(args, emit = value => console.log(JSON.stringify(value, null, 2))) {
   const p = parseArgs(args, { flags: ["json"], maxPositional: 0 });
   const token = await readHiddenToken();
   const file = await saveAdapterHubToken(token);
-  if (p.flags.has("json")) return console.log(JSON.stringify({ configured: true, source: "windows-dpapi" }, null, 2));
+  if (p.flags.has("json")) return emit({ configured: true, source: "windows-dpapi" });
   console.log("✓ AdapterHub PAT 已使用 Windows DPAPI 加密保存。后续 publish 无需重复设置。");
   console.log(`  凭据文件（仅密文）: ${file}`);
 }
 
-async function cmdAuthStatus(args) {
+async function cmdAuthStatus(args, emit = value => console.log(JSON.stringify(value, null, 2))) {
   const p = parseArgs(args, { flags: ["json"], maxPositional: 0 });
   const status = await adapterHubCredentialStatus();
-  if (p.flags.has("json")) return console.log(JSON.stringify(status, null, 2));
+  if (p.flags.has("json")) return emit(status);
   console.log(status.configured ? `AdapterHub PAT 已配置（${status.source}）` : "AdapterHub PAT 未配置。运行 webcli adapterhub init。")
 }
 
-async function cmdLogout(args) {
+async function cmdLogout(args, emit = value => console.log(JSON.stringify(value, null, 2))) {
   const p = parseArgs(args, { flags: ["json"], maxPositional: 0 });
   const removed = await removeAdapterHubToken();
-  if (p.flags.has("json")) return console.log(JSON.stringify({ removed }, null, 2));
+  if (p.flags.has("json")) return emit({ removed });
   console.log(removed ? "✓ AdapterHub 已保存 PAT 已删除。" : "AdapterHub 没有已保存的 PAT。")
 }
 
-async function cmdPublish(args) {
+async function cmdPublish(args, emit = value => console.log(JSON.stringify(value, null, 2))) {
   const p = parseArgs(args, { flags: ["yes", "y", "json"], positionalUsage: "目录或 .adapt", maxPositional: 1, minPositional: 1 });
   const yes = p.flags.has("yes") || p.flags.has("y");
   const json = p.flags.has("json");
@@ -845,7 +846,7 @@ async function cmdPublish(args) {
     try {
       const answer = await rl.question(`确认发布 ${pkg.manifest.name} v${pkg.manifest.version}? [y/N] `);
       if (!/^y(es)?$/i.test(answer.trim())) {
-        if (json) console.log(JSON.stringify({ name: pkg.manifest.name, version: pkg.manifest.version, action: "cancelled" }, null, 2));
+        if (json) emit({ name: pkg.manifest.name, version: pkg.manifest.version, action: "cancelled" });
         else console.log("已取消。");
         return;
       }
@@ -855,7 +856,7 @@ async function cmdPublish(args) {
   }
 
   const result = await publishAdapter(buffer);
-  if (json) return console.log(JSON.stringify(result, null, 2));
+  if (json) return emit(result);
   if (result.duplicate) {
     console.log(`✓ 内容未变化（v${result.version} 已存在且哈希一致），无需重复发布。`);
   } else {
@@ -909,35 +910,42 @@ const COMMANDS = {
   commands: cmdCommands, download: cmdDownload, validate: cmdValidate, pack: cmdPack,
   install: cmdInstall, update: cmdUpdate, installed: cmdInstalled, remove: cmdRemove,
   uninstall: cmdRemove, init: cmdInit, login: cmdInit, status: cmdAuthStatus, logout: cmdLogout, publish: cmdPublish,
-  endpoint: (args) => {
+  endpoint: (args, emit) => {
     const p = parseArgs(args, { flags: ["json"], maxPositional: 0 });
     const ep = resolveEndpoint();
-    if (p.flags.has("json")) console.log(JSON.stringify({ endpoint: ep }, null, 2));
+    if (p.flags.has("json")) emit({ endpoint: ep });
     else console.log(ep);
   },
 };
 
-export async function runAdapterHubCli(args) {
+export async function runAdapterHubCli(args, { outputFormat } = {}) {
   const command = args[0];
   const rest = args.slice(1);
+  let explicitFormat;
+  try { if (outputFormat !== undefined) explicitFormat = resolveOutputFormat(outputFormat); }
+  catch (error) { console.error(error.message); process.exitCode = 2; return; }
+  const emit = value => console.log(formatCallOutput(value, explicitFormat ?? 'json'));
   try {
-    if (command === undefined || command === "--help" || command === "-h" || command === "help") return help();
-    const handler = COMMANDS[command];
-    if (!handler) {
-      console.error(`未知命令: ${command}`);
-      console.error("运行 webcli adapterhub --help 查看全部命令。");
-      process.exitCode = 2;
-      return;
+    if (command === undefined || ["--help", "-h", "help"].includes(command)) {
+      if (explicitFormat !== undefined || rest.includes('--json')) return emit({
+        usage: 'webcli adapterhub <command> [options]', endpoint: resolveEndpoint(),
+        commands: Object.keys(COMMANDS), formats: ['json', 'markdown', 'table', 'plain', 'csv', 'yaml'],
+        confirmation: 'Output format does not grant installation permissions or confirm publication.',
+      });
+      return help();
     }
-    return await handler(rest);
+    const handler = Object.hasOwn(COMMANDS, command) ? COMMANDS[command] : null;
+    if (!handler) throw new UsageError(`未知命令: ${command}`);
+    // Reuse each command's existing JSON data path. Formatting never changes
+    // its confirmation, source-change or permission decisions.
+    return await handler(explicitFormat === undefined ? rest : ['--json', ...rest], emit);
   } catch (err) {
-    if (err instanceof UsageError) {
+    process.exitCode = err instanceof UsageError ? 2 : 1;
+    if (explicitFormat !== undefined) {
+      emit({ error: err.message, code: err.code || (err instanceof UsageError ? 'USAGE_ERROR' : 'ADAPTERHUB_ERROR') });
+    } else if (err instanceof UsageError) {
       console.error(`参数错误: ${err.message}`);
       console.error("运行 webcli adapterhub --help 查看用法。");
-      process.exitCode = 2;
-    } else {
-      console.error(`Error: ${err.message}`);
-      process.exitCode = 1;
-    }
+    } else console.error(`Error: ${err.message}`);
   }
 }

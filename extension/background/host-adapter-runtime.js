@@ -11,6 +11,9 @@ export function createHostAdapterRuntime({ bundle, prepare, clear, inject, navig
   }
   return {
     exclusive,
+    hasSnapshot(tabId, manifest, url) {
+      return stamps.get(tabId) === JSON.stringify([manifest.name, manifest._hostSnapshot, url]);
+    },
     invalidate(tabId) {
       stamps.delete(tabId);
       documents.set(tabId, (documents.get(tabId) || 0) + 1);

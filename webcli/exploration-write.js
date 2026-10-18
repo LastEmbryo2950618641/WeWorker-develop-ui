@@ -101,11 +101,12 @@ export function importRepairWriteFixtures(run, knowledge) {
   for (const tool of plannedWrites(run)) {
     const prior = knowledge?.commands?.[tool];
     if (!prior?.writeVerification?.fixture) { skippedWriteTools.push({ tool, code: 'WRITE_FIXTURE_MISSING' }); continue; }
-    if (prior.packageDigest !== run.repairScope.digest || prior.writeVerification.kind !== 'http_single_write_v1') {
+    const command = writeCommand(run, tool);
+    const kind = command.uiWrite ? 'ui_single_submit_v1' : command.pageWrite ? 'extension_single_write_v1' : 'http_single_write_v1';
+    if (prior.packageDigest !== run.repairScope.digest || prior.writeVerification.kind !== kind) {
       skippedWriteTools.push({ tool, code: 'WRITE_KNOWLEDGE_BASE_MISMATCH' }); continue;
     }
     try {
-      const command = writeCommand(run, tool);
       const fixture = normalizeFixture(run, command, prior.writeVerification.fixture);
       if (JSON.stringify({ ...fixtures.commands, [command.id]: fixture }).length > 499000) throw fail('INVALID_WRITE_CASE', 'Imported write fixtures exceed the task limit.');
       fixtures.commands[command.id] = fixture;
@@ -241,6 +242,7 @@ export function verifyWrite(service, run, args) {
         if (!compareHttpWriteRequest(normalizeHttpWriteRequest({ url: request.url, method: request.method, json: request.body }), (review.fixture.expectedSubmission || review.fixture.expectedRequest))) throw fail('WRITE_REQUEST_MISMATCH', 'Page write differs from the reviewed request.');
         await service.checkTab(run);
         if (controller.signal.aborted || writeProofDigest(run) !== review.digest) throw fail('STALE_DRAFT', 'Page write changed or was cancelled before dispatch.');
+        service.assertPlannedDraft(run);
         execution.status = 'dispatching'; execution.dispatched = true;
         service.save(run); // Durable consumption precedes sending anything to the Extension.
         calls = 1;

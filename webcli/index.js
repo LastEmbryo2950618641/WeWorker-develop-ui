@@ -104,7 +104,9 @@ AdapterHub:
   adapterhub endpoint [--json]                        打印当前 AdapterHub 端点
 
 Tools:
-  call <tool_name> [--key=value ...] [-v, --verbose] [--output-format=markdown|json]
+  skills list | skills read <skill[/path]>  列出或读取随包 Skill（不安装、不执行）
+  completion bash|zsh|fish                 输出动态 shell 补全脚本（不修改 shell 配置）
+  call <tool_name> [--key=value ...] [-v, --verbose] [--output-format=json|markdown|table|plain|csv|yaml]
                                   调用 Adapter 工具（Extension 自动启动 Bridge；Toolkit 直接运行）
                                   参数直接以 --key=value 形式传递：
                                     webcli call open_browser --url=http://jd.com
@@ -117,7 +119,7 @@ Tools:
                                   兼容旧格式：--args '{"url":"http://jd.com"}'
                                   输出格式：终端默认 markdown（按站点列名映射渲染），管道/脚本默认 json；
                                   需要结构化数据时显式用 --output-format=json
-  webcli <site> <command...> [--key=value ...] [-v, --verbose] [--output-format=markdown|json]
+  webcli <site> <command...> [--key=value ...] [-v, --verbose] [--output-format=json|markdown|table|plain|csv|yaml]
                                   按 WeCLI 风格调用 site.command 工具
   webcli <site> [-help] [-f json]
                                   查看某站点的全部工具（-f json 结构化输出）
@@ -145,7 +147,7 @@ Options:
   --version        显示版本（兼容：单独执行 webcli -v）
   --profile <id|alias>  选择浏览器（优先于 WEBCLI_PROFILE 和保存的默认值）
   -v, --verbose    调用工具时输出 trace 日志
-  --output-format=markdown|json  调用工具输出格式（终端默认 markdown，管道/脚本默认 json）
+  --output-format=json|markdown|table|plain|csv|yaml  调用工具输出格式（终端默认 markdown，管道/脚本默认 json）
   -h, --help       显示帮助
 `.trim();
 
@@ -154,7 +156,7 @@ Options:
  * - 文本模式：HELP 顶部插入 Site adapters 列表
  * - JSON 模式（-f json）：输出结构化数据（agent 可解析）
  */
-async function printGlobalHelp({ json = false } = {}) {
+async function printGlobalHelp({ json = false, outputFormat } = {}) {
   let adapters = [];
   try {
     const { loadAdapterViews } = await import("./adapter-cli.js");
@@ -166,13 +168,15 @@ async function printGlobalHelp({ json = false } = {}) {
     .map((a) => ({ id: a.id, name: a.name || a.id }))
     .sort((x, y) => x.id.localeCompare(y.id));
 
-  if (json) {
+  if (json || outputFormat !== undefined) {
     const data = {
       name: "webcli",
       usage: "webcli <command> [options]",
       description: "WeWorker 网站工具 CLI：调用浏览器站点自动化工具，管理适配器与统计",
       commands: [
         { name: "call <tool>", usage: "webcli call <tool_name> [--key=value ...]", description: "调用站点工具" },
+        { name: "completion", usage: "webcli completion bash|zsh|fish", description: "输出 shell 补全脚本" },
+        { name: "skills", usage: "webcli skills list | read <skill[/path]>", description: "读取随包 Skill 和参考文件" },
         { name: "profile", usage: "webcli call profile.help", description: "浏览器连接、别名和默认选择" },
         { name: "exploration", usage: "webcli call exploration.help", description: "独立 API 探索、Agent 草稿编辑、验证与本地安装" },
         { name: "adapter", usage: "webcli adapter <command>", description: "管理网站适配器" },
@@ -192,7 +196,7 @@ async function printGlobalHelp({ json = false } = {}) {
         "webcli adapter <id> -help -f json",
       ],
     };
-    console.log(JSON.stringify(data, null, 2));
+    console.log(formatCallOutput(data, outputFormat ?? 'json'));
     return;
   }
 
@@ -409,33 +413,38 @@ async function cmdCall(toolName, argsStr, options = {}) {
   catch (error) { console.error(`Error: ${error.message}`); process.exit(1); }
   // 合并 --key=value 标志参数（优先级低于 --args 中的同名字段）
   args = { ...flagArgs, ...args };
+  // Management defaults remain machine-readable; explicit formats use the same
+  // renderer as Adapter calls, without changing the transport envelope.
+  const printManagement = value => console.log(formatCallOutput(value, options.outputFormat === undefined ? 'json' : outputFormat));
 
   if (toolName.startsWith('profile.')) {
     const command = toolName.slice('profile.'.length);
     const { profileHelp } = await import('./browser-profiles.js');
-    if (command === 'help') { console.log(JSON.stringify(profileHelp(), null, 2)); return; }
+    if (command === 'help') { printManagement(profileHelp()); return; }
     await ensureBridgeRunning();
     const { callLocalCommand } = await import('./exploration-client.js');
     const result = await callLocalCommand('profile', command, args);
-    console.log(JSON.stringify(result, null, 2)); if (!result.ok) process.exitCode = 1; return;
+    printManagement(result); if (!result.ok) process.exitCode = 1; return;
   }
   if (toolName.startsWith('browser.')) {
     const command = toolName.slice('browser.'.length);
     const { browserCommands, browserHelp } = await import('./browser-commands.js');
-    if (command === 'help') { console.log(JSON.stringify(browserHelp(), null, 2)); return; }
+    if (command === 'help') { printManagement(browserHelp()); return; }
     if (!Object.hasOwn(browserCommands, command)) {
-      console.log(JSON.stringify({ schemaVersion: 1, ok: false, error: { code: 'UNKNOWN_COMMAND', message: 'Use webcli call browser.help.' } }));
+      printManagement({ schemaVersion: 1, ok: false, error: { code: 'UNKNOWN_COMMAND', message: 'Use webcli call browser.help.' } });
       process.exitCode = 1; return;
     }
-    await ensureBridgeRunning();
     if (['console', 'network'].includes(command) && (args.follow === true || args.follow === 'true')) {
+      if (options.outputFormat !== undefined && outputFormat !== 'json') throw new Error('Browser follow uses JSON Lines; omit --output-format or use json.');
+      await ensureBridgeRunning();
       const { runBrowserFollow } = await import('./browser-follow.js');
       process.exitCode = await runBrowserFollow(command, args, { profile: options.profile }); return;
     }
+    await ensureBridgeRunning();
     if (['console', 'network'].includes(command) && (args.follow === false || args.follow === 'false')) delete args.follow;
     const { callLocalCommand } = await import('./exploration-client.js');
     const result = await callLocalCommand('browser', command, args, { timeoutMs: 50000, profile: options.profile });
-    console.log(JSON.stringify(result, null, 2));
+    printManagement(result);
     if (!result.ok) process.exitCode = 1;
     return;
   }
@@ -445,18 +454,18 @@ async function cmdCall(toolName, argsStr, options = {}) {
     const command = toolName.slice('exploration.'.length);
     const { explorationCommands, explorationHelp } = await import('./exploration-commands.js');
     if (command === 'help') {
-      console.log(JSON.stringify(explorationHelp(), null, 2));
+      printManagement(explorationHelp());
       return;
     }
     if (!Object.hasOwn(explorationCommands, command)) {
-      console.log(JSON.stringify({ schemaVersion: 1, ok: false, error: { code: 'UNKNOWN_COMMAND', message: 'Use webcli call exploration.help.' } }));
+      printManagement({ schemaVersion: 1, ok: false, error: { code: 'UNKNOWN_COMMAND', message: 'Use webcli call exploration.help.' } });
       process.exitCode = 1;
       return;
     }
     await ensureBridgeRunning();
     const { callExploration } = await import('./exploration-client.js');
     const result = await callExploration(command, args, { profile: options.profile });
-    console.log(JSON.stringify(result, null, 2));
+    printManagement(result);
     if (!result.ok) process.exitCode = 1;
     return;
   }
@@ -675,7 +684,7 @@ function readRecentLogFile(filePath, maxBytes) {
 const BUILTIN_COMMANDS = new Set([
   "--version", "-v", "--help", "-h", "-help", "--service",
   "extension-path", "adapter", "service", "call", "trace", "install",
-  "list", "mcp", "mcp-logs",
+  "list", "skills", "completion", "mcp", "mcp-logs",
 ]);
 // 渐进式 help 不拦截的顶层命令（其 <sub> help 属于自身命令域）
 const BUILTIN_HELP_EXEMPT = new Set(["adapterhub", "stats"]);
@@ -785,7 +794,7 @@ function extractRuntimeFlags(args) {
       }
       continue;
     }
-    const formatMatch = arg.match(/^--output-format=(.+)$/);
+    const formatMatch = arg.match(/^--output-format=(.*)$/);
     if (formatMatch) {
       outputFormat = formatMatch[1];
       continue;
@@ -908,32 +917,40 @@ function resolveCliInvocation(args) {
   };
 }
 
-async function runProgressiveHelp(args) {
+async function runProgressiveHelp(args, outputFormat) {
   const { runAdapterHelp } = await import('./progressive-help.js');
-  console.log(await runAdapterHelp(args));
+  console.log(await runAdapterHelp(args, { outputFormat }));
 }
 
 async function main() {
+  if (['completion', '--get-completions'].includes(process.argv[2])) {
+    const { runCompletion } = await import('./completion.js');
+    process.stdout.write(await runCompletion(process.argv.slice(2))); return;
+  }
   const { args, verbose, outputFormat, profile } = extractRuntimeFlags(process.argv.slice(2));
   const cmd  = args[0];
   const sub  = args[1];
+  if (cmd === 'skills') {
+    const { runSkillsCli } = await import('./skills-cli.js');
+    runSkillsCli(args.slice(1), { outputFormat }); return;
+  }
   const invocation = resolveCliInvocation(args);
 
   if ((cmd === 'profile' && (sub === 'help' || args.some(arg => ['--help', '-h'].includes(arg))))
       || (cmd === 'call' && sub?.startsWith('profile.') && args.some(arg => ['--help', '-h'].includes(arg)))) {
     const { profileHelp } = await import('./browser-profiles.js');
-    console.log(JSON.stringify(profileHelp(), null, 2)); return;
+    console.log(formatCallOutput(profileHelp(), outputFormat ?? 'json')); return;
   }
   if ((cmd === 'browser' && (sub === 'help' || args.some(arg => ['--help', '-h'].includes(arg))))
       || (cmd === 'call' && sub?.startsWith('browser.') && args.some(arg => ['--help', '-h'].includes(arg)))) {
     const { browserHelp } = await import('./browser-commands.js');
-    console.log(JSON.stringify(browserHelp(), null, 2)); return;
+    console.log(formatCallOutput(browserHelp(), outputFormat ?? 'json')); return;
   }
 
   if ((cmd === 'exploration' && (sub === 'help' || args.some(arg => ['--help', '-h'].includes(arg))))
       || (cmd === 'call' && sub?.startsWith('exploration.') && args.some(arg => ['--help', '-h'].includes(arg)))) {
     const { explorationHelp } = await import('./exploration-commands.js');
-    console.log(JSON.stringify(explorationHelp(), null, 2));
+    console.log(formatCallOutput(explorationHelp(), outputFormat ?? 'json'));
     return;
   }
 
@@ -946,7 +963,7 @@ async function main() {
   // --help / -h / -help / no command
   if (!cmd || cmd === "--help" || cmd === "-h" || cmd === "-help") {
     const jsonMode = args.includes("-f") && args[args.indexOf("-f") + 1] === "json";
-    await printGlobalHelp({ json: jsonMode });
+    await printGlobalHelp({ json: jsonMode, outputFormat });
     return;
   }
 
@@ -982,21 +999,21 @@ async function main() {
   // adapter <...>
   if (cmd === "adapter") {
     const { runAdapterCli } = await import("./adapter-cli.js");
-    await runAdapterCli(args.slice(1));
+    await runAdapterCli(args.slice(1), { outputFormat });
     return;
   }
 
   // list —— adapter list 的简写（对齐 wecli 的 `wecli list` 心智）
   if (cmd === "list") {
     const { runAdapterCli } = await import("./adapter-cli.js");
-    await runAdapterCli(["list", ...args.slice(1)]);
+    await runAdapterCli(["list", ...args.slice(1)], { outputFormat });
     return;
   }
 
   // adapterhub <...>
   if (cmd === "adapterhub") {
     const { runAdapterHubCli } = await import("./adapterhub-cli.js");
-    await runAdapterHubCli(args.slice(1));
+    await runAdapterHubCli(args.slice(1), { outputFormat });
     return;
   }
 
@@ -1095,7 +1112,7 @@ async function main() {
     (sub === "help" && args.length === 2) ||
     (args[2] === "help" && args.length === 3);
   if (isHelpRequest && !BUILTIN_COMMANDS.has(cmd) && !BUILTIN_HELP_EXEMPT.has(cmd)) {
-    await runProgressiveHelp(args);
+    await runProgressiveHelp(args, outputFormat);
     return;
   }
 
@@ -1106,7 +1123,7 @@ async function main() {
   if (!BUILTIN_COMMANDS.has(cmd) && args.slice(1).some((a) => SITE_HELP_FLAGS.has(a))) {
     const jsonMode = args.includes("-f") && args[args.indexOf("-f") + 1] === "json";
     const { runAdapterCli } = await import("./adapter-cli.js");
-    await runAdapterCli([cmd, "-help", ...(jsonMode ? ["-f", "json"] : [])]);
+    await runAdapterCli([cmd, "-help", ...(jsonMode ? ["-f", "json"] : [])], { outputFormat });
     return;
   }
 

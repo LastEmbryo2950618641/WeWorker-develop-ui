@@ -2657,20 +2657,7 @@ async function handleNativeMessage(msg) {
 
   if (msg.type === 'adapter_state_changed') {
     try {
-      const registry = await doRefreshRegistry();
-      let refreshedTabs = 0;
-      const adapters = Array.isArray(msg.adapters)
-        ? msg.adapters.filter((name) => typeof name === "string" && SAFE_ADAPTER_ID_RE.test(name))
-        : [];
-      // An empty sync snapshot means the consumer reconnected and must refresh all
-      // managed packages; it does not claim knowledge of which names changed.
-      const adapterIds = adapters.length > 0 ? adapters : registry.adapters.filter((name) =>
-        typeof name === "string" && SAFE_ADAPTER_ID_RE.test(name)
-      );
-      for (const adapterId of adapterIds) {
-        const result = await refreshAdapterTabs(adapterId);
-        refreshedTabs += result.refreshedTabs;
-      }
+      const { registry, refreshedTabs } = await refreshAdapterState(msg);
       chrome.runtime.sendMessage({ ...msg, registry, refreshedTabs }, () => void chrome.runtime.lastError);
     } catch (error) {
       console.error("[WebMCP] Adapter state refresh failed:", error?.message || error);
@@ -8043,9 +8030,42 @@ function sendTabMessage(tabId, message, timeoutMs = 2000) {
 }
 
 async function refreshAdapterTabs(adapterId) {
+  return refreshAdapterTabBatch([adapterId]);
+}
+
+let adapterStateRefreshChain = Promise.resolve();
+let lastRefreshedCatalog = null;
+let refreshedCatalogAdapters = new Set();
+function refreshAdapterState(msg) {
+  const next = adapterStateRefreshChain.catch(() => {}).then(async () => {
+    const registry = await doRefreshRegistry();
+    const catalog = await getHostAdapterClient().catalog();
+    const fingerprint = catalog?.available !== false && Array.isArray(catalog?.adapters) && Array.isArray(catalog?.managedNames)
+      ? JSON.stringify({ profile: catalog.profile, revision: catalog.revision, names: [...catalog.managedNames].sort(),
+        packages: catalog.adapters.map(item => [item.name, item._hostSnapshot]).sort((a, b) => a[0].localeCompare(b[0])) }) : null;
+    // Reconnect snapshots and delayed duplicate change notifications may refer
+    // to an already refreshed catalog. Manual refresh uses the separate tab API.
+    const adapters = Array.isArray(msg.adapters) ? msg.adapters.filter(name => typeof name === 'string' && SAFE_ADAPTER_ID_RE.test(name)) : [];
+    const adapterIds = adapters.length ? adapters : registry.adapters.filter(name => typeof name === 'string' && SAFE_ADAPTER_ID_RE.test(name));
+    if (fingerprint && fingerprint === lastRefreshedCatalog && adapterIds.every(id => refreshedCatalogAdapters.has(id))) return { registry, refreshedTabs: 0 };
+    const result = await refreshAdapterTabBatch(adapterIds);
+    if (!fingerprint || fingerprint !== lastRefreshedCatalog) refreshedCatalogAdapters = new Set();
+    for (const id of adapterIds) refreshedCatalogAdapters.add(id);
+    lastRefreshedCatalog = fingerprint;
+    return { registry, refreshedTabs: result.refreshedTabs };
+  });
+  adapterStateRefreshChain = next;
+  return next;
+}
+
+async function refreshAdapterTabBatch(adapterIds) {
+  const ids = [...new Set(adapterIds)];
+  // One snapshot for the whole catalog notification. Re-querying for each
+  // package can reload newly opened pages, or reload one page repeatedly when
+  // several packages match the same host, after an earlier refresh released it.
   const tabs = await chrome.tabs.query({});
   const matchedTabs = [];
-  const adapterManifest = await loadAdapterManifestAnywhere(adapterId);
+  const manifests = await Promise.all(ids.map(id => loadAdapterManifestAnywhere(id)));
 
   await runDirectToolExclusive(async () => {
     directAdapterLoadPromises.clear();
@@ -8066,41 +8086,68 @@ async function refreshAdapterTabs(adapterId) {
       continue;
     }
 
-    const matchesManifest = adapterManifest
-      ? adapterMatchesHostname(adapterManifest, hostname)
-      : hostname === adapterId || hostname.endsWith(`.${adapterId}`);
-    if (matchesManifest) {
-      matchedTabs.push(tab);
-    }
+    const matchingIds = ids.filter((id, index) => manifests[index]
+      ? adapterMatchesHostname(manifests[index], hostname)
+      : hostname === id || hostname.endsWith(`.${id}`));
+    if (matchingIds.length) matchedTabs.push({ ...tab, matchingIds });
   }
 
   if (matchedTabs.length === 0) {
     return {
       refreshedTabs: 0,
-      toolCount: toolRegistry.get(adapterId)?.tools?.length || 0,
+      toolCount: ids.reduce((count, id) => count + (toolRegistry.get(id)?.tools?.length || 0), 0),
     };
   }
 
-  for (const tab of matchedTabs) {
-    await getHostAdapterRuntime().exclusive(tab.id, async () => {
+  // Reserve every affected tab before awaiting the first reload. Otherwise a
+  // long reconnect refresh lets a later tab start a new exploration, then
+  // reloads it between that task's independent before/write/after requests.
+  let previousRefresh = Promise.resolve();
+  let refreshedTabs = 0;
+  const refreshes = matchedTabs.map(tab => {
+    const preceding = previousRefresh;
+    const refresh = getHostAdapterRuntime().exclusive(tab.id, async () => {
+      await preceding; // Preserve serial reloads without leaving later tabs free.
+      const currentTab = await chrome.tabs.get(tab.id);
+      // The snapshot grants refresh only for the page we originally matched.
+      // A queued operation may have navigated this tab in the meantime.
+      if (currentTab.url !== tab.url) return;
+      // A tab opened after installation may already contain the latest bundle
+      // before the delayed state notification arrives. Do not erase that page.
+      if (tab.matchingIds.every(id => {
+        const manifest = manifests[ids.indexOf(id)];
+        return manifest?._hostSnapshot && getHostAdapterRuntime().hasSnapshot?.(tab.id, manifest, currentTab.url);
+      })) return;
       clearTabDomainRegistration(tab.id);
       clearTabInjectedAdapters(tab.id);
       clearBadge(tab.id);
-      await sendTabMessage(tab.id, { type: "clear_tools", siteKey: adapterId });
-      await chrome.tabs.reload(tab.id);
-      await waitForTabLoad(tab.id, 15000);
+      for (const id of tab.matchingIds) await sendTabMessage(tab.id, { type: "clear_tools", siteKey: id });
+      // Managed v2 bundles already use the runtime's clear/reinject protocol
+      // when a command selects a newer digest. Refresh that same way; a page
+      // reload would interrupt independent effect reads and erase user inputs.
+      // Legacy scripts still require a new realm for top-level declarations.
+      if (!tab.matchingIds.every(id => manifests[ids.indexOf(id)]?._hostSnapshot)) {
+        await chrome.tabs.reload(tab.id);
+        await waitForTabLoad(tab.id, 15000);
+      }
+      refreshedTabs++;
     });
-  }
+    previousRefresh = refresh;
+    return refresh;
+  });
+  const refreshed = await Promise.allSettled(refreshes);
+  const failed = refreshed.find(result => result.status === 'rejected');
+  if (failed) throw failed.reason;
 
   for (const tab of matchedTabs) {
     const refreshedTab = await chrome.tabs.get(tab.id);
     await injectAdapters(tab.id, refreshedTab.url || tab.url);
   }
 
-  const domainData = await waitForDomainTools(adapterId, 2500);
+  const domainData = await Promise.all(ids.map(id => waitForDomainTools(id, 2500)));
   return {
-    refreshedTabs: matchedTabs.length,
-    toolCount: domainData?.tools?.length || 0,
+    refreshedTabs,
+    toolCount: domainData.reduce((count, item) => count + (item?.tools?.length || 0), 0),
   };
 }
 

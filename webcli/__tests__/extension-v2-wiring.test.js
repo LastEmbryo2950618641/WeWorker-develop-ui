@@ -34,7 +34,8 @@ describe('effective snapshot Extension wiring', () => {
     expect(bridgeSource).toContain("type: 'adapter_state_changed'");
     expect(swSource).toContain("if (msg.type === 'adapter_state_changed')");
     expect(swSource).toContain('const registry = await doRefreshRegistry()');
-    expect(swSource).toContain('await refreshAdapterTabs(adapterId)');
+    expect(swSource).toContain('await refreshAdapterTabBatch(adapterIds)');
+    expect(swSource).toContain('await refreshAdapterState(msg)');
     expect(swSource).toContain('chrome.runtime.sendMessage({ ...msg, registry, refreshedTabs }');
     expect(bridgeSource).toContain('stateSyncTimer');
     expect(bridgeSource).toContain('this._sendAdapterStateSnapshot(ws)');

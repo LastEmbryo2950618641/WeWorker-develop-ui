@@ -15,7 +15,7 @@
  */
 
 export const DEFAULT_OUTPUT_FORMAT = "markdown";
-export const SUPPORTED_OUTPUT_FORMATS = ["markdown", "json"];
+export const SUPPORTED_OUTPUT_FORMATS = ["markdown", "json", "table", "plain", "csv", "yaml"];
 
 /** 常见列表键：markdown 渲染时优先把该数组渲染成表格。 */
 const LIST_KEYS = [
@@ -32,7 +32,8 @@ export function resolveOutputFormat(value, isTTY = Boolean(process.stdout && pro
   if (value === undefined || value === null) {
     return isTTY ? "markdown" : "json";
   }
-  const v = String(value).trim().toLowerCase();
+  const raw = String(value).trim().toLowerCase();
+  const v = ({ md: 'markdown', yml: 'yaml' })[raw] || raw;
   if (v === "") {
     throw new Error(`--output-format 缺少参数值（可用：${SUPPORTED_OUTPUT_FORMATS.join(" / ")}）`);
   }
@@ -51,7 +52,56 @@ export function resolveOutputFormat(value, isTTY = Boolean(process.stdout && pro
 export function formatCallOutput(data, format = DEFAULT_OUTPUT_FORMAT, options = {}) {
   const resolved = resolveOutputFormat(format);
   if (resolved === "json") return JSON.stringify(data, null, 2);
+  if (resolved === "yaml") return renderYaml(JSON.parse(JSON.stringify(data) ?? 'null'));
+  if (resolved === "plain") return renderPlain(data);
+  if (resolved === "csv" || resolved === "table") return renderRows(data, resolved, options);
   return renderMarkdownOutput(data, options);
+}
+
+// JSON-valued output only: quoted scalars avoid YAML dates, booleans, anchors or
+// tags being inferred from ordinary strings. No dependency or executable tags.
+function renderYaml(data, depth = 0) {
+  if (data === null || typeof data !== 'object' || Object.keys(data).length === 0) return JSON.stringify(data ?? null);
+  const indent = '  '.repeat(depth);
+  return Object.entries(data).map(([key, value]) => {
+    const prefix = Array.isArray(data) ? '-' : JSON.stringify(key) + ':';
+    if (value && typeof value === 'object' && Object.keys(value).length) return indent + prefix + '\n' + renderYaml(value, depth + 1);
+    return indent + prefix + ' ' + JSON.stringify(value ?? null);
+  }).join('\n');
+}
+
+const cellText = value => value == null ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value);
+function renderPlain(data) {
+  if (isResultWrapper(data)) return renderPlain(data.result);
+  if (data === null || typeof data !== 'object') return cellText(data);
+  if (Array.isArray(data)) return data.map(renderPlain).join('\n\n');
+  const entries = Object.entries(data);
+  if (entries.length === 1 && ['response', 'content', 'markdown', 'text', 'value'].includes(entries[0][0])) return cellText(entries[0][1]);
+  return entries.map(([key, value]) => key + ': ' + cellText(value)).join('\n');
+}
+
+function renderRows(data, format, options) {
+  if (isResultWrapper(data)) data = data.result;
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    const lists = findListKeys(data);
+    if (lists.length === 1) data = data[lists[0]];
+  }
+  const rows = (Array.isArray(data) ? data : [data]).map(value => value && typeof value === 'object' && !Array.isArray(value) ? value : { value });
+  const columns = options.columns || [...new Set(rows.flatMap(row => Object.keys(row)))];
+  if (!columns.length) return '';
+  const matrix = [columns, ...rows.map(row => columns.map(key => cellText(row[key])))];
+  if (format === 'csv') return matrix.map(row => row.map(value => {
+    const text = String(value);
+    return /[",\r\n]/.test(text) ? '"' + text.replaceAll('"', '""') + '"' : text;
+  }).join(',')).join('\r\n');
+  // Escape control characters so table cells cannot create fake rows or terminal
+  // control sequences. Wide Unicode characters count as two display columns.
+  const safe = matrix.map(row => row.map(value => String(value).replace(/[\x00-\x1f\x7f-\x9f]/g, ch => '\\u' + ch.charCodeAt(0).toString(16).padStart(4, '0'))));
+  const width = value => [...value].reduce((sum, ch) => sum + (/\p{Mark}/u.test(ch) ? 0 : /[\u1100-\u115f\u2329\u232a\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe10-\ufe19\ufe30-\ufe6f\uff01-\uff60\uffe0-\uffe6\u{1f300}-\u{1faff}]/u.test(ch) ? 2 : 1), 0);
+  const widths = columns.map((_, i) => safe.reduce((max, row) => Math.max(max, width(row[i])), 0));
+  const border = '+' + widths.map(n => '-'.repeat(n + 2)).join('+') + '+';
+  const line = row => '| ' + row.map((value, i) => value + ' '.repeat(widths[i] - width(value))).join(' | ') + ' |';
+  return [border, line(safe[0]), border, ...safe.slice(1).map(line), border].join('\n');
 }
 
 function renderMarkdownOutput(data, options = {}) {

@@ -5,6 +5,8 @@ description: 通过 WebCLI 探索公开/鉴权 HTTP API，或通过浏览器插�
 
 # API 探索与 Adapter 生成
 
+知识字段冲突不得直接覆盖：保留 `knowledge-save` 的 FIELD_CONFLICT，先用当前草稿的真实读取 cases 或已验证独立写效果确认变化，再执行 `knowledge-revise`。传当前 expectedHash、revisions 数组，每项包含 field、expected/replacement（meaning/source）、reason、evidence（tool/path；读命令还需 caseIds）。证据必须属于当前包，已安装任务不能落后于实际安装版本，验证须小于 30 天。历史自动保留旧值和证据摘要；uncertain、mock、旧回执不能作为写效果证据，不重放写，也不导入历史授权。用 `knowledge-read` 检查 fieldRevisions；满 200 条时停止修订并说明限额，不删除历史。
+
 你是负责理解目标、分析证据与编写代码的 Agent。WebCLI 提供确定性工具，不会替你调用另一个模型。不要等待后台模型完成“智能生成”。所有调用使用 `webcli call exploration.<command>`；先运行 `webcli call exploration.help` 获取当前契约。
 
 ## 多浏览器 profile
@@ -160,7 +162,7 @@ webcli call exploration.query --args '{"taskId":"example-task","source":{"mode":
 - 普通 validate 只跑写 mock 和真实只读用例，返回 write_review_ready。write-review 返回完整参数/请求/回查/鉴权声明与综合摘要。已有用户授权覆盖该目标和副作用时，调用 `write-verify --tool=... --reviewId=... --confirmed=true`；否则先展示这份具体审阅并取得授权。安装授权不自动授权远端写测试。
 - 实际验证先 GET 核对 before，再一次写请求，再 GET 核对 after；总预算 30 秒。reviewId 在派发前持久化并消耗，同一任务重复调用/取消/重启均不重发。失败后先查看 writeExecutions；uncertain 表示可能已有副作用，使用 write-readback 仅回查，不能把它当成重新通过验证或自动重试理由。无自动回滚。
 - 全部当前读/写验证通过后才能 review/install；安装只重跑 mock。普通 HTTP write 仍需 __confirmed=true，最多一次请求、拒绝重定向。普通 call 没有探索 reviewId 去重；失败应先检查效果。新声明、修改文件或 fixture 需要重新验证与审阅，不要为了重试而机械改 fixture id。
-- 当前未支持任意作者页面 JS/复杂 UI 控件写、多步/批量写、多 ID/header/响应 URL 回查、幂等键协商或 PAGE_FETCH/UI 写工具 repair；单个用例只证明本次明确场景。
+- 当前未支持任意作者页面 JS/复杂 UI 控件写、多步/批量写、多 ID/header/响应 URL 回查、幂等键协商或共享文件修复；单个用例只证明本次明确场景。
 
 ### 写响应 ID 的只读回查
 
@@ -182,7 +184,7 @@ webcli call exploration.query --args '{"taskId":"example-task","source":{"mode":
 - **只有目标服务端明确保证幂等键去重时才填写该声明**。Chromium 响应丢失时可能重发请求；一次 fetch 不等于一次网络发送。支持 idempotency-key/x-idempotency-key，不自动探测或协商，不能凭空声称服务端已支持。
 - 生成固定注册模块及 manifest.pageWrite，参数映射直接在计划/manifest 中声明；不要编辑模块为自定义 JS。每工具写 fixture 沿用上述格式，失败解释为 `{ok:false,errorCode:"PAGE_WRITE_HTTP_STATUS"}`，成功返回原始 JSON。validate 只跑 mock；write-review 明列路由、请求、回查和实际幂等 header/key。
 - 用户授权覆盖目标副作用后 write-verify；相同 review 消耗后不再派发。浏览器同源 Cookie/HttpOnly 保留在浏览器，before/write/after 必须同一文档，取消/断线阻止后续步骤，已派发请求可能完成。响应丢失仍 uncertain，独立只读 readback 不会放行安装。
-- 普通 call 需 `__confirmed:true`，每次显式调用有新幂等键，不能把重复 call 当成安全重试。没有服务端幂等保证、动态 CSRF/签名、任意正文/结果映射、复杂 UI 提交、多步写/多 ID/写修复继续未支持。
+- 普通 call 需 `__confirmed:true`，每次显式调用有新幂等键，不能把重复 call 当成安全重试。没有服务端幂等保证、动态 CSRF/签名、任意正文/结果映射、复杂 UI 提交、多步写/多 ID/共享文件修复继续未支持。
 
 ### 多步只读网站流程（UI_SELECTOR workflow）
 
@@ -248,7 +250,13 @@ webcli call exploration.repair --args '{"taskId":"example-task","site":"example.
 
 返回 editableFiles 限定可改文件。只修改选中的命令模块、manifest 中该命令的 schema/description；其他命令、共享文件、权限、路由和命令身份必须保留，不增加文件。需要跨命令共享重构时报告当前边界，不绕过守卫。任务复制的是当前包，尚未覆盖已安装命令。
 
-有历史 cases 时自动带入并显示 stale 信息；阅读并核对断言，不为得到通过而删掉仍有效的字段要求。每个修复读命令必须有至少一组作者用例，重新 validate；失败最多修复三轮，报告具体错误。通过后 review → 授权范围内 install → 普通 call → knowledge-save。安装基线或草稿变化会使审阅失效。没有自动后台模型，修复由当前 Agent 完成；PAGE_FETCH/UI 写命令与混合 Toolkit 包暂不走此入口。
+有历史 cases 时自动带入并显示 stale 信息；阅读并核对断言，不为得到通过而删掉仍有效的字段要求。每个修复读命令必须有至少一组作者用例，重新 validate；失败最多修复三轮，报告具体错误。通过后 review → 授权范围内 install → 普通 call → knowledge-save。安装基线或草稿变化会使审阅失效。没有自动后台模型，修复由当前 Agent 完成；写命令使用下面的独立审阅/效果验证，混合 Toolkit 包暂不走此入口。
+
+### PAGE_FETCH/UI 写契约修复
+
+使用 repair 的原 canonical ID、risk=write、sourceApiKind=action、明确新来源与完整 PAGE_FETCH/UI_SELECTOR 计划。声明当前 pagePathname 与 bodyParameters/idempotency 或 uiWrite；服务生成新 manifest，并将完整契约绑定到 repairScope.pageWriteContracts。可以修复同 origin 内的请求/页面路径、JSON 字段映射、原生表单选择器和回执；保持原策略、方法和服务端幂等声明，不修改共享文件、其他命令或包级权限，不编辑固定模块为任意 JS。新契约的安装权限差异须随 review 审阅。
+
+历史 fixture 按安装摘要、对应 kind 和新契约重新检查，仅作待复验数据；字段改变导致跳过时，根据当前真实契约补写并保留仍有效的效果要求。选择器修复也必须重新实际验证，不能沿用历史通过记录、实际 ID 或授权。validate 仍不实际写；新 write-review/精确确认/before-write-after/实际 ID GET 与有界 pending 轮询沿用上述流程。安装基线在最终 tab 检查后再次复核；取消/重启/丢响应不重放，uncertain 的只读恢复不能安装。不要把修复视为失败业务写的自动重试。
 
 ### HTTP 单请求写命令修复
 

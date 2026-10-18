@@ -243,7 +243,7 @@ test('client generation can refresh tabs after publishing a v1 adapter', () => {
 assert.match(source, /refreshAdapterTabs\(String\(msg\.siteKey \|\| ''\)\.trim\(\)/)
 assert.match(source, /function sendTabMessage\(tabId, message, timeoutMs = 2000\)/)
 assert.match(source, /tab message timed out after \$\{timeoutMs\}ms/)
-assert.match(source, /const adapterManifest = await loadAdapterManifestAnywhere\(adapterId\)/)
+assert.match(source, /const manifests = await Promise\.all\(ids\.map\(id => loadAdapterManifestAnywhere\(id\)\)\)/)
 assert.match(source, /directAdapterLoadPromises\.clear\(\)/)
 assert.match(source, /chrome\.offscreen\?\.closeDocument\?\.\(\)/)
 assert.match(source, /clearTabInjectedAdapters\(tab\.id\)/)

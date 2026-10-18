@@ -77,19 +77,28 @@ export function verifyRetainedPackage(pkg, evidence, { paths, repairScope } = {}
 }
 
 export function verifyRepairRetention(before, pkg, scope) {
-  const reject = () => { throw adapterError('REPAIR_SCOPE_CHANGED', 'Repair may change only selected command modules, descriptions and schemas; other files, routes and grants must remain unchanged.'); };
+  const reject = () => { throw adapterError('REPAIR_SCOPE_CHANGED', 'Repair must preserve unselected content and grants; declarative write contracts must exactly match the service-bound repair plan.'); };
   if (scope.name !== before.name || scope.digest !== before.digest || !Array.isArray(scope.commandIds) || !scope.commandIds.length
     || scope.commandIds.length > 50 || new Set(scope.commandIds).size !== scope.commandIds.length) reject();
   const selected = new Set(scope.commandIds), modules = new Set();
   const writeIds = scope.writeCommandIds || [];
   if (!Array.isArray(writeIds) || new Set(writeIds).size !== writeIds.length || writeIds.some(id => !selected.has(id))) reject();
+  const contracts = scope.pageWriteContracts || {};
+  if (!contracts || typeof contracts !== 'object' || Array.isArray(contracts) || Object.keys(contracts).some(id => !writeIds.includes(id))) reject();
   for (const id of selected) {
     const command = before.manifest.commands.find(item => item.id === id);
     if (!command || !['extension', 'http'].includes(command.runtime)
-      || (writeIds.includes(id) ? command.runtime !== 'http' || command.safety !== 'write' : command.safety !== 'read')
+      || (writeIds.includes(id) ? command.safety !== 'write' || (command.runtime !== 'http' && !(command.pageWrite || command.uiWrite)) : command.safety !== 'read')
       || !command.module.startsWith(command.runtime + '/commands/')
       || before.manifest.commands.some(other => other.id !== id && other.module === command.module)) reject();
     modules.add(command.module);
+    if (writeIds.includes(id) && command.runtime === 'extension') {
+      const key = command.uiWrite ? 'uiWrite' : 'pageWrite', contract = contracts[id];
+      if (!contract || Object.keys(contract).sort().join(',') !== [key, 'pageRoute'].sort().join(',')
+        || contract.pageRoute?.origin !== command.pageRoute.origin || contract[key]?.method !== command[key].method
+        || new URL(contract[key]?.url).origin !== command.pageRoute.origin
+        || !isDeepStrictEqual(contract[key]?.idempotency, command[key].idempotency)) reject();
+    } else if (contracts[id]) reject();
   }
   if (before.files.size !== pkg.files.size) reject();
   for (const [name, contents] of before.files) {
@@ -101,6 +110,11 @@ export function verifyRepairRetention(before, pkg, scope) {
   for (const command of before.manifest.commands) {
     const next = pkg.manifest.commands.find(item => item.id === command.id);
     const allowed = selected.has(command.id) ? ['description', 'schema'] : [];
+    if (contracts[command.id]) {
+      const contract = contracts[command.id];
+      for (const key of Object.keys(contract)) if (!isDeepStrictEqual(next[key], contract[key])) reject();
+      allowed.push(...Object.keys(contract));
+    }
     if (!isDeepStrictEqual(omit(command, allowed), omit(next, allowed))) reject();
   }
   return new Set(before.manifest.commands.filter(item => !selected.has(item.id)).map(item => item.id));

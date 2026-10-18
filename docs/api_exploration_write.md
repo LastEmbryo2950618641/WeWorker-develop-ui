@@ -1,5 +1,15 @@
 # HTTP／Extension 写命令与副作用验证
 
+## PAGE_FETCH/UI 写契约定向修复（2026-10-18）
+
+`repair` 可选择已安装的声明式 PAGE_FETCH 或 UI_SELECTOR 写命令。用原 canonical ID、同一种 strategy、新声明/观察来源和完整 pagePathname/bodyParameters/idempotency 或 uiWrite 计划描述当前契约。服务将新契约保存到 `repairScope.pageWriteContracts`，直接生成隔离 manifest；只接受该精确契约，草稿 source.json/manifest 不能扩大服务范围。
+
+允许同 origin 内明确更新请求路径、页面路径、JSON 字段映射或原生表单控件/回执声明。保持原 runtime、safety、HTTP 方法、PAGE_FETCH 幂等 header/serverDeduplicates、包级权限、其他命令和共享文件；不能在 PAGE_FETCH/UI/HTTP 间切换。固定模块仍不得编写任意 JS。完整新契约作为 `page-write:`/`ui-write:` 权限差异进入安装审阅；与 HTTP 写修复保持权限完全不变的边界不同。
+
+历史 fixture 须匹配原安装摘要和 kind（extension_single_write_v1/ui_single_submit_v1），并按新契约重新规范化。选择器变化可复用待复验数据；请求字段变化使旧 fixture 不再匹配时明确跳过，作者按实际契约补写，不继承实际 ID、执行或授权。普通 validate 仍零真实写。新精确审阅、before GET、派发前持久消费、实际效果/数字 ID/有界 GET 和安装门禁复用原实现；最后一次异步 tab 身份检查后再同步核对安装基线，变化时不派发。
+
+取消/重启/丢响应不重放；只读恢复不能认证 uncertain。修复后重新走 review/install、授权内普通调用和 knowledge-save。自动化 `exploration-page-repair.test.js`；隔离实机 `verify-exploration-browser.mjs --page-repair-only`，双打包加 `--bundled-cli --bundled-bridge`。最新验证状态见交接末尾；共享文件修复、复杂控件和多步写保持待办。下文早期阶段的“写 repair 未支持”属于历史范围。
+
 2026-10-18：独立探索新增 HTTP 写命令闭环。PUBLIC_API/AUTH_API 可在 `mode=http` 中无浏览器运行；COOKIE_API 沿用所选浏览器 profile 的凭据通道。最新增加 PAGE_FETCH 声明式 Extension 写：固定同源主文档、JSON 字符串字段映射、浏览器会话与明确服务端幂等契约。HTTP、PAGE_FETCH 与声明了公开回执 ID 的原生 UI 现支持公开字符串或显式非负安全整数 ID 的资源回查，三种写验证均支持显式 pending 状态的有界 GET 轮询。最新增加 UI_SELECTOR 同文档原生表单单次提交与输入关联 GET 效果验证（见末节）；复杂控件和多步写流程尚未接入，Python 网站探索agent不参与。
 
 ## 来源与生成

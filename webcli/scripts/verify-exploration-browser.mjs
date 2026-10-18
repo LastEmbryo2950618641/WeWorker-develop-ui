@@ -22,6 +22,7 @@ import { verifyPageNavigation } from './page-navigation-acceptance.mjs';
 import { verifyPageWorkflow } from './page-workflow-acceptance.mjs';
 import { verifyUiWrites } from './ui-write-acceptance.mjs';
 import { verifyExtensionWrites } from './extension-write-acceptance.mjs';
+import { verifyPageWriteRepairs } from './page-write-repair-acceptance.mjs';
 
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'webcli-browser-acceptance-'));
@@ -296,6 +297,11 @@ try {
   });
   if (process.argv.includes('--ui-write-only')) { await uiWrites(); return; }
   if (process.argv.includes('--page-write-only')) { await pageWrites(); return; }
+  const pageRepairs = () => verifyPageWriteRepairs({ cli, record, passed,
+    stopBridge: async () => { const closed = new Promise(resolve => bridge.once('exit', resolve)); bridge.kill('SIGTERM'); await closed; },
+    startBridge: async () => { await startBridge(); await connected(); },
+  });
+  if (process.argv.includes('--page-repair-only')) { await pageRepairs(); return; }
 
   const tabs = (await cli('exploration.tabs')).data.tabs;
   const tabId = tabs.find(tab => tab.url === origin + '/').id;
@@ -1006,6 +1012,7 @@ try {
   await hostHttp();
   await pageWrites();
   await uiWrites();
+  await pageRepairs();
   })();
 } catch (error) {
   await record('failure', { message: error.message, stack: error.stack, browserEvents });

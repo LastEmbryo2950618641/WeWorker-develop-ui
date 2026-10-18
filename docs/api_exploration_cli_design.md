@@ -1,5 +1,9 @@
 # API 自动探索 CLI 开发设计与首版实现
 
+2026-10-18 知识修订增量：新增 `knowledge-revise`，保留旧映射/原因/当前包与断言证据摘要，CAS 和验证状态均复用；实际读取 cases 或已验证独立写效果才能作为依据，uncertain 不可修订，不发生新请求或安装。详细结构与限制见 [知识修订](api_exploration_knowledge.md)。源码/打包 HTTP 已完成真实字段漂移、修复、历史持久化与零重放验收；UI/最终扩展刷新回归仍进行中，以交接为准。
+
+2026-10-18 持续推进（起点 6420583）：新增 PAGE_FETCH/UI 写契约定向修复。新完整契约由计划生成并绑定服务 repairScope，只允许选定命令的同源声明变更；原策略/方法/幂等要求、包级权限、共享文件和其他命令保持。安装审阅明确新 page-write/ui-write 权限差异，历史 fixture 按 kind/摘要/新来源复验，授权与真实 ID 不继承。最后异步 tab 检查后再复核基线，复用独立效果验证、不重放及 uncertain 恢复边界。契约见写命令文档顶部；最新验证以交接末尾为准，下文未覆盖此项的旧状态属历史。
+
 更新：2026-10-18。已实现多浏览器 profile、独立 HTTP Runner、PUBLIC_API/COOKIE_API/AUTH_API、mode=http 的无浏览器 OpenAPI JSON 发现与宿主请求证据、读命令局部修复和显式 2–8 步只读 workflow；HTTP/PAGE_FETCH/原生 UI 单写、实际 ID 与有界 GET 已接通，最新增加 HTTP 单请求写命令定向修复。具体契约见 [HTTP Runtime](http_adapter_runtime.md) 和 [写命令验证](api_exploration_write.md)，历史与验证结果见 [交接文档](api_exploration_cli_handoff.md)。
 
 前序增量从 `05b4b44` 继续，UI 同文档原生表单支持公开新回执 ID，复用数字/字符串 ID、持久账本和有界 GET 轮询。WebCLI 1341 项、最终聚焦 152 项、扩展 16 项、源码 UI 11 项、双打包 HTTP 18 项与 Chromium 1217 双打包完整 77 项通过，详细证据见交接最新记录。复杂 UI、多步写、多 ID/header/响应 URL、任意 UI 网络响应拦截、签名/OAuth 与完整对齐仍未完成；1194 既有 Shadow/frame 兼容及平台欠账保留。

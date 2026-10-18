@@ -131,15 +131,22 @@ export async function verifyUiWrites({ cli, record, passed, stopBridge, startBri
     assert.equal(ordinary.confirmationMatched,true); assert.equal(ordinary.effectVerified,false); assert.equal(count('success'),2); assert.equal(values.get('success').marker,'ordinary-example');
     const duplicate=await cli(args.tool,{...f.representativeArgs,marker:'ordinary-example',__confirmed:true}); assert.equal(duplicate.ok,false); assert.equal(count('success'),2);
     const knowledge=(await cli('exploration.knowledge-read',{site:review.name})).data;
-    await cli('exploration.knowledge-save',{taskId:args.taskId,expectedHash:knowledge.hash});
+    const oldMapping = { meaning: 'Public item title', source: 'Declared form title input' };
+    await cli('exploration.knowledge-save',{taskId:args.taskId,expectedHash:knowledge.hash,fields:{title:oldMapping}});
     assert.equal((await cli('exploration.knowledge-read',{site:review.name})).data.knowledge.commands[args.tool].writeVerification.kind,'ui_single_submit_v1');
+    const priorKnowledge = (await cli('exploration.knowledge-read',{site:review.name})).data, beforeKnowledge = requests.length;
+    const revised = (await cli('exploration.knowledge-revise',{taskId:args.taskId,expectedHash:priorKnowledge.hash,revisions:[{field:'title',expected:oldMapping,
+      replacement:{meaning:'Public item title',source:'Independent resource GET confirms the submitted title'},reason:'Real UI submit and resource effect verified',evidence:{tool:args.tool,path:'title'}}]})).data;
+    assert.equal(revised.knowledge.fieldRevisions.at(-1).evidence.kind,'ui_single_submit_v1'); assert.equal(requests.length,beforeKnowledge);
     passed('UI install permission, ordinary confirmation, stale acknowledgement refusal and durable knowledge');
+    passed('UI knowledge revision binds independent verified effects, retains old mapping and never resubmits');
     for(const label of ['noeffect','wrongidentity','lost','timeout','error','navigation']) {
       const f=await draft(label); await cli('exploration.write-verify',f.args); const state=await settle(f.args.taskId);
       assert.equal(state.writeExecutions[0].status,'uncertain',JSON.stringify(state)); const sent=count(label); assert.ok(sent>=1);
       if(label!=='lost')assert.equal(sent,1);
       const submissions=(await cli('browser.eval',{session:f.session,expression:'window.exampleSubmissions'})).data.value;assert.equal(submissions,label==='navigation'?0:1); // Reload creates a new page counter; the server request count is independently asserted above.
       await cli('exploration.write-verify',f.args); assert.equal(count(label),sent);
+      assert.equal((await cli('exploration.knowledge-revise',{taskId:f.args.taskId,expectedHash:'example-not-an-approval',revisions:[]},false)).error.code,'VALIDATION_REQUIRED');
       assert.equal((await cli('exploration.write-readback',{taskId:f.args.taskId,reviewId:f.args.reviewId})).data.passed,['lost','timeout','error','navigation'].includes(label));
       assert.equal((await cli('exploration.review',{taskId:f.args.taskId},false)).error.code,'VALIDATION_REQUIRED');
       if(held.has(label))held.get(label).res.end('{}');

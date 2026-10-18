@@ -221,9 +221,10 @@ export class ExplorationService {
     if (command === 'analyze') return analyzeExploration(run, this.capabilities().capabilities);
     if (command === 'revisions') return { taskId, revisions: (run.revisions || []).map(explorationRevisionView) };
     if (command === 'revision-read') return readExplorationRevision(run, integerArg(args.revision, 'revision'), args.file === undefined ? undefined : textArg(args.file, 'file', 200));
-    if (command === 'knowledge-save') {
+    if (command === 'knowledge-save' || command === 'knowledge-revise') {
       if (!['review_ready', 'installed'].includes(run.status) || !run.runtimeDigest || readPackageDirectory(run.draft.adapterDir).digest !== run.runtimeDigest) throw fail('VALIDATION_REQUIRED', 'Knowledge requires a successfully validated current draft.');
       if (plannedWrites(run).length && run.preWriteDigest !== writeProofDigest(run)) throw fail('VALIDATION_REQUIRED', 'Write verification changed; validate again before saving knowledge.');
+      if (command === 'knowledge-revise' && run.status === 'installed' && repairTarget(run.siteKey, this.paths).pkg.digest !== run.runtimeDigest) throw fail('ADAPTER_BASE_CHANGED', 'Installed package changed; verify the current package before revising knowledge.');
       const indexes = [...new Set((run.plan?.tools || []).flatMap(tool => tool.sourceApiIndexes || []))];
       const endpoints = indexes.map(index => clone(run.candidates[index])).filter(Boolean);
       const pageIds = new Set((run.plan?.tools || []).map(tool => tool.sourcePageId).filter(Boolean));
@@ -239,7 +240,8 @@ export class ExplorationService {
         strategy: run.plan?.tools?.find(item => `${run.siteKey}.${item.name.replace(/_/g, '-')}` === tool)?.strategy || null,
         strategyNote: clone(run.plan?.tools?.find(item => `${run.siteKey}.${item.name.replace(/_/g, '-')}` === tool)?.strategyNote || null) }]));
       return this.knowledge.save(run.siteKey, { expectedHash: args.expectedHash, verifiedAt, packageDigest: run.runtimeDigest,
-        endpoints, pages, commands, notes: args.notes, fields: args.fields });
+        endpoints, pages, commands, notes: args.notes, fields: args.fields,
+        ...(command === 'knowledge-revise' ? { revisions: args.revisions ?? null, taskId: run.taskId } : {}) });
     }
     if (command === 'trace') return { ...this.summary(run), events: clone(run.events),
       evidence: run.candidates.map(({ id, url, method, status, risk, requestSemantics }) => ({ id, url, method, status, risk, requestSemantics })),
@@ -489,7 +491,6 @@ export class ExplorationService {
         if (tool.sourceApiKind !== 'action' || (!isHttpStrategy(tool.strategy) && !['PAGE_FETCH', 'UI_SELECTOR'].includes(tool.strategy)) || tool.sourceApiIndexes?.length !== 1 || !candidate || candidate.risk?.level !== 'write'
           || !['POST', 'PUT', 'PATCH', 'DELETE'].includes(candidate.method)
           || (!candidate.declared && !(candidate.status >= 200 && candidate.status < 300))) throw fail('INVALID_PLAN', 'Write plans require one declared or successfully observed write source and an explicit HTTP, PAGE_FETCH or UI_SELECTOR strategy.');
-        if (repair && !isHttpStrategy(tool.strategy)) throw fail('REPAIR_RUNTIME_UNSUPPORTED', 'Write repair currently supports HTTP commands; declarative page/UI contracts remain unchanged.');
         if (tool.strategy === 'UI_SELECTOR') buildUiWriteTool(run.siteKey, tool, candidate, run.origin);
         else if (tool.strategy === 'PAGE_FETCH') buildExtensionWriteTool(run.siteKey, tool, candidate, run.origin);
         else httpToolContract(tool, candidate);

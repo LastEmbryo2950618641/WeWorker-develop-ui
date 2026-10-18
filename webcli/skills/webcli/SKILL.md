@@ -7,6 +7,10 @@ allowed-tools: Bash(webcli *), Bash(npm install *), Bash(npm view *)
 
 # WebCLI — 浏览器自动化
 
+读取本安装包的使用说明：`webcli skills list --output-format=json` 列出随包 Skill，`webcli skills read webcli-browser` 或 `webcli skills read webcli-api-exploration` 返回原文；`--json` 返回内容信封。已知参考文件可传 `<skill>/references/<file>`。这些命令不安装、不执行 Skill；已安装 Adapter 的专属说明仍用 `webcli adapter skill <id>`。
+
+需要 shell 补全时，`webcli completion bash|zsh|fish` 输出脚本，在用户选定 shell 中加载；不要自动修改启动配置。补全首级命令/Adapter、二级命令和别名，不补业务参数。发现过程只读静态 catalog/help，不运行 Adapter、不启动 Bridge；旧版动态计算注册名不求值。
+
 通过 Chrome 扩展适配器操控网站。每个受支持的网站都有自己的适配器和专属工具。
 
 需要探索新网站 API 或生成 Adapter 时，使用随包提供的 `webcli-api-exploration` Skill，并先运行 `webcli call exploration.help`。该链路由当前 Agent 分析和编写代码，只需 WebCLI + 浏览器插件，不依赖桌面客户端或额外模型 Key。
@@ -101,6 +105,10 @@ webcli call <domain>.<action> --args '{"key":"value","arr":[1,2]}'
 ```
 
 ### 打开浏览器
+
+调用输出可用 `--output-format=json|markdown|table|plain|csv|yaml`（别名 md/yml）。业务默认终端 markdown、管道 JSON；browser/exploration/profile 默认 JSON，也接受显式格式。JSON/YAML 保留完整结构与 trace 信封，CSV/table 展示行，plain 适合文本。不要使用业务 `--format` 代替输出选项。console/network --follow 固定 JSONL，不能指定 CSV/YAML；错误退出码不因展示格式变化。
+
+AdapterHub 的结果、help 和错误也支持显式输出格式，仍须遵守来源/权限变更和发布确认；显示格式不是授权。`adapter status [id]` 展示 v2 包候选、当前选择和失效原因，`adapter validate <directory>` 或 `adapter validate --installed [id]` 只做包/摘要/JavaScript 静态检查。`executed:false` 不能代替实际读取或副作用验证；Toolkit Python 和冻结 legacy 不在此语法检查范围。
 
 ```bash
 webcli call open_browser --args '{"url":"<url>"}'

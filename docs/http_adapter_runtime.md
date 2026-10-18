@@ -135,4 +135,4 @@ webcli call exploration.request --args '{"taskId":"<同一任务 ID>","request":
 站点专有签名/OAuth、UI 控件写流程和多步写效果验证仍待实现。Extension 固定同源 PAGE_FETCH 写已有独立声明式契约，明确要求服务端幂等保证，仍由 Extension 执行，不复用 HTTP Runner。HTTP 单请求写生成与验证见 [写命令契约](api_exploration_write.md)；默认 request/discover/validate 仍不会实际发送写请求。现有 PAGE_FETCH、INTERCEPT、DOM_STATE、UI_SELECTOR 按各自执行路径工作，不自动降级或替换来源。
 
 
-HTTP 写命令也可定向 repair（2026-10-18）：保留完整 origins/auth/cookies/version/strategy 与权限、共享文件和其他命令，仅修改所选模块/schema/description。历史 fixture 只作待复验数据，不继承授权或执行 ID；新精确审阅、before/write/after 和安装验证必须重新完成。mode=http 仍不支持 Cookie 任务，浏览器任务固定 profile。见 [写命令契约](api_exploration_write.md) 末节；PAGE_FETCH/UI 写契约和共享文件修复仍待办。
+HTTP 写命令也可定向 repair（2026-10-18）：保留完整 origins/auth/cookies/version/strategy 与权限、共享文件和其他命令，仅修改所选模块/schema/description。历史 fixture 只作待复验数据，不继承授权或执行 ID；新精确审阅、before/write/after 和安装验证必须重新完成。mode=http 仍不支持 Cookie 任务，浏览器任务固定 profile。见 [写命令契约](api_exploration_write.md)；PAGE_FETCH/UI 的新契约修复走独立 Extension 路径，详见该文顶部，不放宽本 HTTP 契约。共享文件修复仍待办。

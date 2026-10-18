@@ -9,6 +9,8 @@ import { buildApiSourceEvidence } from './generation-harness/source-evidence.js'
 import { verifyRepairRetention } from './generation-harness/existing-site.js';
 import { pageSourceEvidence } from './exploration-page.js';
 import { isHttpStrategy, httpToolContract } from './exploration-http.js';
+import { buildExtensionWriteTool } from './exploration-extension-write.js';
+import { buildUiWriteTool } from './exploration-ui-write.js';
 
 export function repairTarget(site, paths) {
   textArg(site, 'site', 128);
@@ -24,18 +26,36 @@ export function writeRepairDraft({ site, expectedDigest, plan, memory, candidate
   const { target, pkg } = repairTarget(site, paths);
   if (pkg.digest !== expectedDigest || memory.generationBaseline?.digest !== expectedDigest || memory.siteKey !== site) throw fail('ADAPTER_BASE_CHANGED', 'Read repair-info and collect current evidence before repairing this Adapter.');
   const commandIds = plan.tools.map(tool => tool.name);
+  const pageWriteContracts = {};
   for (const tool of plan.tools) {
     const command = pkg.commands.find(item => item.id === tool.name);
     if (!command || command.safety !== tool.risk) throw fail('REPAIR_SCOPE_CHANGED', 'Repair must preserve the selected command and its read/write safety.');
     if (command?.runtime === 'http' ? command.http.strategy !== tool.strategy : isHttpStrategy(tool.strategy)) throw fail('REPAIR_RUNTIME_MISMATCH', 'Repair must preserve the installed command runtime and strategy.');
-    if (tool.risk === 'write' && (command.runtime !== 'http' || !isDeepStrictEqual(command.http, httpToolContract(tool, candidates[tool.sourceApiIndexes[0]])))) throw fail('REPAIR_RUNTIME_MISMATCH', 'HTTP write repair must preserve the exact installed origin and authentication contract.');
+    if (tool.risk === 'write') {
+      if (command.runtime === 'http') {
+        if (!isDeepStrictEqual(command.http, httpToolContract(tool, candidates[tool.sourceApiIndexes[0]]))) throw fail('REPAIR_RUNTIME_MISMATCH', 'HTTP write repair must preserve the exact installed origin and authentication contract.');
+      } else {
+        const key = tool.strategy === 'UI_SELECTOR' ? 'uiWrite' : tool.strategy === 'PAGE_FETCH' ? 'pageWrite' : null;
+        if (!key || !command[key]) throw fail('REPAIR_RUNTIME_MISMATCH', 'Page write repair must preserve the installed declarative strategy.');
+        const built = (key === 'uiWrite' ? buildUiWriteTool : buildExtensionWriteTool)(site, tool, candidates[tool.sourceApiIndexes[0]], memory.siteOrigin).toolDefinition;
+        pageWriteContracts[command.id] = { pageRoute: built.pageRoute, [key]: built[key] };
+      }
+    }
   }
   const writeCommandIds = plan.tools.filter(tool => tool.risk === 'write').map(tool => tool.name);
-  const scope = { name: site, digest: pkg.digest, commandIds, ...(writeCommandIds.length ? { writeCommandIds } : {}) };
-  verifyRepairRetention(pkg, pkg, scope);
+  const scope = { name: site, digest: pkg.digest, commandIds, ...(writeCommandIds.length ? { writeCommandIds } : {}),
+    ...(Object.keys(pageWriteContracts).length ? { pageWriteContracts } : {}) };
   const manifest = { ...pkg.manifest, version: pkg.manifest.version.replace(/^(\d+)\.(\d+)\.(\d+).*$/, (_m, a, b, c) => `${a}.${b}.${Number(c) + 1}`) };
+  manifest.commands = manifest.commands.map(command => {
+    const contract = pageWriteContracts[command.id];
+    if (!contract) return command;
+    const tool = plan.tools.find(item => item.name === command.id);
+    const built = (command.uiWrite ? buildUiWriteTool : buildExtensionWriteTool)(site, tool, candidates[tool.sourceApiIndexes[0]], memory.siteOrigin).toolDefinition;
+    return { ...command, ...contract, schema: built.parameters, description: tool.purpose || command.description };
+  });
   const files = new Map(pkg.files);
   files.set('manifest.json', JSON.stringify(manifest, null, 2) + '\n');
+  verifyRepairRetention(pkg, { ...pkg, files, manifest }, scope);
   const adapterDir = path.join(outputRoot, site);
   assertManagedDirectory(outputRoot);
   assertManagedFile(outputRoot, site);
