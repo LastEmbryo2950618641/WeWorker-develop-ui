@@ -1328,7 +1328,5 @@ export const explorationAgentCoordinator = new ExplorationAgentCoordinator(
   defaultExplorationRunStoreFile(),
 )
 
-// 把探索/生成生命周期暴露给聊天 MCP 工具（tools.ts 通过鸭子类型消费，避免模块环）。
-// 仅 full 权限模式可见；见 tools.ts buildExplorationChatTools。
-import { registerExplorationCoordinator } from './tools.js'
-registerExplorationCoordinator(() => explorationAgentCoordinator)
+// Historical exploration runs remain available through the dedicated exploration UI.
+// New chat requests use the bundled WebCLI exploration Skill and native command tool.

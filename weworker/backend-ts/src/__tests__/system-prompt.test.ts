@@ -518,3 +518,22 @@ describe('System Prompt - file encoding rules', () => {
     expect(prompt).toMatch(/乱码/)
   })
 })
+
+
+describe('shared exploration guidance', () => {
+  it('uses the shared CLI and Skill in full mode and preserves restricted modes', async () => {
+    const { buildSystemPrompt } = await import('../agent.js')
+    const full = buildSystemPrompt({ channelPermissionMode: 'full' })
+    expect(full).toContain('webcli skills read webcli-api-exploration')
+    expect(full).toContain('collecting/validating 只是运行中')
+    expect(full).toContain('exploration.cancel')
+    expect(full).toContain('客户端模型凭据仅用于模型连接')
+    expect(full).toContain('不得为注入凭据而重启 Bridge')
+    expect(full).toContain('不要求同时具有 `mode=direct`')
+    expect(full).not.toContain('对于没有对应 Skill 的网站，你没有操作能力')
+    for (const mode of ['qa_only', 'no_bash'] as const) {
+      const restricted = buildSystemPrompt({ channelPermissionMode: mode })
+      expect(restricted).not.toContain('webcli skills read webcli-api-exploration')
+    }
+  })
+})

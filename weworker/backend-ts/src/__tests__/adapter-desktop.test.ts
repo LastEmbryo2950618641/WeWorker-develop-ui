@@ -107,6 +107,8 @@ describe('desktop Adapter catalog and Skill continuity', () => {
     removeInstalledAdapter('demo')
     expect(parseAllAdapters().get('demo')?.tools).toEqual([])
     expect(describeDesktopAdapters().managedNames.has('demo')).toBe(true)
+    expect(parseAllAdapters().get('demo')?.managed).toMatchObject({ enabled: false, canEnable: false })
+    expect(() => toggleDesktopAdapter('demo')).toThrow(/cannot be enabled/)
   })
 
   it('invalidates replayed Skill context immediately after package update, even before disk refresh', () => {

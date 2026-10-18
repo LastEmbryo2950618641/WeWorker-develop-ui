@@ -5,6 +5,22 @@ description: 通过 WebCLI 探索公开/鉴权 HTTP API，或通过浏览器插�
 
 # API 探索与 Adapter 生成
 
+## 先确认来源和凭据边界
+
+先按用户的业务目标确认网站和账号口径，再观察页面请求或用户明确提供的 API 文档。不得凭品牌相同猜接口、Token、存储键或把模型服务账户当成网站当前成员。用户要求登录网站的当前成员数据时，从选定浏览器的真实页面和请求开始；“准备后无需业务页”允许首次观察和显式准备，不能据此跳过观察而猜测 HTTP 接口。
+
+客户端模型凭据仅用于模型连接。不得运行 env/printenv 或读取客户端配置来查找、打印或复用模型 Key；包括 ANTHROPIC_API_KEY、OPENAI_API_KEY 等，不能用作网站 AUTH_API，也不能传给 Bridge。AUTH_API 仅用于用户已明确授权给目标 API 的独立凭据；缺少这类凭据时，使用已经观察到的网站登录态契约，或报告具体准备条件。
+
+Bridge 缺少凭据、能力或端口冲突时，先检查服务状态和归属；不得为注入凭据而停止、重启或接管现有服务，不终止未知进程。报告需要的准备或版本更新，由拥有服务的用户/宿主处理。读取 exploration.help 的完整相关命令契约，避免用 head 截掉关键参数后自行猜测。
+
+## 编写前必须完成的核对
+
+1. **业务字段。** evidence/analyze 只给结构，不给真实枚举值和业务语义；不能根据字段名猜窗口、状态或单位。使用 browser Skill 观察任务页面及网站公开脚本，确认目标展示与源字段/枚举的对应关系。需要一次页面内只读请求时，只返回目标业务字段用于当前核对，不返回凭据、请求头值或账号上下文值，也不把真实业务值写进 cases。
+2. **鉴权来源。** 观察网站公开请求封装，确认 Cookie 是作为 Cookie 发送，还是经过解码/转换成为 Authorization 等请求头；同时确认是否需要组织/项目等上下文。只发现一个 Cookie 名称不能证明 COOKIE_API 可用。COOKIE_API 适合标准 Cookie/声明式 CSRF；需要 Cookie 转换或浏览器上下文缓存时，选择下面的 EXTENSION_API，复用后台 helper。所需缓存先通过显式准备命令初始化，普通查询 cacheOnly，不能退化为页面请求。
+3. **可证明的结果。** 草稿应明确返回用户所需字段和缺失值语义；参数化窗口/筛选必须实际选择对应业务数据。cases 核对公开枚举、窗口映射、类型和结果数量，不只检查 HTTP 200、非空或回显参数。validate 返回断言结果，不返回业务响应；不要反复修改断言来猜响应值，也不能把临时 debug 输出通过当作查询完成。
+
+首次真实失败先检查具体错误和网站请求契约；没有新观察证据时不要反复改代码重试。三轮修复仍失败就报告已确认事实和缺口，保留草稿，不安装临时 debug 命令。
+
 知识字段冲突不得直接覆盖：保留 `knowledge-save` 的 FIELD_CONFLICT，先用当前草稿的真实读取 cases 或已验证独立写效果确认变化，再执行 `knowledge-revise`。传当前 expectedHash、revisions 数组，每项包含 field、expected/replacement（meaning/source）、reason、evidence（tool/path；读命令还需 caseIds）。证据必须属于当前包，已安装任务不能落后于实际安装版本，验证须小于 30 天。历史自动保留旧值和证据摘要；uncertain、mock、旧回执不能作为写效果证据，不重放写，也不导入历史授权。用 `knowledge-read` 检查 fieldRevisions；满 200 条时停止修订并说明限额，不删除历史。
 
 你是负责理解目标、分析证据与编写代码的 Agent。WebCLI 提供确定性工具，不会替你调用另一个模型。不要等待后台模型完成“智能生成”。所有调用使用 `webcli call exploration.<command>`；先运行 `webcli call exploration.help` 获取当前契约。

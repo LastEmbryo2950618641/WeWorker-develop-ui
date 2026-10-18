@@ -55,7 +55,7 @@ it('keeps one real Claude process alive and refreshes MCP callbacks between turn
   })] })
   let session: ChatSession | undefined
   try {
-    const cli = path.resolve(process.cwd(), 'node_modules', '@anthropic-ai', 'claude-code', 'bin', process.platform === 'win32' ? 'claude.exe' : 'claude')
+    const cli = path.resolve(process.cwd(), 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe')
     expect(fs.existsSync(cli)).toBe(true)
     const queue = new PromptQueue()
     const handle = query({ prompt: queue, options: {

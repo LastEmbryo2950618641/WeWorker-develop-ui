@@ -118,7 +118,7 @@ describe('System Prompt - complete output contract before externalization', () =
       优先使用当前上下文已有的 Skill 说明和工具参数；相关说明缺失、不完整或已失效时，再激活对应 Skill。不要仅因为用户发起了新一轮对话就重复加载。
       如果上下文已提供当前版本的完整说明，而其中没有某项能力或字段，应按未提供处理；不要为寻找同一缺失信息重复读取同一版本的说明。
       所有网站工具通过Claude Code 内置 PowerShell 执行 \`webcli call <完整工具名> --参数名=参数值\`调用。
-      对于 Skill 中同时标记为 \`Execution: type=api, runtime=background\` 和 \`Execution: mode=direct\` 的工具，它们是无需 DOM 的 API 工具，必须直接调用，不需要先打开对应网站。旧 Skill 如果只标记了 \`Execution: mode=direct\`，也按同样规则处理。
+      以命令的 runtime/execution 与当前 Adapter Skill 为准：\`type=api, runtime=background\` 或标为 background API 的命令直接调用，无需先打开业务页或检测页面登录；不要求同时具有 \`mode=direct\` 标记。旧 Skill 仅有 \`mode=direct\` 时仍兼容。缺登录或缓存时按具体错误完成显式准备，不能把后台命令改成页面调用。
       对于页面/DOM 工具，调用前需要确保对应网站已在 Chrome 中打开。如果未打开，请先使用 Claude Code 内置 PowerShell 执行 \`webcli call open_browser --url=<url>\`打开该网站。
 
       ## 使用 webcli call 的规则
@@ -129,7 +129,11 @@ describe('System Prompt - complete output contract before externalization', () =
       3. 使用完整工具名称，例如 \`jd.com.search_products\`。
       4. 参数直接使用 \`--key=value\`；数组和对象可使用 JSON 字面量，字段必须匹配 Skill 文档中的参数定义。
 
-      对于没有对应 Skill 的网站，你没有操作能力，应明确告知用户当前不支持该网站。
+      用户要求探索接口、封装查询或生成/修复 Adapter 时，读取共享 Skill：\`webcli skills read webcli-api-exploration\`，按需读取 \`webcli\` 和 \`webcli-browser\`。没有现成网站 Skill 也可探索；由当前聊天 Agent 理解、观察和编写，通过内置 PowerShell 调用 \`webcli call exploration.<command>\`，不启动另一套模型协调流程。
+      先用 \`exploration.help\`、\`exploration.capabilities\` 和 \`profile.list\` 核对实际契约与选定浏览器。使用 PATH 中的桌面内置 WebCLI，不安装全局 npm 版替换它。能力缺失时说明需要更新匹配的客户端/Bridge/扩展，不退回旧流程。旧聊天中的 start_api_exploration/start_adapter_generation 等入口已停用；历史任务在独立探索页面查看，不将旧 taskId 交给新流程。
+      客户端模型凭据仅用于模型连接，不得读取环境变量或客户端配置来获取、打印或复用模型 Key 作为网站凭据，也不得为注入凭据而重启 Bridge。当前成员的查询先观察目标网站的登录态和真实请求，不凭品牌相同猜接口或账号口径；准备后无业务页允许首次观察与显式准备。
+      按共享 Skill 完成证据、草稿、真实 cases、validate、review、授权内 install，再普通调用。collecting/validating 只是运行中，使用 get/events 有界等待；用户取消时调用 exploration.cancel，已派发请求不自动重放。不要让用户手写代码或计划 JSON；登录/明确账号上下文/超出授权的安装范围用 ask_user 询问。
+      安装后立即通过 \`webcli adapter info/skill <id>\` 读取最新命令和说明；同轮不依赖旧 Skill 缓存，后续聊天由客户端刷新。草稿用 exploration.draft-read/draft-write，受审阅安装由 WebCLI 完成，不直接编辑托管 Skill 目录。
 
       ## Skill、Adapter 与 PowerShell
 
@@ -150,7 +154,7 @@ describe('System Prompt - complete output contract before externalization', () =
 
       ## 使用 open_browser 的规则
 
-      只有页面/DOM 工具需要先打开网站。\`type=api, runtime=background\` + \`mode=direct\` 的 API 工具不要预先打开网站或检测登录；如果这类工具返回需要登录或需要页面上下文，再打开 Skill 文档中的 Homepage URL。
+      只有页面/DOM 工具需要先打开网站。后台 API 不要预先打开网站或检测登录；仅在实际缺登录或上下文时按 Skill 完成准备。HTTP 与 Toolkit 按各自运行时执行。
 
       用 Claude Code 内置 PowerShell 执行 \`webcli call open_browser --url=...\` 打开一个受支持的网站后，必须等待至少 5 秒再执行任何后续页面/DOM 操作。
       原因：网站 adapter 需要时间注入并注册工具，过早调用会导致工具不存在而报错。
@@ -255,7 +259,7 @@ describe('System Prompt - complete output contract before externalization', () =
       - 示例邮箱（mail.example.com） -> 检测：\`webcli call mail.example.com.check_login_status\`
       - 示例 API（api.example.com）：API direct 工具 \`api.example.com.list\`、\`api.example.com.detail\`，必须先直接调用
 
-      对于这些网站，使用 open_browser 打开后（等待 5 秒后），必须先调用该网站的 check_login_status 工具检测登录状态。
+      仅对于页面/DOM 命令，打开页面并等待就绪后，调用该网站实际存在的登录检查工具；后台 API 直接调用，不能使用页面就绪检查代替服务端鉴权。
       如果返回 \`logged_in: false\`，应立即告知用户需要先在浏览器中登录该网站。
 
 
@@ -294,7 +298,7 @@ describe('System Prompt - complete output contract before externalization', () =
       3. 使用完整工具名称，例如 \`jd.com.search_products\`。
       4. 参数直接使用 \`--key=value\`；数组和对象可使用 JSON 字面量，字段必须匹配 Skill 文档中的参数定义。
 
-      对于没有对应 Skill 的网站，你没有操作能力，应明确告知用户当前不支持该网站。
+      当前权限模式不能探索网站或生成/安装 Adapter；需要执行时明确说明需要 full 权限。
 
       ## 原生命令工具限制
 

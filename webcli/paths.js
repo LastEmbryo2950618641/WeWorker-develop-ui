@@ -4,7 +4,7 @@
  */
 import { existsSync, lstatSync, readFileSync } from "fs";
 import { homedir } from "os";
-import { dirname, join, resolve } from "path";
+import { basename, dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -22,6 +22,16 @@ function samePath(left, right) {
 
 export function resolveExtensionDir({ env = process.env, baseDir = moduleDir } = {}) {
   if (env.WEWORKER_RESOURCES_PATH) return resolve(env.WEWORKER_RESOURCES_PATH, "extension");
+  // Desktop development entry points live in build/{webcli,bridge}-dist.
+  // The CLI's extension/adapters compatibility copy is deliberately partial;
+  // HTTP validation also needs the prepared background assertion module.
+  if (['webcli-dist', 'bridge-dist'].includes(basename(baseDir))
+      && basename(dirname(baseDir)) === 'build'
+      && existsSync(resolve(baseDir, '../../build-profile.json'))) {
+    const desktopPrepared = resolve(baseDir, '../extension-dist');
+    if (existsSync(desktopPrepared)) return desktopPrepared;
+    throw new Error("Run the profile prepare command before using Extension Adapter resources.");
+  }
   const prepared = resolve(baseDir, "../weworker/build/extension-dist");
   const checkoutMarker = resolve(baseDir, "../weworker/build-profile.json");
   // A checkout must use its generated profile output. A stale copy bundled for
