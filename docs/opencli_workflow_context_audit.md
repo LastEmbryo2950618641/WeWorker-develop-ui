@@ -1,10 +1,10 @@
 # OpenCLI 页面上下文与工作流编排审计
 
-2026-10-18。B01 跨 origin/frame 剩余项的源码核对，不是实现或行为验收完成。上游对照 npm 1.8.8 与固定 tag `8271afc67e8504bda94c147f446ee29775d08274`。扩展 `background.ts` Git blob `efcb9efa99225e4f6bc57e9f58b1e6f1990370e8`、`cdp.ts` `c2ce05149ce3cbabe35fa76df83fbe05cb1cc150` 已与固定 tree 按 Git blob 算法核对；不依赖最新分支推断。
+2026-10-18。B01 跨 origin/frame 的源码核对与后续实现记录；源码审计本身不代表行为验收。跨源主文档最终完整双打包 109 项 9ccf6Q、连续 102 次调用与组合 12 项通过；frame 仅保存未接入基础且探针有失败。按用户要求在此暂停，完整证据见交接末尾。上游对照 npm 1.8.8 与固定 tag `8271afc67e8504bda94c147f446ee29775d08274`。扩展 `background.ts` Git blob `efcb9efa99225e4f6bc57e9f58b1e6f1990370e8`、`cdp.ts` `c2ce05149ce3cbabe35fa76df83fbe05cb1cc150` 已与固定 tree 按 Git blob 算法核对；不依赖最新分支推断。
 
 | 能力 | 上游实际代码 | 本项目现状 |
 | --- | --- | --- |
-| 跨源主文档导航 | browser/page.js:86–122 的 goto 发送明确 URL、保留返回 targetId；background.ts:1723 起只校验 HTTP(S) 后对同 tab 更新 URL，可跨 origin。导航完成可接受重定向；相同 URL 完整页直接返回。 | browser.open 可按明确 HTTP(S) URL 更新已绑定 tab；生成的 navigate/workflow 则受固定 expectedOrigin、任务 checkTab、pageRoute 和注入/continuation 守卫约束。浏览器单命令存在不代表生成流程已支持跨源。 |
+| 跨源主文档导航 | browser/page.js:86–122 的 goto 发送明确 URL、保留返回 targetId；background.ts:1723 起只校验 HTTP(S) 后对同 tab 更新 URL，可跨 origin。导航完成可接受重定向；相同 URL 完整页直接返回。 | browser.open 已有明确 URL 能力；生成的 navigate/workflow 现由 resultOrigin/step.origin、任务 allowedOrigins、完整 pageRoute 权限和 continuation 接通。不同来源不能交叉使用路径，保持新文档/完整 URL 与固定 tab；不沿用上游同 URL 直接返回旧结果的行为。 |
 | frame 列举与读取 | page.js:324–330 frames/evaluateInFrame；background.ts:1678–1708 每次用当前树枚举跨源 frame，再按 frameIndex 找 frameId；cdp.ts:653 起按上下文执行，失效 context 可重新解析 target。 | browser.frames 返回 Chrome frameId/documentId；browser-frames.js 用 documentIds 和 uniqueContextId 固定页面，隔离标记关联 OOPIF，嵌套自动 attach。已验单条读取/点击/上传，但 page-source/page-query 固定 frameIds:[0]，工作流无 frame 声明。 |
 | 分支与分页 | Gmail utils.js:479–543 先 search 后 next，有界页数、缺 next/短页结束、去重、重复页无新增拒绝部分结果。 | 本增量提供受权限绑定的 when/repeat/until/collect，真实公开分页已验；只读原生控件、固定同源主文档，不能外推任意站点或其他上下文。 |
 
@@ -20,7 +20,7 @@
 
 ## 跨源主文档实现进展（2026-10-18）
 
-已增加固定 navigate.resultOrigin、workflow step.origin 链、start.allowedOrigins 门禁、完整 manifest match/pageRoute 权限、精确源与路径组合选择、固定任务 tab 预览和 page_navigation_origin_v1 派发前检查。单步 query 和多步 A→B 的源码 Chromium 首轮通过（5GCrtt），包括生成/作者验证/安装/重复调用/知识/提取 repair/重定向拒绝/取消/重启不重放。跨源 hash、A→B→A、重启后验证和作者取消的源码/双打包专项各 11 项已通过（2zWcqF/r9KzgD），实现检查点 841a412。完整双打包 cmPIYq 暴露下述 tabs 快照竞态，修复后的完整回归仍在运行。frame 工作流暂无接入。
+已增加固定 navigate.resultOrigin、workflow step.origin 链、start.allowedOrigins 门禁、完整 manifest match/pageRoute 权限、精确源与路径组合选择、固定任务 tab 预览和 page_navigation_origin_v1 派发前检查。单步 query 和多步 A→B 的源码 Chromium 首轮通过（5GCrtt），包括生成/作者验证/安装/重复调用/知识/提取 repair/重定向拒绝/取消/重启不重放。跨源 hash、A→B→A、重启后验证和作者取消的源码/双打包专项各 11 项已通过（2zWcqF/r9KzgD），实现检查点 841a412。完整双打包 cmPIYq 暴露下述 tabs 快照竞态，修复后的最终完整双打包 9ccf6Q 109 项已通过。frame 工作流暂无接入。
 
 ## frame 身份方案探针（不是工作流验收）
 
@@ -36,6 +36,8 @@
 完整双打包 `webcli-browser-acceptance-cmPIYq` 在 workflow 第 6 次普通调用的首步返回 `PAGE_QUERY_ORIGIN_CHANGED`，当时从目的源返回入口；失败日志 `/tmp/weworker-origins-bundled-full.log`。随后仅在隔离扩展副本中使用 841a412 旧导航代码增加失败诊断，连续调用在第 38 次复现（`webcli-browser-acceptance-Zl8HbX`，`/tmp/weworker-origins-race-proof-fixed.log`）：`navigated:true`、`oldSnapshot:true`，当前 origin 等于初始 origin 而不同于目的 origin。这直接证明 CDP 文档提交已先发生、tabs URL 仍是完整旧快照的时序；不依靠从错误码猜根因。早期 BcTHOC 没有保留实际 error，不能追溯证明该次也是同因。
 
 普通与 hash 导航只等待精确初始 href 在既有预算内更新；等待时不提取数据。完整目的 href、新文档/loader、300ms 稳定结果、hash 关联/刷新、CDP 重定向拒绝和一次派发保持。单测覆盖滞后两次轮询、永久旧快照超时、旧快照期间错误 origin 事件立即拒绝，均零重放。最终完整/连续调用结果见交接末尾。
+
+修复后 tBXyDE 已越过跨源并通过前 108 项，但最终共享修复夹具复用 localhost 被已有跨源包吸纳，严格三命令断言失败。包的 hostname/父子域归属不按端口分离；只改验收环境，使用精确映射到本地 loopback 的独立公开占位 host，保留完整影响范围与全部重验断言。不能把子域或不同端口的孤立通过当作组合验证；新 `--origins-shared-only` 先建立跨源包再验证共享修复，最终结果见交接。
 
 ## frame 基础保存点与已知失败（未接入）
 

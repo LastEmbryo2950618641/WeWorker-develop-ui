@@ -4,9 +4,9 @@
 
 ## 持续执行清单（从 6420583 接续）
 
-当前执行状态：2026-10-18 用户明确恢复，整体目标 active；核对干净分支 codex/api-exploration-cli、HEAD 498ba61（代码 53acae7）。复用 V/R 已验证项，完整 W/B/A/U/E 清单保持；B01 hash/有界循环分支本地检查点 d0e8ea9：完整双打包 Chromium 1217 99 项、最终控制专项 8 项、WebCLI 1427 项/扩展 53 项通过；5370 产品文件隐私通过。跨源主文档源码/双打包专项各 11 项（2zWcqF/r9KzgD）通过，包含 hash/往返/作者取消；完整打包回归进行中，早期一次偶发失败原因未明保留，frame 未实现。
+当前执行状态：2026-10-18 本阶段完成，按用户要求暂停整体目标。B01 hash/有界循环分支 d0e8ea9、跨源 841a412、tabs 快照竞态修复 f2f54d8，验收夹具隔离 a4052b3/c26226a；最终 Chromium 1217 CLI＋Bridge 完整双打包 **109 项** 9ccf6Q、**6291 文件/28 私有绑定**隐私、连续 **102 次**跨源 workflow、跨源→共享修复组合 **12 项**通过。WebCLI 129 文件/1439 项、扩展 64 项、构建/配置/Skill/npm pack 634 文件通过。frame 基础另存 1c4d8a9，未接入生产，替换后解析探针 LufBqx 超时，不计已实现；完整 W/B/A/U/E 清单保持，整体未完成。
 
-状态含义：已验证仅覆盖列出的契约；部分实现的剩余项保持开放；待审计须核对上游与本项目实现后再定差距；验收欠账不能用其他环境结果替代。阶段检查点不停止整体目标。上游仍以已核查的 1.8.8 发布包为对照，本机 1.8.6；版本更新提示不是未经审计扩大或缩减范围的依据。
+状态含义：已验证仅覆盖列出的契约；部分实现的剩余项保持开放；待审计须核对上游与本项目实现后再定差距；验收欠账不能用其他环境结果替代。阶段检查点不代表整体完成，本次按用户明确要求暂停。上游仍以已核查的 1.8.8 发布包为对照，本机 1.8.6；版本更新提示不是未经审计扩大或缩减范围的依据。
 
 | ID | 状态 | 能力与剩余工作／关闭证据 |
 | --- | --- | --- |
@@ -20,7 +20,7 @@
 | W02 | 部分实现 | hidden CSRF、click/Enter、整页提交导航、Shadow/frame 写生成契约 |
 | W03 | 部分实现 | 多步/批量写、结果传递、部分成功恢复、多组写用例 |
 | W04 | 部分实现 | 多 ID、Header/响应 URL、任意 UI 网络响应 ID、任意精度/负数 ID |
-| B01 | 部分实现 | 动态 queryParameters 已接通纯查询/路径组合/workflow、旧 profile 拒绝和精确 href/新文档；源码 Chromium 导航专项 8 项、双打包 Chromium 1217 完整 87 项、WebCLI 1416 项及双打包 HTTP 24 项通过（RENsHF/heIeNv），4450 文件隐私检查通过。hash 已实现独立新鲜度/同目标新文档＋刷新标记变化契约，最终双打包专项 9 项 c4GzcD 通过；when/repeat/until/collect 与冲突/无进展/限额拒绝最终双打包专项 8 项 Y3nbGm 通过，断线目录缺失误重载已修；完整双打包 99 项 XoGPDg、5370 文件/28 私有绑定检查通过；跨 origin/frame 编排仍开放；已核对真实源码与需要扩展的权限/身份/continuation 边界，见 opencli_workflow_context_audit.md |
+| B01 | 部分实现 | query/hash/有界 when/repeat/until/collect 与显式跨源 resultOrigin/step.origin 已实现并验证。保留 allowedOrigins、精确权限、固定 tab、业务新鲜度与不重放；导航竞态 f2f54d8 已修。最终完整双打包 109 项 9ccf6Q、6291 文件/28 私有绑定隐私、连续 102 次跨源调用和跨源→共享修复组合 12 项通过。剩余 frame 声明/读取/动作/导航/循环/权限/修复完整接入与实机验收；1c4d8a9 只有未接入基础，替换后解析探针超时，不计支持。见 opencli_workflow_context_audit.md |
 | B02 | 部分实现 | 自定义日期/选项、目录/file chooser/自定义上传 |
 | B03 | 部分实现 | 跨 frame/DataTransfer 拖拽 |
 | B04 | 部分实现 | AX/Shadow/子 frame 截图、任意设备模拟恢复 |
@@ -77,7 +77,7 @@ U02 审计与实现（2026-10-18）：实际读取上游 1.8.8 `dist/src/output.
 | 页面操作 | state/find/get/extract、click/dblclick/fill/type/select/check/uncheck/focus/hover/scroll/keys/drag/upload/dialog；过期引用和模糊定位报错 | 主/子 frame 原生指针、同 frame 拖拽、输入/弹窗已真实验收；AX 引用支持开放/关闭/嵌套 Shadow DOM 控件及准确文档；DOM 显式 shadow 查询、树内标签及嵌套引用已实现；原生复合字段、HTML 树、明确选项匹配/保留校验已真实验收；隐藏/Shadow/AX/嵌套跨源原生文件输入上传与验证通过；自定义控件、目录输入与跨 frame/DataTransfer 拖拽待补 |
 | 页面观察 | frames/screenshot/console/eval/wait、网络摘要/detail/filter/follow、有界响应读取、失效错误 | frame eval/身份、完整截图、下载续等、console/network JSONL 与游标已真实验收；state source=ax、DOM/AX 指标比较、跨 frame 引用及部分结果/超时通过；截图主文档 DOM 编号、临时 CSS 尺寸、新文件保存及恢复通过，AX/子 frame 编号与任意设备模拟恢复未覆盖 |
 | 探索策略 | PUBLIC/COOKIE/PAGE_FETCH/INTERCEPT/DOM_STATE/UI_SELECTOR；接口/页面状态/脚本发现与策略理由 | PUBLIC_API/COOKIE_API/AUTH_API 已接入显式计划、作者 cases、安装、调用与只读 repair；mode=http 支持无浏览器 JSON OpenAPI 发现和真实请求证据。PAGE_FETCH、声明式页面来源、单步 INTERCEPT、跨文档查询和 2–8 步只读 workflow 已验证。YAML/任意 API 文档爬取、循环/分支/自定义控件等任意多步流程未覆盖；无静默回退 |
-| 请求和鉴权 | POST 只读查询、GraphQL、动态路径、跨源、Cookie/CSRF/runtime 签名、写操作语义与确认 | 显式 origin、JSON/form POST、GraphQL query、API 路径参数、Cookie/CSRF、环境 Bearer/header/Basic/HMAC、store/分区已验证；HTTP 单请求写生成/mock/精确审阅/实际效果与不重放已接通。Extension PAGE_FETCH 固定同源写要求服务端幂等支持；原生同文档 UI 单次提交与独立效果验证已接入，不保证一次网络请求/副作用；复杂控件/多步写、任意站点签名/OAuth、动态 hash 路由仍待做；动态 query 导航已接入，最终验证见顶部 B01；INTERCEPT 页面签名不能等同通用鉴权 |
+| 请求和鉴权 | POST 只读查询、GraphQL、动态路径、跨源、Cookie/CSRF/runtime 签名、写操作语义与确认 | 显式 origin、JSON/form POST、GraphQL query、API 路径参数、Cookie/CSRF、环境 Bearer/header/Basic/HMAC、store/分区已验证；HTTP 单请求写生成/mock/精确审阅/实际效果与不重放已接通。Extension PAGE_FETCH 固定同源写要求服务端幂等支持；原生同文档 UI 单次提交与独立效果验证已接入，不保证一次网络请求/副作用；复杂控件/多步写与任意站点签名/OAuth 仍待做；动态 query/hash 和显式跨源主文档导航的最终验证见顶部 B01；INTERCEPT 页面签名不能等同通用鉴权 |
 | 生成与验证 | 任意目标数量、草稿文件编辑、字段映射、语义/样例验证、同站增量保留、审阅安装 | Agent 计划支持 1–50 工具，draft-add 支持新文件；读工具 1–10 组作者断言，workflow 逐 case 执行并支持中途取消；HTTP、PAGE_FETCH 与原生 UI 写工具每工具一个离线模型/真实效果 fixture，普通 validate 不写，精确审阅后一次应用层派发；PAGE_FETCH 明确要求服务端幂等键，UI 使用输入/回执/独立资源关联且不假设去重。真实 CLI 安装/确认/异常回查已验收；新增固定同源模板、真实响应公开字符串或显式非负安全整数 ID 与资源身份/内容验证，取消/重启仅只读恢复；已补显式非负安全整数 ID 与 pending 状态 GET 轮询；原生 UI 同文档公开新回执 ID 已接入；多组写用例、多 ID/header/响应 URL/任意 UI 网络响应捕获和多步副作用仍待做 |
 | 维护与知识 | 站点 endpoints/field-map/notes/fixtures、有效期、trace、安装后自动修复、重试界限 | 已有任务历史、结构 trace、站点知识/过期标记；repair-info/repair 支持已安装读命令与 HTTP 单请求写命令；历史 cases/fixture 重新验证，写修复不继承授权，需精确审阅和实际效果。字段漂移后的读/HTTP 写修复已隔离验收；PAGE_FETCH/UI 写契约修复和显式知识字段修订已验；显式共享文件全包重验已验证（R02）；Agent 依 Skill 最多三轮草稿修复 |
 | 分发与工具生态 | 对应 plugin / adapter 管理能力、输出格式、补全、现有 Adapter 能力对照 | 复用已有 v2/AdapterHub；逐项差异和覆盖率待核对 |
@@ -91,7 +91,7 @@ U02 审计与实现（2026-10-18）：实际读取上游 1.8.8 `dist/src/output.
 | 更广 UI 写 | 原生无事件表单提交已验证；受控 input/change、自动保存、自定义控件、hidden CSRF、click/Enter、完整导航与 Shadow/frame 生成契约仍待办。通用浏览器底层操作复用现有实现。 |
 | 写流程与维护 | HTTP 单请求写的定向模块修复已验证；PAGE_FETCH/UI 写契约修复和显式字段冲突修订已验；显式共享文件全包修复已验证；多步/批量写、结果传递、部分成功恢复、多写用例仍待办。 |
 | 写结果关联 | 公开字符串/显式非负安全整数 ID、有界明确 pending 轮询与原生 UI 同节点公开新回执 ID 已补；多 ID、Header/响应 URL、任意 UI 网络响应捕获，以及任意精度/负数数字 ID 未覆盖。 |
-| 复杂读取与浏览器 | 动态 query 导航已接入，验证见 B01；循环/分支、动态 hash、跨 origin/frame 编排、自定义日期/选项、目录/file chooser/自定义上传、跨 frame/DataTransfer 拖拽、AX/Shadow/子 frame 截图与任意设备模拟恢复仍待办。 |
+| 复杂读取与浏览器 | 动态 query/hash、有界循环/分支和显式跨 origin 主文档导航的实现与证据见 B01；剩余 frame 编排、自定义日期/选项、目录/file chooser/自定义上传、跨 frame/DataTransfer 拖拽、AX/Shadow/子 frame 截图与任意设备模拟恢复。 |
 | API 文档与认证 | JSON OpenAPI/Swagger、HMAC/Cookie/CSRF 等已有；YAML、更广发现/引用解析、站点签名/OAuth 按实际契约扩展。 |
 | 尚待审计 | Adapter/插件管理、shell completion、输出格式全覆盖、1366 命令/179 分组中的站点与应用映射、外部 CDP/Electron/CLI、Worker 网络/流式 body/持久回放；先映射现有与上游，不能一律认定未实现。 |
 | 验收欠账 | Chromium 1194、其他浏览器/系统/实际安装包、全新 Codex/Claude 独立对话、代表站点及全部认证组合仍未完成；外部真实账户写未授权、未验收。 |
