@@ -11,10 +11,10 @@ import { generationEvidenceDir } from '../generation-harness/package-draft.js';
 
 const cleanup = [];
 afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); vi.unstubAllEnvs(); });
-async function setup({ behavior = 'normal', source, auth = false, mixed = false, resultId, detail = {} } = {}) {
+async function setup({ behavior = 'normal', source, auth = false, mixed = false, resultId, detail = {}, asyncEffect } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'exploration-write-'));
   cleanup.push(() => fs.rmSync(root, { recursive: true, force: true }));
-  let title = 'Before'; const requests = [];
+  let title = 'Before', effectReads = 0; const requests = [];
   const server = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     requests.push({ method: req.method, url: req.url, body: raw, auth: req.headers.authorization });
@@ -27,7 +27,8 @@ async function setup({ behavior = 'normal', source, auth = false, mixed = false,
       res.end(JSON.stringify({ ok: true, id: resultId ?? 'example', title, live: true })); return;
     }
     if (req.url.startsWith('/records/')) { res.end(JSON.stringify({ id: resultId, title, ...detail })); return; }
-    res.end(JSON.stringify({ id: 'example', title, responseOnly: 'example-unpersisted-body' }));
+    const state = !asyncEffect ? undefined : title === 'Before' ? 'idle' : ++effectReads <= asyncEffect.pendingReads ? 'pending' : 'ready';
+    res.end(JSON.stringify({ id: 'example', title, state, responseOnly: 'example-unpersisted-body' }));
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   cleanup.push(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
@@ -367,4 +368,71 @@ it('stops effect GETs if the response ID cannot be durably saved', async () => {
   expect(f.run.writeExecutions[0]).toMatchObject({ status: 'uncertain', error: { code: 'EXAMPLE_STORE_UNAVAILABLE' } });
   expect(f.requests.map(r => r.method)).toEqual(['GET', 'PUT']);
   expect((await f.call('review')).error.code).toBe('VALIDATION_REQUIRED');
+});
+
+it.each([0, Number.MAX_SAFE_INTEGER])('verifies and restores numeric response ID %s without changing its type', async resultId => {
+  const f = await setup({ resultId }), fixture = structuredClone(f.fixture);
+  fixture.successResponse.body.id = 1;
+  fixture.effect.resultReadback = { url: f.origin + '/records/:id', publicId: true, idType: 'integer', responsePath: 'id', identityPath: 'id', expect: { equals: { title: 'After' } } };
+  expect((await f.saveFixture(fixture)).ok).toBe(true);
+  const review = await reviewed(f), args = { tool: f.tool, reviewId: review.reviewId, confirmed: true };
+  await f.call('write-verify', args);
+  expect(f.run.writeExecutions[0]).toMatchObject({ status: 'verified', resultBinding: { id: resultId } });
+  expect(f.requests.at(-1).url).toBe('/records/' + resultId);
+  const restored = new ExplorationService(f.options);
+  expect(restored.runs.get(f.taskId).writeExecutions[0].resultBinding.id).toBe(resultId);
+  expect((await restored.execute('write-readback', { taskId: f.taskId, reviewId: review.reviewId })).data.passed).toBe(true);
+  await restored.execute('write-verify', { taskId: f.taskId, ...args });
+  expect(f.requests.filter(r => r.method === 'PUT')).toHaveLength(1);
+});
+
+async function pollFixture(f, maxAttempts = 3, intervalMs = 250) {
+  const fixture = structuredClone(f.fixture);
+  fixture.effect.after.equals.state = 'ready';
+  fixture.effect.poll = { maxAttempts, intervalMs, pending: { equals: { state: 'pending' } } };
+  expect((await f.saveFixture(fixture)).ok).toBe(true);
+  return reviewed(f);
+}
+
+it('binds polling to precise review and installs only after delayed real GET effects match', async () => {
+  const f = await setup({ asyncEffect: { pendingReads: 2 } }), old = await reviewed(f), review = await pollFixture(f);
+  expect(review.reviewId).not.toBe(old.reviewId);
+  expect(review.fixture.effect.poll).toMatchObject({ maxAttempts: 3, intervalMs: 250 });
+  expect(f.requests).toHaveLength(0);
+  expect((await f.call('write-verify', { tool: f.tool, reviewId: old.reviewId, confirmed: true })).error.code).toBe('STALE_REVIEW');
+  await f.call('write-verify', { tool: f.tool, reviewId: review.reviewId, confirmed: true });
+  expect(f.run.writeExecutions[0]).toMatchObject({ status: 'verified', effectAttempts: 3 });
+  expect(f.requests.map(r => r.method)).toEqual(['GET', 'PUT', 'GET', 'GET', 'GET']);
+  const install = (await f.call('review')).data;
+  await f.call('install', { reviewId: install.reviewId, confirmed: true }); expect(f.run.status).toBe('installed');
+});
+
+it('keeps exhausted polling uncertain after restart and later successful recovery', async () => {
+  const asyncEffect = { pendingReads: 100 }, f = await setup({ asyncEffect }), review = await pollFixture(f, 2);
+  const args = { tool: f.tool, reviewId: review.reviewId, confirmed: true };
+  await f.call('write-verify', args);
+  expect(f.run.writeExecutions[0]).toMatchObject({ status: 'uncertain', effectAttempts: 2 });
+  asyncEffect.pendingReads = 0;
+  const restored = new ExplorationService(f.options);
+  expect((await restored.execute('write-readback', { taskId: f.taskId, reviewId: review.reviewId })).data).toMatchObject({ passed: true, attempts: 1, originalStatus: 'uncertain' });
+  await restored.execute('write-verify', { taskId: f.taskId, ...args });
+  expect(f.requests.filter(r => r.method === 'PUT')).toHaveLength(1);
+  expect((await restored.execute('review', { taskId: f.taskId })).error.code).toBe('VALIDATION_REQUIRED');
+});
+
+it('cancels waiting polls and independently cancels recovery on a terminal task without unlocking it', async () => {
+  const f = await setup({ asyncEffect: { pendingReads: 100 } }), review = await pollFixture(f, 3, 5000);
+  const args = { taskId: f.taskId, tool: f.tool, reviewId: review.reviewId, confirmed: true };
+  await f.service.execute('write-verify', args);
+  await vi.waitFor(() => expect(f.requests).toHaveLength(3));
+  await f.service.execute('cancel', { taskId: f.taskId }); await f.service.jobs.get(f.taskId);
+  expect(f.run.status).toBe('cancelled'); expect(f.run.writeExecutions[0].status).toBe('uncertain');
+  const reading = f.service.execute('write-readback', { taskId: f.taskId, reviewId: review.reviewId });
+  await vi.waitFor(() => expect(f.requests).toHaveLength(4));
+  expect((await f.service.execute('write-readback', { taskId: f.taskId, reviewId: review.reviewId })).error.code).toBe('TASK_BUSY');
+  await f.service.execute('cancel', { taskId: f.taskId });
+  expect((await reading).error.code).toBe('WRITE_READBACK_CANCELLED');
+  expect(f.run.status).toBe('cancelled'); expect(f.service.readbacks.size).toBe(0);
+  await f.service.execute('write-verify', args);
+  expect(f.requests).toHaveLength(4);
 });

@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-18（数字响应 ID 与异步效果）：从 `1b123da` 接续，resultReadback 显式支持非负安全整数、严格原类型身份比较和最小 ID 恢复；HTTP/PAGE_FETCH/原生 UI 的 effect.poll 只对已声明 pending 重复 GET，复用精确审阅/文档身份/30 秒预算/消费账本，独立恢复 15 秒且不认证 uncertain。单次写和原生 UI 无 input/change/普通 call effectVerified:false 保持。WebCLI 117 文件/1330 项、最终聚焦 159 项、扩展 18 项、源码与双打包 HTTP 各 18 项、构建/配置/语法/Skill/npm pack 620 文件通过；Chromium 1217 双打包完整回归 74 项通过。多 ID/响应 URL/UI ID、复杂 UI、多步写/修复和未知项目审计仍待办，1194/平台/真实账户验收欠账保留。Python 网站探索agent未动，不推送/PR；阶段验证与交接完成后按用户约定暂停，整体目标未完成。
+
 - 2026-10-18（UI 原生表单单次提交）：从 `0a97cfb` 接续，新增 UI_SELECTOR/uiWrite 固定契约，原生字段无 input/change 填写、一次 requestSubmit、同文档新回执与独立 GET 的稳定身份/全部参数/改变关联值验证；复用精确审阅、派发前持久消费、取消/重启不重放、安装和知识。普通 call 明确 effectVerified:false。无幂等假设：断响应实测一次 submit/3 次请求/3 次服务端 mutation，uncertain 只能只读回查。WebCLI 116 文件/1284 项、写相关 80 项、扩展 18 项、Chromium 1217 完整 70 项、最终打包 UI 7 项/HTTP 15 项/页面写 10 项通过；同 URL 提交后重载的最终专项及报告见交接末尾。构建/公开配置/19 文件语法/npm pack 619 文件通过。复杂控件/整页提交/hidden CSRF/多步写/写修复/扩展回查与 1194 兼容待办保留。Python 网站探索agent未动，不推送/PR；独立阶段后按用户要求暂停整体目标。
 
 - 2026-10-18（实际写响应 ID 回查）：从 `2bb411c` 接续，HTTP/PAGE_FETCH 的 effect.resultReadback 使用已审阅同源单段模板与实际公开字符串 ID，保留固定 before/after 并严格核对资源身份和内容；最小 ID 先落盘，取消/重启仅 GET 回查，缺失/非法/丢响应不猜值、不重写，不确定状态不放行安装。真实 ID 不进入摘要/知识/安装包，普通 call 行为保持单写。WebCLI 115 文件/1275 项、最终聚焦 76 项、扩展相关 14 项通过；源码与最终打包 HTTP 各 15 项、页面写各 10 项通过。Chromium 1217 完整 65 项通过（早于最后断言别名加固，最终全量/聚焦/打包覆盖）；CLI/Bridge 构建、公开配置、10 文件语法/npm pack 617 文件通过。UI 控件写、多步写、数字/多 ID/响应 URL、写修复和完整对齐仍待办；1194 既有兼容问题保留。Python 网站探索agent未动，保存本地检查点、不推送/PR，按用户要求暂停整体目标。

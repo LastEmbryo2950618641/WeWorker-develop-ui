@@ -58,6 +58,7 @@ export class ExplorationService {
     this.runs = new Map();
     this.controllers = new Map();
     this.jobs = new Map();
+    this.readbacks = new Map();
     this.starting = new Map();
     for (const name of (fs.existsSync(this.root) ? fs.readdirSync(this.root) : [])) {
       if (!(mode === 'http' ? /^http-[a-f0-9-]{36}\.json$/ : /^[a-f0-9-]{36}\.json$/).test(name)) continue;
@@ -254,6 +255,10 @@ export class ExplorationService {
     if (command === 'write-readback') return readbackWrite(this, run, textArg(args.reviewId, 'reviewId', 64));
     if (command === 'write-verify' && run.writeExecutions?.some(item => item.reviewId === args.reviewId)) return verifyWrite(this, run, args);
     if (command === 'cancel') {
+      if (this.readbacks.has(taskId)) {
+        this.readbacks.get(taskId).abort();
+        return this.summary(run); // Cancel only the read; retain the original write outcome.
+      }
       if (terminal.has(run.status)) return this.summary(run);
       if (run.status === 'installing') throw fail('INVALID_STATE', 'Installation has started; inspect its outcome before making another change.');
       this.controllers.get(taskId)?.abort();
@@ -261,6 +266,7 @@ export class ExplorationService {
       return this.summary(run);
     }
     if (command === 'install' && run.status === 'installed') return this.summary(run);
+    if (this.readbacks.has(taskId)) throw fail('TASK_BUSY', 'Wait for the independent effect read or cancel it before changing the task.');
     if (active.has(run.status) && !(this.readOnly && ['draft-read', 'verification-read'].includes(command))) throw fail('TASK_BUSY', 'Wait for the current operation or cancel the task.');
     if (terminal.has(run.status) && !['draft-read', 'verification-read', 'write-verification-read'].includes(command)) throw fail('INVALID_STATE', 'This task is terminal. Start a new task.');
     if (command === 'replan') {

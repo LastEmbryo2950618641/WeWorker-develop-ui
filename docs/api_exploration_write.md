@@ -1,6 +1,6 @@
 # HTTP／Extension 写命令与副作用验证
 
-2026-10-18：独立探索新增 HTTP 写命令闭环。PUBLIC_API/AUTH_API 可在 `mode=http` 中无浏览器运行；COOKIE_API 沿用所选浏览器 profile 的凭据通道。最新增加 PAGE_FETCH 声明式 Extension 写：固定同源主文档、JSON 字符串字段映射、浏览器会话与明确服务端幂等契约。HTTP 与 PAGE_FETCH 现支持公开字符串返回 ID 的资源回查。最新增加 UI_SELECTOR 同文档原生表单单次提交与输入关联 GET 效果验证（见末节）；复杂控件和多步写流程尚未接入，Python 网站探索agent不参与。
+2026-10-18：独立探索新增 HTTP 写命令闭环。PUBLIC_API/AUTH_API 可在 `mode=http` 中无浏览器运行；COOKIE_API 沿用所选浏览器 profile 的凭据通道。最新增加 PAGE_FETCH 声明式 Extension 写：固定同源主文档、JSON 字符串字段映射、浏览器会话与明确服务端幂等契约。HTTP 与 PAGE_FETCH 现支持公开字符串或显式非负安全整数返回 ID 的资源回查，三种写验证均支持显式 pending 状态的有界 GET 轮询。最新增加 UI_SELECTOR 同文档原生表单单次提交与输入关联 GET 效果验证（见末节）；复杂控件和多步写流程尚未接入，Python 网站探索agent不参与。
 
 ## 来源与生成
 
@@ -65,7 +65,7 @@ HTTP write 每次普通调用也强制 `__confirmed:true`、最多一个请求�
 
 ## 当前限制与证据
 
-HTTP 路径不支持任意 UI 写操作、批量/多步写工作流、数字 ID/多 ID/响应 URL 或 header 回查、自动回滚、服务端幂等键协商、写工具局部 repair。单次 fixture 不能证明任意输入和任意站点的正确性。Cookie 写通道复用已有 profile/鉴权契约，但本阶段真实副作用验收使用独立 PUBLIC/AUTH loopback 服务，未对真实账户发写请求。
+HTTP 路径不支持任意 UI 写操作、批量/多步写工作流、多 ID/响应 URL 或 header 回查、自动回滚、服务端幂等键协商、写工具局部 repair。单次 fixture 不能证明任意输入和任意站点的正确性。Cookie 写通道复用已有 profile/鉴权契约，但本阶段真实副作用验收使用独立 PUBLIC/AUTH loopback 服务，未对真实账户发写请求。
 
 自动化见 `webcli/__tests__/exploration-write.test.js` 与 HTTP Runner 测试；真实 CLI/Bridge 验收见 `webcli/scripts/verify-exploration-http.mjs`（支持 `--bundled`），其中 write-acceptance 使用独立本地服务验证实际状态、响应丢失、无效果、重定向、取消和进程重启。具体本次结果见交接文档与 ROADMAP。
 
@@ -103,7 +103,7 @@ HTTP 路径不支持任意 UI 写操作、批量/多步写工作流、数字 ID/
 
 响应丢失、业务失败、效果不符、导航或超时仍保留 uncertain，不因幂等键而自动重试或允许安装。独立 readback 在原 profile/任务 tab 身份有效且页面仍符合路由时可运行，只证明当前 after 是否满足；不会把失败的命令变成通过。浏览器重启或扩展重载导致旧会话失效仍须新任务，不能改绑另一页读取。
 
-真实验收脚本为 `webcli/scripts/extension-write-acceptance.mjs`，由 `verify-exploration-browser.mjs --page-write-only` 调用；`--bundled-cli --bundled-bridge` 验证两端 bundle。隔离 loopback 服务分别记录接收请求与实际 mutation 次数，覆盖 HttpOnly、正常效果、四种写方法响应丢失/同键重发仅一次效果、无效果、重定向、取消、重启、安装和普通调用。未对真实账户发写请求；任意服务端幂等实现、动态 CSRF/签名、嵌套/非字符串正文、UI 控件提交、跨 frame/跨源、多步写、数字/多 ID/响应 URL 回查和写 repair 均未覆盖。最终运行结果见交接末尾。
+真实验收脚本为 `webcli/scripts/extension-write-acceptance.mjs`，由 `verify-exploration-browser.mjs --page-write-only` 调用；`--bundled-cli --bundled-bridge` 验证两端 bundle。隔离 loopback 服务分别记录接收请求与实际 mutation 次数，覆盖 HttpOnly、正常效果、四种写方法响应丢失/同键重发仅一次效果、无效果、重定向、取消、重启、安装和普通调用。未对真实账户发写请求；任意服务端幂等实现、动态 CSRF/签名、嵌套/非字符串正文、UI 控件提交、跨 frame/跨源、多步写、多 ID/响应 URL 回查和写 repair 均未覆盖。最终运行结果见交接末尾。
 
 
 ## 写响应 ID 的资源回查
@@ -127,7 +127,7 @@ HTTP 与 Extension PAGE_FETCH 写 fixture 可在 effect 中增加 resultReadback
 
 作者须在 successResponse.body 中提供公开 mock ID，例如 `{"ok":true,"item":{"id":"example-mock"}}`，用于离线检查声明。真实运行从实际传输响应的 `item.id` 提取，HTTP 在宿主脱敏后、作者 Worker 映射结果前读取，Extension 使用固定函数返回的原始 JSON；不取 mock、作者结果映射、响应提供的 URL 或 Location header。
 
-url 必须与写接口同 origin，包含恰好一个完整的 `:id` 路径段，无 query/hash/凭据。responsePath 与 identityPath 使用最多八段精确自有属性路径，不接受通配符、凭据字段或原型属性。ID 必须为 1–512 字符的公开字符串，只包含 Unicode 字母/数字、下划线、点或短横线；保留前导零，作为一个路径段编码，拒绝 `.`/`..`、百分号、斜杠、控制字符和数字类型。模板与最终 URL 都经只读语义检查；重定向不跟随。当前不支持数字 ID、多返回 ID、header ID、动态 query/hash 或异步轮询。
+url 必须与写接口同 origin，包含恰好一个完整的 `:id` 路径段，无 query/hash/凭据。responsePath 与 identityPath 使用最多八段精确自有属性路径，不接受通配符、凭据字段或原型属性。默认 ID 必须为 1–512 字符的公开字符串，只包含 Unicode 字母/数字、下划线、点或短横线；保留前导零，作为一个路径段编码，拒绝 `.`/`..`、百分号、斜杠、控制字符和未声明的数字类型。可显式加 `idType:"integer"`，此时 mock 和实际响应都必须是 0–9007199254740991 的 JSON 数字整数，拒绝负数、负零、小数、非有限数、越界值和数字字符串。ID 在账本与资源身份比较中保留原类型，只有构造 URL 时编码十进制文本；不会把字符串 `"007"` 转成 7。默认不写 idType 或明确 string 时保持原行为。模板与最终 URL 都经只读语义检查；重定向不跟随。当前不支持任意精度/负数数字 ID、多返回 ID、header ID、动态 query/hash；异步轮询见下一节。
 
 write-review 展示完整 resultReadback 声明与 ID 持久化政策，纳入既有 package/cases/fixtures 摘要。`publicId:true` 是作者确认该字段为可保存公开标识的声明，不能用来保存个人数据、账号、凭据或不明字段。实际只保存 `{id}` 到当前任务执行账本，随既有 0600 原子存储；摘要/get/list/trace、write-review 执行记录、知识和安装包不输出该真实 ID，其余响应内容不落盘。
 
@@ -136,6 +136,38 @@ write-review 展示完整 resultReadback 声明与 ID 持久化政策，纳入�
 丢失响应、缺 ID、非法 ID 或保存失败均不能通过或继续资源 GET；review 已消耗，不得为找回 ID 重发写。没有持久 ID 时 write-readback 在发送任何 GET 前返回 WRITE_RESULT_ID_UNAVAILABLE，调用方须通过独立已授权的只读工具检查服务状态，不能猜测资源地址。已保存 ID 后取消/重启/详情读取失败，可用原 reviewId 重新运行两个 GET，仍保留原 uncertain，不放行安装或把失败 handler 变成通过。
 
 自动化入口为 `exploration-write-result.test.js`、HTTP/Extension 写测试，以及共享 `scripts/write-result-acceptance.mjs`；由原 HTTP 和页面写验收脚本在源码/打包模式调用。只验证隔离 loopback 公开夹具，不代表任意外部创建接口可用。最新数量与报告见交接末尾。
+
+## 异步效果：显式 pending 状态与有界 GET 轮询
+
+2026-10-18 增量。HTTP、PAGE_FETCH 和原生 UI 写 fixture 的 effect 可增加 poll；不声明时保留原单次 after。轮询只作用于独立效果 GET，before 检查仍只执行一次，写仍只派发一次，UI 页面回执也不重触发。
+
+```json
+{
+  "readback": {"url":"https://example.com/items/count"},
+  "before": {"equals":{"count":0}},
+  "after": {"equals":{"count":1,"state":"ready"}},
+  "resultReadback": {
+    "url":"https://example.com/items/:id", "publicId":true, "idType":"integer",
+    "responsePath":"item.id", "identityPath":"id",
+    "expect":{"equals":{"title":"After","state":"ready"}}
+  },
+  "poll": {
+    "intervalMs":250, "maxAttempts":10,
+    "pending":{"equals":{"state":"pending"}},
+    "resultPending":{"equals":{"state":"pending"}}
+  }
+}
+```
+
+poll 全部字段进入原 fixture 摘要与精确审阅，修改后旧 review 失效。intervalMs 明确使用毫秒，接受 250–5000 的整数；maxAttempts 接受 2–20，包含首次观察轮次。pending 对应固定 readback，resultPending 只在 resultReadback 已声明时使用，至少有一个。每个条件只接受 1–10 个精确公开属性路径的标量 equals，不支持通配符、敏感/原型字段或脚本；其中至少一项必须与对应 after/expect 的最终 equals 不同，避免把成功状态误声明为等待。
+
+每轮先 GET 固定回查；after 通过后，才 GET 已持久化实际 ID 的资源。只有当前未通过响应完整匹配其已声明 pending 条件，才等待下一轮。每轮重新检查固定 after；资源 identityPath 必须始终与实际 ID 类型和值一致，UI 的稳定 identityPath 也必须保持原值，身份错误立即停止，即使状态为 pending。网络/HTTP 错误（包括 404/429/5xx）、重定向、未声明状态、错误最终内容、页面文档或 profile 变化均不重试。作者须依据实际业务契约声明 pending；本功能不猜测等待状态，不读取 Retry-After，也不轮询其他 URL。
+
+验证仍共用原 30 秒总预算，包含 before、写、等待和全部 GET；独立 write-readback 的总预算为 15 秒，实际轮数也受剩余时间约束。停止等待不会增加写次数；浏览器自己的网络重发风险与 PAGE_FETCH 服务端幂等要求不变。页面轮询始终固定初始文档身份，独立恢复则在本次第一个 GET 固定当前合法文档，之后不接受同 URL 重载。完成的轮数输出在 effectAttempts 或 readback.attempts；一轮最多包含两个逻辑 GET，此数不表示网络请求数/副作用数，异常中断可能不返回轮数。不存储轮询响应或实际字段历史。
+
+耗尽次数、超时、取消或重启保持 uncertain，不自动继续或重写。明确的 write-readback 可以重新开始一次只读轮询；即使匹配，也不改原执行状态、effectVerified 或安装门禁。同一任务只允许一个独立回查，期间修改任务返回 TASK_BUSY。`exploration.cancel` 可停止独立回查（包括原任务已 cancelled/installed 的情况），仅中断读取并保持原任务状态。普通安装命令不携带 fixture，不附加 ID 存储或轮询；原生 UI 普通调用仍返回 effectVerified:false。
+
+聚焦测试：exploration-write-result、exploration-write-poll、exploration-write、exploration-extension-write、exploration-ui-write。真实验收复用 write-result-acceptance 与 ui-write-acceptance，在隔离 loopback 服务验证延迟可见状态、严格数字身份、次数耗尽、取消/重启、页面文档变化及恢复不放行安装。具体结果见交接末尾；未授权外部账户写、长期后台轮询和任意异步服务契约仍不在已验收范围。
 
 ## UI_SELECTOR 原生表单单次提交
 
@@ -200,4 +232,4 @@ UI fixture 专门使用 `expectedSubmission`，不填写 HTTP successResponse/fa
 
 安装后的普通 call 也必须 `__confirmed:true`，返回 `{ok:true,submitted:true,confirmationMatched:true,effectVerified:false}` 只说明页面回执匹配。验证 fixture 不进入安装包，所以普通 call 不附加效果 GET 或持久 review 账本；必须由调用方独立检查实际效果，失败后不得盲目重调。同值旧回执会拒绝，但不是持久幂等机制。
 
-仍未覆盖：触发 input/change 才生效的受控组件、自动保存、click/Enter 手势、原生整页提交导航、hidden CSRF、多步写、异步服务效果轮询、UI 写响应 ID、复杂控件/跨 frame、写 repair。既有 HTTP/PAGE_FETCH 的数字/多 ID/header/响应 URL 等回查差距保持。自动化入口为 `exploration-ui-write.test.js`、`extension/test/ui-write.test.mjs`；真实验收 `verify-exploration-browser.mjs --ui-write-only`，加 `--bundled-cli --bundled-bridge` 验证两端 bundle，结果见交接末尾。
+仍未覆盖：触发 input/change 才生效的受控组件、自动保存、click/Enter 手势、原生整页提交导航、hidden CSRF、多步写、UI 写响应 ID、复杂控件/跨 frame、写 repair。既有 HTTP/PAGE_FETCH 的多 ID/header/响应 URL 等回查差距保持；数字 ID 仅覆盖显式非负安全整数。自动化入口为 `exploration-ui-write.test.js`、`extension/test/ui-write.test.mjs`；真实验收 `verify-exploration-browser.mjs --ui-write-only`，加 `--bundled-cli --bundled-bridge` 验证两端 bundle，结果见交接末尾。

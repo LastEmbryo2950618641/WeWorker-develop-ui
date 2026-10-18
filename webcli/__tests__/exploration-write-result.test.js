@@ -36,3 +36,22 @@ it('requires a captured binding for recovery and rejects another origin before r
   execution.http.origins = ['https://example.org'];
   expect(() => savedWriteResult(execution)).toThrow();
 });
+
+it.each([0, 7, Number.MAX_SAFE_INTEGER])('preserves explicitly declared integer identity %s through resolution and recovery', id => {
+  const normalized = normalizeWriteResult({ ...spec, idType: 'integer' }, { item: { id: 1 } }, origin);
+  expect(resolveWriteResult(normalized, { item: { id } }, origin)).toEqual({ id, url: origin + '/items/' + id });
+  expect(writeResultIdentityMatches({ id }, normalized, id)).toBe(true);
+  expect(writeResultIdentityMatches({ id: String(id) }, normalized, id)).toBe(false);
+  expect(savedWriteResult({ effect: { resultReadback: normalized }, http: { origins: [origin] }, resultBinding: { id } }).id).toBe(id);
+});
+
+it.each([-0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, NaN, Infinity, '7', '007', null, true])('rejects non-exact integer identities %#', id => {
+  expect(() => resolveWriteResult({ ...spec, idType: 'integer' }, { item: { id } }, origin)).toThrow();
+});
+
+it('does not infer an ID type from the mock or silently widen an old declaration', () => {
+  for (const idType of [null, 'number', 'auto', true]) expect(() => normalizeWriteResult({ ...spec, idType }, { item: { id: 1 } }, origin)).toThrow();
+  expect(() => normalizeWriteResult(spec, { item: { id: 1 } }, origin)).toThrow();
+  expect(() => normalizeWriteResult({ ...spec, idType: 'integer' }, { item: { id: '1' } }, origin)).toThrow();
+  expect(normalizeWriteResult(spec, { item: { id: '007' } }, origin)).not.toHaveProperty('idType');
+});

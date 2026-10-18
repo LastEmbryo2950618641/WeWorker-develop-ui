@@ -13,7 +13,8 @@ import { runHttpTool } from './http-runner.js';
 import { strictVerifier } from './http-preview.js';
 import { resolveUiWrite, validateUiEffect, uiWriteSuccess } from './exploration-ui-write.js';
 import { resolvePageWrite } from './exploration-extension-write.js';
-import { normalizeWriteResult, resolveWriteResult, savedWriteResult, writeResultIdentityMatches } from './exploration-write-result.js';
+import { normalizeWriteResult, resolveWriteResult, savedWriteResult } from './exploration-write-result.js';
+import { normalizeWritePoll, readWriteEffect } from './exploration-write-poll.js';
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const clone = value => JSON.parse(JSON.stringify(value));
@@ -79,7 +80,7 @@ function normalizeFixture(run, command, input) {
     if (!Number.isInteger(status) || (name === 'successResponse' ? status < 200 || status > 299 : status < 400 || status > 599)) invalid('Mock responses require success 2xx and failure 4xx/5xx statuses.');
   }
   for (const name of command.uiWrite ? [] : ['successExpectation', 'failureExpectation']) if (!object(input[name]) || !Object.keys(input[name]).length) invalid('Mock interpretations must be non-empty objects.');
-  keys(input.effect, ['readback', 'before', 'after', 'resultReadback', ...(command.uiWrite ? ['argumentPaths', 'identityPath'] : [])]);
+  keys(input.effect, ['readback', 'before', 'after', 'resultReadback', 'poll', ...(command.uiWrite ? ['argumentPaths', 'identityPath'] : [])]);
   keys(input.effect.readback, ['url']);
   assertReadRequest(input.effect.readback, run.origin, run.allowedOrigins || []);
   const readUrl = new URL(input.effect.readback.url);
@@ -90,7 +91,8 @@ function normalizeFixture(run, command, input) {
   if (command.uiWrite) validateUiEffect(command, input);
   const resultReadback = input.effect.resultReadback === undefined ? undefined
     : normalizeWriteResult(input.effect.resultReadback, input.successResponse.body, url.origin);
-  return clone({ ...input, effect: { readback: input.effect.readback, before, after, ...(command.uiWrite ? { argumentPaths: input.effect.argumentPaths, identityPath: input.effect.identityPath } : {}), ...(resultReadback ? { resultReadback } : {}) } });
+  const poll = input.effect.poll === undefined ? undefined : normalizeWritePoll(input.effect.poll, { after, resultReadback });
+  return clone({ ...input, effect: { readback: input.effect.readback, before, after, ...(command.uiWrite ? { argumentPaths: input.effect.argumentPaths, identityPath: input.effect.identityPath } : {}), ...(resultReadback ? { resultReadback } : {}), ...(poll ? { poll } : {}) } });
 }
 
 export function writeCase(service, run, args, editing) {
@@ -118,7 +120,8 @@ export function writeReview(service, run, tool) {
   return { reviewId, digest, tool: command.name, fixture, ...(command.uiWrite ? { page: { tabId: run.tabId, route: command.pageRoute, ui: command.uiWrite } } : command.pageWrite ? { page: { tabId: run.tabId, route: command.pageRoute, request: command.pageWrite,
     idempotency: { header: command.pageWrite.idempotency.header, key: hash({ taskId: run.taskId, reviewId }) } } } : { http: command.http }),
     consumed: Boolean(previous), execution: previous ? previousSummary : null, requiresConfirmation: true,
-    ...(fixture.effect.resultReadback ? { responseIdPolicy: 'Retain only the declared public string ID from the actual transport response in this task ledger for independent recovery GETs. Never use a mock ID, handler output, response URL or replay to recover it.' } : {}),
+    ...(fixture.effect.resultReadback ? { responseIdPolicy: 'Retain only the declared public string or non-negative safe integer ID from the actual transport response in this task ledger for independent recovery GETs. Never use a mock ID, handler output, response URL or replay to recover it.' } : {}),
+    ...(fixture.effect.poll ? { pollingPolicy: 'Only repeat reviewed GETs for explicitly declared pending states within the attempt/time budget. Errors, identity changes and other mismatches stop. Recovery never promotes an uncertain write or permits installation.' } : {}),
     policy: command.uiWrite ? 'One native requestSubmit after silent input assignment. Page acknowledgement is not business proof; independent GET binds every input and a changed correlation. No assumption of server idempotency or single network request. Never automatically retry an uncertain submission.' : command.pageWrite ? 'One logical page write after the before check; browser transport may resend with the same reviewed idempotency key. The declared server must deduplicate it. No application retries or rollback.'
       : 'One real write after a successful before check; no redirects, retries or rollback. Readback is an independent GET.' };
 }
@@ -163,15 +166,8 @@ async function readEffectRequest(service, execution, signal, request, options) {
 
 async function readEffect(service, execution, signal, phase, options = {}) {
   const binding = phase === 'after' && execution.effect.resultReadback ? savedWriteResult(execution) : null;
-  const result = await readEffectRequest(service, execution, signal, execution.effect.readback, options);
-  let passed = (await strictVerifier())(result.value, execution.effect[phase]).length === 0;
-  if (binding && passed) {
-    const spec = execution.effect.resultReadback;
-    const resource = await readEffectRequest(service, execution, signal, { url: binding.url }, { ...options, ...(result.document ? { document: result.document } : {}) });
-    passed = passed && writeResultIdentityMatches(resource.value, spec, binding.id)
-      && (await strictVerifier())(resource.value, spec.expect).length === 0;
-  }
-  return { passed, document: result.document };
+  return readWriteEffect({ execution, phase, binding, signal, document: options.document, deadline: options.deadline || Date.now() + 15000,
+    verify: await strictVerifier(), read: (request, document) => readEffectRequest(service, execution, signal, request, { ...options, document }) });
 }
 
 export function verifyWrite(service, run, args) {
@@ -245,7 +241,9 @@ export function verifyWrite(service, run, args) {
       if (violation || calls !== 1 || !execution.dispatched || result?.ok === false || result?.error || !subsetMatches(result, execution.page?.ui ? uiWriteSuccess : review.fixture.successExpectation)) throw fail('WRITE_RESULT_MISMATCH', 'The command result or request count failed the reviewed case.');
       if (execution.page?.ui) execution.confirmationVerified = true;
       else execution.responseVerified = true;
-      execution.effectVerified = (await readEffect(service, execution, controller.signal, 'after', { deadline, operationId, document: before.document })).passed;
+      const after = await readEffect(service, execution, controller.signal, 'after', { deadline, operationId, document: before.document });
+      execution.effectVerified = after.passed;
+      execution.effectAttempts = after.attempts;
       if (!execution.effectVerified) throw fail('WRITE_EFFECT_MISMATCH', 'Write response succeeded but the independent after assertion failed.');
       if (controller.signal.aborted) throw fail('HTTP_ABORTED', 'Write verification cancelled after dispatch.');
       if (writeProofDigest(run) !== review.digest) throw fail('STALE_DRAFT', 'Draft changed during write verification.');
@@ -264,16 +262,18 @@ export function verifyWrite(service, run, args) {
 
 /** Re-inspection can establish the effect, never replays or blesses a failed handler. */
 export async function readbackWrite(service, run, reviewId) {
-  if (service.jobs.has(run.taskId)) throw fail('TASK_BUSY', 'Wait for the in-flight operation to settle before reading its effect.');
+  if (service.jobs.has(run.taskId) || service.readbacks.has(run.taskId)) throw fail('TASK_BUSY', 'Wait for the in-flight operation to settle before reading its effect.');
   const execution = run.writeExecutions?.find(item => item.reviewId === reviewId);
   if (!execution) throw fail('STALE_REVIEW', 'No consumed write review with that ID.');
   const release = execution.page ? service.tabLocks.acquire(execution.page.tabId) : () => {};
   const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 15000);
+  const deadline = Date.now() + 15000;
+  service.readbacks.set(run.taskId, controller);
   try {
     if (execution.page) await service.checkTab(run);
-    const { passed } = await readEffect(service, execution, controller.signal, 'after');
-    execution.readback = { at: new Date().toISOString(), passed };
+    const { passed, attempts } = await readEffect(service, execution, controller.signal, 'after', { deadline });
+    execution.readback = { at: new Date().toISOString(), passed, attempts };
     service.save(run);
-    return { reviewId, passed, originalStatus: execution.status, writeReplayed: false };
-  } finally { clearTimeout(timer); controller.abort(); release(); }
+    return { reviewId, passed, attempts, originalStatus: execution.status, writeReplayed: false };
+  } finally { clearTimeout(timer); controller.abort(); service.readbacks.delete(run.taskId); release(); }
 }

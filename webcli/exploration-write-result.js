@@ -20,8 +20,11 @@ function valueAt(value, path) {
 /** Only the explicitly reviewed public identifier can survive the response. */
 export function resolveWriteResult(spec, response, origin) {
   const id = valueAt(response, spec.responsePath);
-  if (typeof id !== 'string' || !id || id.length > 512 || id === '.' || id === '..'
-    || !/^[\p{L}\p{N}_.-]+$/u.test(id)) throw fail('WRITE_RESULT_ID_INVALID', 'The actual write response lacks a safe public string identifier. No resource URL was guessed.');
+  const valid = spec.idType === 'integer'
+    ? Number.isSafeInteger(id) && id >= 0 && !Object.is(id, -0)
+    : (spec.idType === undefined || spec.idType === 'string') && typeof id === 'string' && id.length > 0 && id.length <= 512
+      && id !== '.' && id !== '..' && /^[\p{L}\p{N}_.-]+$/u.test(id);
+  if (!valid) throw fail('WRITE_RESULT_ID_INVALID', 'The actual write response lacks the declared public string or non-negative safe integer identifier. No coercion or resource URL guessing is allowed.');
   const url = new URL(spec.url);
   url.pathname = '/' + url.pathname.slice(1).split('/').map(part => part === ':id' ? encodeURIComponent(id) : part).join('/');
   assertReadRequest({ url: url.href }, origin, []);
@@ -30,7 +33,8 @@ export function resolveWriteResult(spec, response, origin) {
 
 export function normalizeWriteResult(input, mockResponse, origin) {
   if (!input || typeof input !== 'object' || Array.isArray(input)
-    || Object.keys(input).some(key => !['url', 'publicId', 'responsePath', 'identityPath', 'expect'].includes(key)) || input.publicId !== true) invalid();
+    || Object.keys(input).some(key => !['url', 'publicId', 'idType', 'responsePath', 'identityPath', 'expect'].includes(key)) || input.publicId !== true
+    || input.idType !== undefined && !['string', 'integer'].includes(input.idType)) invalid();
   checkPath(input.responsePath); checkPath(input.identityPath);
   let url;
   try { url = new URL(input.url); } catch { invalid(); }
@@ -42,13 +46,13 @@ export function normalizeWriteResult(input, mockResponse, origin) {
     const canonical = key.replace(/^\$\.?/, '').split('.').filter(Boolean).join('.');
     return canonical && canonical !== input.identityPath && !canonical.includes('*');
   })) invalid();
-  const spec = { url: url.href, publicId: true, responsePath: input.responsePath, identityPath: input.identityPath, expect };
+  const spec = { url: url.href, publicId: true, ...(input.idType !== undefined ? { idType: input.idType } : {}), responsePath: input.responsePath, identityPath: input.identityPath, expect };
   try { resolveWriteResult(spec, mockResponse, origin); } catch { invalid(); }
   return spec;
 }
 
 export function writeResultIdentityMatches(value, spec, id) {
-  return valueAt(value, spec.identityPath) === id;
+  return Object.is(valueAt(value, spec.identityPath), id);
 }
 
 export function savedWriteResult(execution) {

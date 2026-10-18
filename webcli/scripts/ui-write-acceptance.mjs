@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 
 export async function verifyUiWrites({ cli, record, passed, stopBridge, startBridge }) {
-  const requests = [], values = new Map(), held = new Map(), effects = new Map();
+  const requests = [], values = new Map(), held = new Map(), effects = new Map(), readyAt = new Map();
   const pause = () => new Promise(resolve => setTimeout(resolve, 100));
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost'), label = url.pathname.split('/').pop();
@@ -39,14 +39,16 @@ export async function verifyUiWrites({ cli, record, passed, stopBridge, startBri
       const submitted = JSON.parse(body);
       if (label !== 'noeffect') {
         effects.set(label, (effects.get(label) || 0) + 1);
-        values.set(label, label === 'wrongidentity' ? { ...submitted, item: 'other-item' } : submitted);
+        values.set(label, ['wrongidentity', 'pollidentity'].includes(label) ? { ...submitted, item: 'other-item' } : submitted);
+        readyAt.set(label, Date.now() + 1200);
       }
       if (label === 'lost') { req.socket.destroy(); return; }
       if (['timeout', 'stopped', 'restart'].includes(label)) { held.set(label, { res, submitted }); return; }
       if (label === 'error') { res.writeHead(409); res.end('{}'); return; }
       res.end(JSON.stringify({ ok: true })); return;
     }
-    res.end(JSON.stringify(values.get(label) || { item: 'example-item', title: 'Before', marker: 'before' }));
+    res.end(JSON.stringify({ ...(values.get(label) || { item: 'example-item', title: 'Before', marker: 'before' }),
+      ...(['async', 'pollidentity'].includes(label) ? { state: !values.has(label) ? 'idle' : Date.now() < readyAt.get(label) ? 'pending' : 'ready' } : {}) }));
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = 'http://127.0.0.1:' + server.address().port;
@@ -75,6 +77,10 @@ export async function verifyUiWrites({ cli, record, passed, stopBridge, startBri
     const representativeArgs={item:'example-item',title:'007 示例',marker:'after-'+label};
     const fixture={id:'example-'+label,representativeArgs,expectedSubmission:{url,method:'POST',body:representativeArgs},
       effect:{readback:{url},identityPath:'item',argumentPaths:{item:'item',title:'title',marker:'marker'},before:{equals:{item:'example-item',title:'Before',marker:'before'}},after:{equals:representativeArgs}}};
+    if (['async', 'pollidentity'].includes(label)) {
+      fixture.effect.after.equals = { ...representativeArgs, state: 'ready' };
+      fixture.effect.poll = { intervalMs: 250, maxAttempts: 10, pending: { equals: { state: 'pending' } } };
+    }
     const old=(await cli('exploration.write-verification-read',{taskId,tool})).data;
     await cli('exploration.write-verification-write',{taskId,tool,fixture,expectedHash:old.hash});
     const before=requests.length;
@@ -143,6 +149,21 @@ export async function verifyUiWrites({ cli, record, passed, stopBridge, startBri
       assert.equal((await cli('exploration.write-readback',{taskId:f.args.taskId,reviewId:f.args.reviewId})).data.passed,true);
     }
     passed('UI cancellation and real Bridge restart consume authorization durably; recovery performs GET without replay');
+    for (const label of ['async', 'pollidentity']) {
+      const f = await draft(label); await cli('exploration.write-verify', f.args); const state = await settle(f.args.taskId);
+      assert.equal(state.writeExecutions[0].status, label === 'async' ? 'verified' : 'uncertain', JSON.stringify(state));
+      assert.equal(count(label), 1);
+      assert.equal(state.writeExecutions[0].confirmationVerified, true);
+      if (label === 'async') assert.ok(state.writeExecutions[0].effectAttempts > 1);
+      else {
+        assert.equal(state.writeExecutions[0].effectAttempts, 1);
+        assert.equal((await cli('exploration.review', { taskId: f.args.taskId }, false)).error.code, 'VALIDATION_REQUIRED');
+      }
+      const page = (await cli('browser.eval', { session: f.session, expression: '({submissions:window.exampleSubmissions,events:window.exampleInputEvents})' })).data.value;
+      assert.deepEqual(page, { submissions: 1, events: 0 });
+      await cli('exploration.write-verify', f.args); assert.equal(count(label), 1);
+    }
+    passed('UI receipt remains separate from delayed effects; bounded GET polling preserves input/identity checks and never resubmits');
     assert.ok(requests.every(v=>v.authenticated&&!v.hasIdempotency));
   } finally { await record('ui-write-requests',requests); await record('ui-write-mutations',Object.fromEntries(effects)); await new Promise(resolve=>{server.close(resolve);server.closeAllConnections();}); }
 }
