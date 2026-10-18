@@ -254,3 +254,16 @@ webcli call exploration.repair --args '{"taskId":"example-task","site":"example.
 - trace 输出结构诊断、事件、文件清单与计划，便于交接修复；不含捕获正文或代码。verification-read 与 knowledge-read 可恢复作者测试用例；安装后修复使用 repair-info/repair，再走相同的验证、审阅与安装流程。
 - 证据的 URL 参数值被省略；不要把 `<value>` 作为实际查询值。业务参数来自用户输入，登录信息由既有浏览器运行时取得。
 - 不操作 Python 网站探索agent，不要求启动桌面客户端，不读取客户端模型 Key。
+
+
+### 原生 UI 表单写：一次提交与独立效果验证
+
+浏览器 capabilities 必须包含 ui_write_v1 和 page_write_v1。使用明确 action 声明/观察来源、strategy=UI_SELECTOR、risk=write、pagePathname 和 uiWrite 生成。uiWrite 指定 form、inputMode=native-setter-no-events、inputs:[{selector,name,parameter}]、submit:{selector,text}、confirmation:{selector,attribute,parameter}；完整字段与公开示例见仓库 docs/api_exploration_write.md 的“UI_SELECTOR 原生表单单次提交”。
+
+先从实际页面确认表单提交时读取原生字段、无自动保存，独立 GET 可关联到准确资源与本次输入。原生 setter 不发 input/change/click，只调用一次 requestSubmit；受控/复杂组件、hidden CSRF、整页跳转、Shadow/frame、click/Enter 流程不在支持范围，不能绕过守卫或退回任意 JS 实写。来源声明零请求，不是成功证据。
+
+UI fixture 用 id、representativeArgs、expectedSubmission:{url,method:"POST",body}、effect:{readback,identityPath,argumentPaths,before,after}，不用 HTTP mock 响应。每个参数在 argumentPaths 绑定不同精确公开字段，after.equals 等于该参数；identityPath 在 before/after 保持相同非空公开字符串，confirmation.parameter 对应字段必须改变。独立资源身份、内容和关联值都要验证，不能只检查页面“成功”或条数。
+
+validate 的模型零提交；write-review 展示完整输入/提交/确认/读取契约，只有用户授权实际目标和副作用后才 write-verify 精确 reviewId。已有明确隔离测试授权无需重复确认；外部账户写没有授权时先完成具体审阅再征求同意。任务账本在交给扩展前持久消费，同 review 重入/失败/超时/取消/重启/丢响应均不重放。恢复优先 write-readback 的独立 GET，uncertain 不变成通过、不放行安装。
+
+一次 requestSubmit 不等于一次网络请求或实际修改，页面和浏览器可能重发；本路径不注入幂等键、不假设服务端去重。普通 call 的 submitted/confirmationMatched 只证明页面回执，effectVerified:false 明确尚未回查；fixture 不随包安装，调用方须另行读取实际效果。旧回执拒绝仅为防陈旧结果，不能当持久去重。不要为取得新回执换关联值后自动重交。

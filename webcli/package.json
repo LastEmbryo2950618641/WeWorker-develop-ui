@@ -23,6 +23,7 @@
     "exploration-write.js",
     "exploration-write-result.js",
     "exploration-extension-write.js",
+    "exploration-ui-write.js",
     "exploration-analysis.js",
     "exploration-revisions.js",
     "browser-commands.js",

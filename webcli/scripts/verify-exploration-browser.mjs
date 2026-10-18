@@ -20,6 +20,7 @@ import { verifyBrowserProfiles } from './browser-profile-acceptance.mjs';
 import { verifyHostHttp } from './http-acceptance.mjs';
 import { verifyPageNavigation } from './page-navigation-acceptance.mjs';
 import { verifyPageWorkflow } from './page-workflow-acceptance.mjs';
+import { verifyUiWrites } from './ui-write-acceptance.mjs';
 import { verifyExtensionWrites } from './extension-write-acceptance.mjs';
 
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -289,6 +290,11 @@ try {
     stopBridge: async () => { const closed = new Promise(resolve => bridge.once('exit', resolve)); bridge.kill('SIGTERM'); await closed; },
     startBridge: async () => { await startBridge(); await connected(); },
   });
+  const uiWrites = () => verifyUiWrites({ cli, record, passed,
+    stopBridge: async () => { const closed = new Promise(resolve => bridge.once('exit', resolve)); bridge.kill('SIGTERM'); await closed; },
+    startBridge: async () => { await startBridge(); await connected(); },
+  });
+  if (process.argv.includes('--ui-write-only')) { await uiWrites(); return; }
   if (process.argv.includes('--page-write-only')) { await pageWrites(); return; }
 
   const tabs = (await cli('exploration.tabs')).data.tabs;
@@ -991,6 +997,7 @@ try {
   await profiles();
   await hostHttp();
   await pageWrites();
+  await uiWrites();
   })();
 } catch (error) {
   await record('failure', { message: error.message, stack: error.stack, browserEvents });

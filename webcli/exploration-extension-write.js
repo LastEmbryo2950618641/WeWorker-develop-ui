@@ -10,7 +10,7 @@ export function validatePageWrite(command) {
   const spec = command.pageWrite, route = command.pageRoute;
   if (!object(spec) || spec.version !== 1 || Object.keys(spec).some(key => !['version', 'url', 'method', 'bodyParameters', 'idempotency'].includes(key))
     || command.runtime !== 'extension' || command.safety !== 'write' || command.requires_confirmation === false || command.execution
-    || command.pageWorkflow || command.pageStrategy || !route || Object.keys(route).some(key => !['origin', 'pathname'].includes(key))) fail('Page writes require an exact foreground route, write safety and confirmation.');
+    || command.uiWrite || command.pageWorkflow || command.pageStrategy || !route || Object.keys(route).some(key => !['origin', 'pathname'].includes(key))) fail('Page writes require an exact foreground route, write safety and confirmation.');
   let page;
   try { page = new URL(route.origin + route.pathname); } catch { fail('Invalid page write route.'); }
   if (typeof route.pathname !== 'string' || !/^\/(?!\/)/.test(route.pathname) || page.origin !== route.origin || page.pathname !== route.pathname

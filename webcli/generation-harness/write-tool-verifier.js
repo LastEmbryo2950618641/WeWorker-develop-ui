@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import { runHttpTool } from '../http-runner.js';
 import { isPackageDraft, packageDraftBundle, readGenerationEvidence } from './package-inspection.js';
 import { verifyRetainedPackage } from './existing-site.js';
+import { resolveUiWrite, validateUiEffect, uiWriteSuccess, uiWriteFailure } from '../exploration-ui-write.js';
 import { resolvePageWrite } from '../exploration-extension-write.js';
 
 function error(code, message, extra = {}) {
@@ -138,8 +139,17 @@ export async function verifyGeneratedWriteTools({ adapterDir, expectedSiteKey = 
       window.__webcliRegisterCommand = (id, handler) => { rawHandlers.set(id, handler); register(id, handler); };
       for (const script of bundle.scripts.slice(1)) new vm.Script(script.source).runInContext(context, { timeout: 1000 });
       packageWriteTools = bundle.pkg.commands.filter(command => command.safety === 'write' && !retained.has(command.id)).map(command => ({
-        name: command.name, httpRuntime: command.runtime === 'http' || Boolean(command.pageWrite), writeVerification: fixtures?.commands?.[command.id],
-        handler: command.pageWrite ? async args => {
+        name: command.name, httpRuntime: command.runtime === 'http' || Boolean(command.pageWrite || command.uiWrite), writeVerification: command.uiWrite ? { ...fixtures?.commands?.[command.id], expectedRequest: fixtures?.commands?.[command.id]?.expectedSubmission,
+          successResponse: { status: 200 }, successExpectation: uiWriteSuccess, failureResponse: { status: 409 }, failureExpectation: uiWriteFailure } : fixtures?.commands?.[command.id],
+        handler: command.uiWrite ? async args => {
+          if (args.__confirmed !== true) return { blocked: true, requiresConfirmation: true };
+          const fixture = fixtures?.commands?.[command.id];
+          validateUiEffect(command, fixture);
+          const request = resolveUiWrite(command, args);
+          requests.push(normalizeHttpWriteRequest({ url: request.url, method: request.method, json: request.body }));
+          // A model of the declared submission, never a mocked network response.
+          return structuredClone(responseSpec.status >= 400 ? uiWriteFailure : uiWriteSuccess);
+        } : command.pageWrite ? async args => {
           if (args.__confirmed !== true) return { blocked: true, requiresConfirmation: true };
           const request = resolvePageWrite(command, args);
           requests.push(normalizeHttpWriteRequest({ url: request.url, method: request.method, json: request.body }));

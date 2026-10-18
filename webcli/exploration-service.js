@@ -31,6 +31,7 @@ import { httpCredentialsCapability } from './http-contract.js';
 import { startHostExploration, collectHostEvidence } from './exploration-host.js';
 import { declareWriteSource, plannedWrites, writeCase, writeReview, verifyWrite, readbackWrite, writeProofDigest, writeFixtures, finishWriteValidation } from './exploration-write.js';
 import { verifyGeneratedWriteTools } from './generation-harness/write-tool-verifier.js';
+import { buildUiWriteTool } from './exploration-ui-write.js';
 import { buildExtensionWriteTool } from './exploration-extension-write.js';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -229,7 +230,7 @@ export class ExplorationService {
       const verifiedAt = run.verifiedAt || run.updatedAt;
       const commands = Object.fromEntries(run.draft.toolNames.map(tool => [tool, { verifiedAt, packageDigest: run.runtimeDigest,
         cases: clone(run.verification?.[tool] || []),
-        ...(plannedWrites(run).includes(tool) ? { writeVerification: { kind: run.plan.tools.find(item => `${run.siteKey}.${item.name.replace(/_/g, '-')}` === tool)?.strategy === 'PAGE_FETCH' ? 'extension_single_write_v1' : 'http_single_write_v1',
+        ...(plannedWrites(run).includes(tool) ? { writeVerification: { kind: run.plan.tools.find(item => `${run.siteKey}.${item.name.replace(/_/g, '-')}` === tool)?.strategy === 'UI_SELECTOR' ? 'ui_single_submit_v1' : run.plan.tools.find(item => `${run.siteKey}.${item.name.replace(/_/g, '-')}` === tool)?.strategy === 'PAGE_FETCH' ? 'extension_single_write_v1' : 'http_single_write_v1',
           fixture: clone(writeFixtures(run).commands[tool.slice(run.siteKey.length + 1)]),
           verifiedAt: run.writeExecutions.find(item => item.tool === tool && item.digest === run.preWriteDigest && item.status === 'verified')?.at,
           replayAllowed: false } } : {}),
@@ -479,10 +480,11 @@ export class ExplorationService {
       }
       const candidate = run.candidates[tool.sourceApiIndexes?.[0]];
       if (tool.risk === 'write') {
-        if (repair || tool.sourceApiKind !== 'action' || (!isHttpStrategy(tool.strategy) && tool.strategy !== 'PAGE_FETCH') || tool.sourceApiIndexes?.length !== 1 || !candidate || candidate.risk?.level !== 'write'
+        if (repair || tool.sourceApiKind !== 'action' || (!isHttpStrategy(tool.strategy) && !['PAGE_FETCH', 'UI_SELECTOR'].includes(tool.strategy)) || tool.sourceApiIndexes?.length !== 1 || !candidate || candidate.risk?.level !== 'write'
           || !['POST', 'PUT', 'PATCH', 'DELETE'].includes(candidate.method)
-          || (!candidate.declared && !(candidate.status >= 200 && candidate.status < 300))) throw fail('INVALID_PLAN', 'Write plans require one declared or successfully observed write source and an explicit HTTP or PAGE_FETCH strategy. Write repair is not supported yet.');
-        if (tool.strategy === 'PAGE_FETCH') buildExtensionWriteTool(run.siteKey, tool, candidate, run.origin);
+          || (!candidate.declared && !(candidate.status >= 200 && candidate.status < 300))) throw fail('INVALID_PLAN', 'Write plans require one declared or successfully observed write source and an explicit HTTP, PAGE_FETCH or UI_SELECTOR strategy. Write repair is not supported yet.');
+        if (tool.strategy === 'UI_SELECTOR') buildUiWriteTool(run.siteKey, tool, candidate, run.origin);
+        else if (tool.strategy === 'PAGE_FETCH') buildExtensionWriteTool(run.siteKey, tool, candidate, run.origin);
         else httpToolContract(tool, candidate);
         if (tool.pathParameters?.length) throw fail('INVALID_PLAN', 'Initial write verification uses exact authored requests; path templates are not generated.');
         textArg(tool.writeReason, 'writeReason');
@@ -526,6 +528,7 @@ export class ExplorationService {
     const outputRoot = path.join(this.root, run.taskId, randomUUID());
     const apiTools = run.plan.tools.filter(tool => tool.risk !== 'write' && !tool.sourcePageId && !isHttpStrategy(tool.strategy));
     const pageTools = [
+      ...run.plan.tools.filter(tool => tool.risk === 'write' && tool.strategy === 'UI_SELECTOR').map(tool => buildUiWriteTool(run.siteKey, tool, run.candidates[tool.sourceApiIndexes[0]], run.origin)),
       ...run.plan.tools.filter(tool => tool.sourcePageId).map(tool => buildPageTool(run.siteKey, tool, run.pageSources.find(item => item.id === tool.sourcePageId))),
       ...run.plan.tools.filter(tool => isHttpStrategy(tool.strategy)).map(tool => buildHttpTool(run.siteKey, tool, run.candidates[tool.sourceApiIndexes[0]])),
       ...run.plan.tools.filter(tool => tool.risk === 'write' && tool.strategy === 'PAGE_FETCH').map(tool => buildExtensionWriteTool(run.siteKey, tool, run.candidates[tool.sourceApiIndexes[0]], run.origin)),
@@ -556,10 +559,10 @@ export class ExplorationService {
     const writes = plannedWrites(run);
     for (const tool of run.plan?.tools || []) if (tool.risk === 'write') {
       const command = pkg.commands.find(item => item.name === `${run.siteKey}.${tool.name.replace(/_/g, '-')}`);
-      if (!command || (tool.strategy === 'PAGE_FETCH' ? !command.pageWrite : command.runtime !== 'http')) throw fail('WRITE_RUNTIME_REQUIRED', 'Write runtime must match the explicit plan.');
+      if (!command || (tool.strategy === 'UI_SELECTOR' ? !command.uiWrite : tool.strategy === 'PAGE_FETCH' ? !command.pageWrite : command.runtime !== 'http')) throw fail('WRITE_RUNTIME_REQUIRED', 'Write runtime must match the explicit plan.');
     }
     if (pkg.commands.some(command => !retained.has(command.id) && (writes.includes(command.name)
-      ? command.safety !== 'write' || !(command.runtime === 'http' || command.pageWrite) || command.schema?.['x-webcli-agent-authored'] !== true
+      ? command.safety !== 'write' || !(command.runtime === 'http' || command.pageWrite || command.uiWrite) || command.schema?.['x-webcli-agent-authored'] !== true
       : command.safety !== 'read' || !['extension', 'http'].includes(command.runtime)))) throw fail('READ_ONLY_REQUIRED', 'Draft safety/runtime must match the explicit read or write plan.');
     if (run.mode === 'http' && pkg.commands.some(command => run.draft.toolNames.includes(command.name) && (command.runtime !== 'http' || command.http.cookies))) throw fail('HTTP_PLAN_REQUIRED', 'Host tasks can only validate browser-independent HTTP commands.');
     return pkg;
@@ -596,6 +599,7 @@ export class ExplorationService {
     if ((run.pageSources || []).some(item => item.source.mode === 'navigate') && !this.capabilities().capabilities.includes('page_navigation_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating parameterized page routes.');
     const pageTools = (run.plan?.tools || []).filter(tool => tool.risk !== 'write' && (tool.sourcePageId || isHttpStrategy(tool.strategy))).map(tool => `${run.siteKey}.${tool.name.replace(/_/g, '-')}`);
     for (const command of readPackageDirectory(run.draft.adapterDir).commands.filter(command => run.draft.toolNames.includes(command.name))) {
+      if (command.uiWrite && !this.capabilities().capabilities.includes('ui_write_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating UI writes.');
       if (command.pageWrite && !this.capabilities().capabilities.includes('page_write_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating page writes.');
       const capability = httpCredentialsCapability(command.http);
       if (capability && !this.capabilities().capabilities.includes(capability)) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating scoped HTTP cookies.');

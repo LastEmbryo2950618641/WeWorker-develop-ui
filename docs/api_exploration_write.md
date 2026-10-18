@@ -1,6 +1,6 @@
 # HTTP／Extension 写命令与副作用验证
 
-2026-10-18：独立探索新增 HTTP 写命令闭环。PUBLIC_API/AUTH_API 可在 `mode=http` 中无浏览器运行；COOKIE_API 沿用所选浏览器 profile 的凭据通道。最新增加 PAGE_FETCH 声明式 Extension 写：固定同源主文档、JSON 字符串字段映射、浏览器会话与明确服务端幂等契约。HTTP 与 PAGE_FETCH 现支持公开字符串返回 ID 的资源回查。UI 点击提交、多步写流程尚未接入，Python 网站探索agent不参与。
+2026-10-18：独立探索新增 HTTP 写命令闭环。PUBLIC_API/AUTH_API 可在 `mode=http` 中无浏览器运行；COOKIE_API 沿用所选浏览器 profile 的凭据通道。最新增加 PAGE_FETCH 声明式 Extension 写：固定同源主文档、JSON 字符串字段映射、浏览器会话与明确服务端幂等契约。HTTP 与 PAGE_FETCH 现支持公开字符串返回 ID 的资源回查。最新增加 UI_SELECTOR 同文档原生表单单次提交与输入关联 GET 效果验证（见末节）；复杂控件和多步写流程尚未接入，Python 网站探索agent不参与。
 
 ## 来源与生成
 
@@ -136,3 +136,68 @@ write-review 展示完整 resultReadback 声明与 ID 持久化政策，纳入�
 丢失响应、缺 ID、非法 ID 或保存失败均不能通过或继续资源 GET；review 已消耗，不得为找回 ID 重发写。没有持久 ID 时 write-readback 在发送任何 GET 前返回 WRITE_RESULT_ID_UNAVAILABLE，调用方须通过独立已授权的只读工具检查服务状态，不能猜测资源地址。已保存 ID 后取消/重启/详情读取失败，可用原 reviewId 重新运行两个 GET，仍保留原 uncertain，不放行安装或把失败 handler 变成通过。
 
 自动化入口为 `exploration-write-result.test.js`、HTTP/Extension 写测试，以及共享 `scripts/write-result-acceptance.mjs`；由原 HTTP 和页面写验收脚本在源码/打包模式调用。只验证隔离 loopback 公开夹具，不代表任意外部创建接口可用。最新数量与报告见交接末尾。
+
+## UI_SELECTOR 原生表单单次提交
+
+新增 `ui_write_v1` 与 manifest `uiWrite` version 1。沿用浏览器任务的 `declare-write`、生成、离线验证、精确审阅、持久执行记录、安装与知识流程，策略明确为 `UI_SELECTOR`；不能将本能力解释为任意 UI 自动写或无幂等服务上的一次实际效果保证。PAGE_FETCH 原有服务端幂等要求保持。
+
+先根据目标页面的实际控件、提交处理器和业务契约核实：该表单在提交时读取原生字段值，单次提交语义明确，填写阶段没有自动保存；独立 GET 能读取准确目标资源、业务内容与公开关联值。未知页面行为、外部账号副作用没有用户授权时不能实际验证。本阶段只验证隔离公开夹具。
+
+```json
+{
+  "name": "update_example", "risk": "write", "strategy": "UI_SELECTOR",
+  "sourceApiKind": "action", "sourceApiIndexes": [0], "pagePathname": "/editor",
+  "uiWrite": {
+    "form": "#editor", "inputMode": "native-setter-no-events",
+    "inputs": [
+      {"selector":"#item", "name":"item", "parameter":"item"},
+      {"selector":"#title", "name":"title", "parameter":"title"},
+      {"selector":"#marker", "name":"marker", "parameter":"marker"}
+    ],
+    "submit": {"selector":"#save", "text":"Save"},
+    "confirmation": {"selector":"#receipt", "attribute":"data-marker", "parameter":"marker"}
+  },
+  "writeReason": "修改已授权的公开示例条目",
+  "strategyNote": {"reason":"原生表单在提交时读取字段，页面提供关联回执", "limitations":"同源同文档、无输入事件、不保证服务端幂等"}
+}
+```
+
+来源声明仍为固定同源 POST URL 和对应 bodyKeys；它是表单 action 与字段的声明，不是实际请求成功证据。生成时将来源 URL/method 写入 uiWrite；不支持 UI 写的动态路径、query/hash 或其他方法。模块为固定注册模板，完整 route/uiWrite 纳入 `ui-write:` 安装权限和摘要，不能用作者任意页面 JS 替换。
+
+输入、提交与确认契约：
+
+- 同源主文档中唯一且可见的 HTML form、1–10 个唯一原生 text/search input 或 textarea、一个唯一的无 name 的 submit button；逐项核对真实 name、表单归属、按钮精确文本、enabled/readonly、额外成功字段、form action/method/enctype/target 和 submit override。当前不接受额外 hidden/CSRF 字段、密码/文件/选择框、自定义或 Shadow/frame 控件。
+- 必填参数为单行字符串，最多 10000 字符，无默认值和类型转换。使用隔离 world 的原生 value setter 填写，不触发 focus、input、change、键盘或 click。然后重新核对同一节点与精确值、原生 validity；失败不提交，也不自动还原已填写值。
+- 只调用一次 `HTMLFormElement.prototype.requestSubmit.call(form, submitter)`。它触发原生验证和 submit 事件，不执行 click 处理器，不宣称真实鼠标手势。页面自己的提交处理器必须保持当前文档；普通整页表单跳转会成为不确定失败，不自动跟随为成功。
+- confirmation 必须为已存在且可见的同一 DOM 节点，其明确 `data-*` 属性在提交前不同于本次关联参数，提交后精确等于该参数。节点替换、同 URL 新文档、路由变化、超时均失败。回执只代表页面确认，业务效果仍须独立 GET。
+- 沿用完整 URL/main frame/loader 与隔离 world 随机文档标记，过期注入不能迟发。一次操作最多 15 秒，总验证最多 30 秒；使用现有 profile、tab 锁及取消/断线机制。
+
+UI fixture 专门使用 `expectedSubmission`，不填写 HTTP successResponse/failureResponse，也不伪造请求次数或网络正文。离线 validate 检查未确认零派发、参数/字段契约和模拟确认成功/失败；不连接浏览器，不提交表单，不能代替真实验证。
+
+```json
+{
+  "id": "example-ui",
+  "representativeArgs": {"item":"example-item", "title":"After", "marker":"example-operation"},
+  "expectedSubmission": {
+    "url":"https://example.com/items/example", "method":"POST",
+    "body":{"item":"example-item", "title":"After", "marker":"example-operation"}
+  },
+  "effect": {
+    "readback":{"url":"https://example.com/items/example"},
+    "identityPath":"item",
+    "argumentPaths":{"item":"item", "title":"title", "marker":"marker"},
+    "before":{"equals":{"item":"example-item", "title":"Before", "marker":"before"}},
+    "after":{"equals":{"item":"example-item", "title":"After", "marker":"example-operation"}}
+  }
+}
+```
+
+`argumentPaths` 必须将每个输入参数绑定到独立读取的不同精确公开属性路径；after.equals 必须逐项等于本次参数。`identityPath` 在 before/after 中必须为相同、非空公开字符串，证明所检查的是同一资源；关联参数对应的字段必须在 before/after 改变。只检查提示、数量或任意相同值不足以通过。该证据证明所检查资源的身份和字段状态，不证明因果唯一性、事务性、没有其他副作用或没有其他客户端同时修改。关联值应由调用者为本次操作明确提供，不能作为自动幂等键或重复执行许可证。
+
+精确审阅展示全部字段、提交方式、回执、代表参数和 GET 断言。确认后先 GET before，再在派发给扩展前持久化消费 reviewId，提交/页面确认通过后才 GET after。错误效果、错误资源或确认丢失均不能安装。`dispatched:true` 是已交给扩展、可能有副作用的保守标记；即使扩展后来因控件错误零提交，也不自动重用审阅。UI 记录使用 confirmationVerified 区分页面确认和 effectVerified 业务状态。
+
+**一次 requestSubmit 不等于一次网络请求，更不等于一次实际修改。** 页面代码、浏览器和服务端可各自产生重复行为，本路径不注入幂等键，不假设服务端支持去重。真实夹具分别统计 submit 事件、网络请求和 mutation；响应连接丢失时可能观察到一次 submit 对应多次请求。所有失败/超时/取消/重启/响应丢失均不得自动重放，同 reviewId 返回已有记录；只能先 `write-readback` 独立 GET 检查当前效果，uncertain 不升级为 verified、不放行安装。已发生的页面动作或网络请求不能被取消撤回。
+
+安装后的普通 call 也必须 `__confirmed:true`，返回 `{ok:true,submitted:true,confirmationMatched:true,effectVerified:false}` 只说明页面回执匹配。验证 fixture 不进入安装包，所以普通 call 不附加效果 GET 或持久 review 账本；必须由调用方独立检查实际效果，失败后不得盲目重调。同值旧回执会拒绝，但不是持久幂等机制。
+
+仍未覆盖：触发 input/change 才生效的受控组件、自动保存、click/Enter 手势、原生整页提交导航、hidden CSRF、多步写、异步服务效果轮询、UI 写响应 ID、复杂控件/跨 frame、写 repair。既有 HTTP/PAGE_FETCH 的数字/多 ID/header/响应 URL 等回查差距保持。自动化入口为 `exploration-ui-write.test.js`、`extension/test/ui-write.test.mjs`；真实验收 `verify-exploration-browser.mjs --ui-write-only`，加 `--bundled-cli --bundled-bridge` 验证两端 bundle，结果见交接末尾。

@@ -2,7 +2,9 @@
 
 更新：2026-10-18。用户要求尽力实现与 OpenCLI 完全相同的能力；本文件保留完整目标，不把当前首版或单个测试站点视为完成标准。分支历史与同步约束见 [CLI 跟进文档](api_exploration_cli_handoff.md)。Python 网站探索agent全程排除。
 
-2026-10-18 最新增量：HTTP 与 PAGE_FETCH 支持显式 effect.resultReadback。保留固定 before/after，按实际响应公开字符串 ID 构造已审阅同源单段路径，严格核对资源身份和内容；ID 先持久化，取消/重启后仅 GET 恢复，缺失/非法/丢响应不猜值、不重写，uncertain 不放行安装。真实 ID 不进入摘要/知识/安装包。WebCLI 115 文件/1275 项及最后聚焦 76 项通过；源码与最终打包 HTTP 各 15 项、页面写各 10 项通过；完整 Chromium 1217 为 65 项（早于最后断言别名加固，最终全量/打包覆盖），边界与证据见交接末尾。数字/多 ID/响应 URL、UI 控件写、多步写与写 repair 继续待办。
+2026-10-18 最新增量：UI_SELECTOR 原生表单写已实现：固定同源主文档、显式输入/submit/新回执契约，原生 setter 不发 input/change，单次 requestSubmit 后以 GET 逐项核对资源身份、内容和改变的关联值；复用精确审阅/持久消费/取消与重启不重放/安装/知识。普通 call 明确 effectVerified:false，不把回执当效果。无服务端幂等假设；实测断响应可一次 submit 对应 3 次请求及 3 次服务端 mutation 执行，仍 uncertain、仅只读恢复。本阶段不是单次实际效果保证，也不解除 PAGE_FETCH 幂等要求。WebCLI 1284 项、聚焦 80 项、扩展 18 项、完整 Chromium 1217 70 项、最终打包 UI 7 项/HTTP 15 项/PAGE_FETCH 10 项通过，报告见交接末尾；复杂/受控控件、原生整页提交、hidden CSRF、多步写、数字/多 ID/header/响应 URL 回查及写 repair 仍待办。
+
+2026-10-18 前序增量：HTTP 与 PAGE_FETCH 支持显式 effect.resultReadback。保留固定 before/after，按实际响应公开字符串 ID 构造已审阅同源单段路径，严格核对资源身份和内容；ID 先持久化，取消/重启后仅 GET 恢复，缺失/非法/丢响应不猜值、不重写，uncertain 不放行安装。真实 ID 不进入摘要/知识/安装包。WebCLI 115 文件/1275 项及最后聚焦 76 项通过；源码与最终打包 HTTP 各 15 项、页面写各 10 项通过；完整 Chromium 1217 为 65 项（早于最后断言别名加固，最终全量/打包覆盖），边界与证据见交接末尾。数字/多 ID/响应 URL、UI 控件写、多步写与写 repair 继续待办。
 
 2026-10-18 前序增量：Extension PAGE_FETCH 声明式写已接通生成、零网络 mock、精确审阅、真实 before/write/after、安装、普通调用与知识。固定同源主文档/JSON 字符串映射，必须有明确服务端幂等契约；Chromium 可能重发网络请求，稳定 key 只在服务端正确去重时保证一次实际效果，不能声称一次网络发送。任务 reviewId 持久消耗且不重放；响应丢失仍 uncertain。WebCLI 1224 项、扩展相关 59 项、最终打包 CLI＋Bridge 页面写 7 项及 HTTP 回归 12 项通过。Chromium 1217 完整 62 项通过，1194 Shadow 失败在上轮源码复现，详细证据见交接末尾。无幂等支持的页面写、UI 点击提交、动态 CSRF、数字/多 ID、多步写和写 repair 仍未完成。
 
@@ -29,8 +31,8 @@
 | 页面操作 | state/find/get/extract、click/dblclick/fill/type/select/check/uncheck/focus/hover/scroll/keys/drag/upload/dialog；过期引用和模糊定位报错 | 主/子 frame 原生指针、同 frame 拖拽、输入/弹窗已真实验收；AX 引用支持开放/关闭/嵌套 Shadow DOM 控件及准确文档；DOM 显式 shadow 查询、树内标签及嵌套引用已实现；原生复合字段、HTML 树、明确选项匹配/保留校验已真实验收；隐藏/Shadow/AX/嵌套跨源原生文件输入上传与验证通过；自定义控件、目录输入与跨 frame/DataTransfer 拖拽待补 |
 | 页面观察 | frames/screenshot/console/eval/wait、网络摘要/detail/filter/follow、有界响应读取、失效错误 | frame eval/身份、完整截图、下载续等、console/network JSONL 与游标已真实验收；state source=ax、DOM/AX 指标比较、跨 frame 引用及部分结果/超时通过；截图主文档 DOM 编号、临时 CSS 尺寸、新文件保存及恢复通过，AX/子 frame 编号与任意设备模拟恢复未覆盖 |
 | 探索策略 | PUBLIC/COOKIE/PAGE_FETCH/INTERCEPT/DOM_STATE/UI_SELECTOR；接口/页面状态/脚本发现与策略理由 | PUBLIC_API/COOKIE_API/AUTH_API 已接入显式计划、作者 cases、安装、调用与只读 repair；mode=http 支持无浏览器 JSON OpenAPI 发现和真实请求证据。PAGE_FETCH、声明式页面来源、单步 INTERCEPT、跨文档查询和 2–8 步只读 workflow 已验证。YAML/任意 API 文档爬取、循环/分支/自定义控件等任意多步流程未覆盖；无静默回退 |
-| 请求和鉴权 | POST 只读查询、GraphQL、动态路径、跨源、Cookie/CSRF/runtime 签名、写操作语义与确认 | 显式 origin、JSON/form POST、GraphQL query、API 路径参数、Cookie/CSRF、环境 Bearer/header/Basic/HMAC、store/分区已验证；HTTP 单请求写生成/mock/精确审阅/实际效果与不重放已接通。Extension 固定同源写要求服务端幂等支持并已实机验证；UI 控件/多步写、任意站点签名/OAuth、动态 query/hash 路由仍待做；INTERCEPT 页面签名不能等同通用鉴权 |
-| 生成与验证 | 任意目标数量、草稿文件编辑、字段映射、语义/样例验证、同站增量保留、审阅安装 | Agent 计划支持 1–50 工具，draft-add 支持新文件；读工具 1–10 组作者断言，workflow 逐 case 执行并支持中途取消；HTTP 和声明式 Extension 写工具每工具一个 mock/真实效果 fixture，普通 validate 不写，精确审阅后一次应用层派发；页面写明确要求服务端幂等键。真实 CLI 安装/确认/异常回查已验收；新增固定同源模板、真实响应公开字符串 ID 与资源身份/内容验证，取消/重启仅只读恢复；多组写用例、数字/多 ID/响应 URL 回查和多步副作用仍待做 |
+| 请求和鉴权 | POST 只读查询、GraphQL、动态路径、跨源、Cookie/CSRF/runtime 签名、写操作语义与确认 | 显式 origin、JSON/form POST、GraphQL query、API 路径参数、Cookie/CSRF、环境 Bearer/header/Basic/HMAC、store/分区已验证；HTTP 单请求写生成/mock/精确审阅/实际效果与不重放已接通。Extension PAGE_FETCH 固定同源写要求服务端幂等支持；原生同文档 UI 单次提交与独立效果验证已接入，不保证一次网络请求/副作用；复杂控件/多步写、任意站点签名/OAuth、动态 query/hash 路由仍待做；INTERCEPT 页面签名不能等同通用鉴权 |
+| 生成与验证 | 任意目标数量、草稿文件编辑、字段映射、语义/样例验证、同站增量保留、审阅安装 | Agent 计划支持 1–50 工具，draft-add 支持新文件；读工具 1–10 组作者断言，workflow 逐 case 执行并支持中途取消；HTTP、PAGE_FETCH 与原生 UI 写工具每工具一个离线模型/真实效果 fixture，普通 validate 不写，精确审阅后一次应用层派发；PAGE_FETCH 明确要求服务端幂等键，UI 使用输入/回执/独立资源关联且不假设去重。真实 CLI 安装/确认/异常回查已验收；新增固定同源模板、真实响应公开字符串 ID 与资源身份/内容验证，取消/重启仅只读恢复；多组写用例、数字/多 ID/响应 URL 回查和多步副作用仍待做 |
 | 维护与知识 | 站点 endpoints/field-map/notes/fixtures、有效期、trace、安装后自动修复、重试界限 | 已有任务历史、结构 trace、站点知识/过期标记；repair-info/repair 支持 Agent 定向修复已安装的只读命令，带入历史 cases 并重新验证、审阅安装；真实字段漂移后六组失败→修复通过已验收。知识冲突修订、共享文件/写命令修复待做；Agent 依 Skill 最多三轮修复 |
 | 分发与工具生态 | 对应 plugin / adapter 管理能力、输出格式、补全、现有 Adapter 能力对照 | 复用已有 v2/AdapterHub；逐项差异和覆盖率待核对 |
 | 扩展运行目标 | Electron/CDP 接入、外部 CLI passthrough 等 OpenCLI 能力 | 尚未实现/核对，不据当前浏览器验收宣称完成 |

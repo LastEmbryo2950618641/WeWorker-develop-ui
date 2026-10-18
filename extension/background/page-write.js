@@ -1,3 +1,4 @@
+import { pageUiSubmit } from './ui-write.js';
 const fail = (code, message) => Object.assign(new Error(message), { code });
 
 /** Mirrors the host's string-only bindings; tests compare both dispatch builders. */
@@ -41,7 +42,7 @@ export async function pageJsonRequest(input) {
   finally { clearTimeout(timeout); }
 }
 
-/** One fetch dispatch. Chromium can resend transport requests; server idempotency is mandatory. */
+/** Shared document-bound operation. Fetch writes require server idempotency; UI submissions make no network-count guarantee. */
 export async function executePageRequest({ chrome, ensureCdpAttached, tabId, payload, assertRunning = () => {} }) {
   let dispatched = false, timer;
   const check = () => {
@@ -56,7 +57,7 @@ export async function executePageRequest({ chrome, ensureCdpAttached, tabId, pay
   };
   try {
     check();
-    const { route, request, expectedDocument, idempotency } = payload;
+    const { route, request, expectedDocument, idempotency, ui } = payload;
     const url = new URL(request.url), page = new URL((await bounded(chrome.tabs.get(tabId))).url);
     if (!['http:', 'https:'].includes(url.protocol) || url.origin !== route?.origin || url.username || url.password || url.hash
       || page.origin !== route.origin || page.pathname !== route.pathname || url.href !== request.url
@@ -64,7 +65,7 @@ export async function executePageRequest({ chrome, ensureCdpAttached, tabId, pay
       || Object.keys(request).some(key => !['url', 'method', 'body'].includes(key))
       || (request.method !== 'GET' && (payload.confirmed !== true || url.search || !request.body || typeof request.body !== 'object' || Array.isArray(request.body)))
       || (request.method === 'GET' && request.body !== undefined)) throw fail('INVALID_PAGE_WRITE', 'Page request does not match the exact same-origin route.');
-    if (request.method !== 'GET' && (!['idempotency-key', 'x-idempotency-key'].includes(idempotency?.header) || !/^[a-f0-9-]{36,64}$/.test(idempotency?.key || ''))) throw fail('PAGE_WRITE_IDEMPOTENCY_REQUIRED', 'Page writes require a reviewed server idempotency contract.');
+    if (request.method !== 'GET' && !ui && (!['idempotency-key', 'x-idempotency-key'].includes(idempotency?.header) || !/^[a-f0-9-]{36,64}$/.test(idempotency?.key || ''))) throw fail('PAGE_WRITE_IDEMPOTENCY_REQUIRED', 'Page writes require a reviewed server idempotency contract.');
     if (JSON.stringify(request).length > 400000) throw fail('INVALID_PAGE_WRITE', 'Page request exceeds its size budget.');
     await bounded(ensureCdpAttached(tabId)); check();
     const send = (method, params = {}) => bounded(chrome.debugger.sendCommand({ tabId }, method, params));
@@ -79,10 +80,10 @@ export async function executePageRequest({ chrome, ensureCdpAttached, tabId, pay
     const current = (await send('Page.getFrameTree'))?.frameTree?.frame;
     check();
     if (current?.id !== frame.id || current?.loaderId !== frame.loaderId || current?.url !== page.href) throw fail('PAGE_WRITE_DOCUMENT_CHANGED', 'Document changed before dispatch.');
-    const input = { documentUrl: page.href, documentToken, request, idempotency, deadline: payload.deadline, timeoutMs: Math.min(15000, payload.deadline - Date.now()) };
+    const input = { ...(ui ? { ui } : {}), documentUrl: page.href, documentToken, request, idempotency, deadline: ui ? Math.min(payload.deadline, Date.now() + 15000) : payload.deadline, timeoutMs: Math.min(15000, payload.deadline - Date.now()) };
     dispatched = request.method !== 'GET';
     const result = await Promise.race([
-      send('Runtime.evaluate', { contextId: executionContextId, expression: `(${pageJsonRequest.toString()})(${JSON.stringify(input)})`, awaitPromise: true, returnByValue: true }),
+      send('Runtime.evaluate', { contextId: executionContextId, expression: `(${(ui ? pageUiSubmit : pageJsonRequest).toString()})(${JSON.stringify(input)})`, awaitPromise: true, returnByValue: true }),
       new Promise((_, reject) => { timer = setTimeout(() => reject(fail('PAGE_WRITE_TIMEOUT', 'Page request timed out.')), input.timeoutMs + 1000); }),
     ]);
     check();

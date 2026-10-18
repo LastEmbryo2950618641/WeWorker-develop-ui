@@ -1,3 +1,4 @@
+import { uiWriteRequest } from './ui-write.js';
 import { browserContextId } from './browser-profile.js';
 import { readHttpCookies } from './http-credentials.js';
 import { executePageRequest, pageWriteRequest } from './page-write.js';
@@ -67,6 +68,7 @@ const EXTENSION_CAPABILITIES = [
   'page_navigation_v1',
   'page_workflow_v1',
   'page_write_v1',
+  'ui_write_v1',
 ];
 
 let currentBrowserContextId;
@@ -2722,7 +2724,7 @@ async function handleNativeMessage(msg) {
       }
       if (selected.managed) {
         if (selected.command.runtime !== 'extension') throw new Error('This command requires the host Toolkit runtime.');
-        if ((selected.command.pageWrite || (selected.command.requires_confirmation ?? selected.command.safety === 'write')) && args?.__confirmed !== true) throw new Error('Explicit confirmation is required for this command.');
+        if ((selected.command.pageWrite || selected.command.uiWrite || (selected.command.requires_confirmation ?? selected.command.safety === 'write')) && args?.__confirmed !== true) throw new Error('Explicit confirmation is required for this command.');
         if (selected.command.execution?.runtime === 'background') {
           const result = await callManagedBackgroundTool(selected.manifest, selected.command, args || {}, traceID);
           sendToNative({ type: 'call_tool_result', id: msg.id, result, traceID });
@@ -2768,11 +2770,11 @@ async function handleNativeMessage(msg) {
           const startUrl = assertAdapterNavigationUrl(selected.manifest, 'https://' + route + '/');
           tab = await chrome.tabs.create({ url: startUrl, active: false });
         }
-        if (selected.command.pageWrite) {
-          const connection = ws, request = pageWriteRequest(selected.command, args || {}), deadline = Date.now() + 30000;
+        if (selected.command.pageWrite || selected.command.uiWrite) {
+          const connection = ws, request = (selected.command.uiWrite ? uiWriteRequest : pageWriteRequest)(selected.command, args || {}), deadline = Date.now() + 30000;
           const reply = await getHostAdapterRuntime().exclusive(tab.id, () => executePageRequest({ chrome, ensureCdpAttached, tabId: tab.id,
             payload: { route: selected.command.pageRoute, request, confirmed: true, deadline,
-              idempotency: { header: selected.command.pageWrite.idempotency.header, key: crypto.randomUUID() } },
+              ...(selected.command.uiWrite ? { ui: selected.command.uiWrite } : { idempotency: { header: selected.command.pageWrite.idempotency.header, key: crypto.randomUUID() } }) },
             assertRunning: () => { if (connection !== ws) throw new Error('Connection changed.'); } }));
           sendToNative({ type: 'call_tool_result', id: msg.id, result: reply.ok ? reply.value : { ok: false, errorCode: reply.error.code }, traceID });
           return;

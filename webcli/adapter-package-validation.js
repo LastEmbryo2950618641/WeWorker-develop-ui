@@ -16,6 +16,7 @@ import { basename, join, resolve, sep } from "path";
 import { validateHttpContract } from './http-contract.js';
 import { normalizePathParameters } from './generation-harness/path-parameters.js';
 import { validatePageWorkflowContract } from './exploration-workflow.js';
+import { validateUiWrite } from './exploration-ui-write.js';
 import { validatePageWrite } from './exploration-extension-write.js';
 
 
@@ -156,6 +157,7 @@ export function validateV2Manifest(manifest, directoryName = "?") {
     if (!RUNTIMES.includes(command?.runtime)) fail(adapterName, `command "${id}": runtime must be extension|wewright|http.`);
     validateHttpContract(command);
     validatePageWrite(command);
+    validateUiWrite(command);
     if (command.execution !== undefined && (command.runtime !== 'extension' || !command.execution
       || command.execution.type !== 'api' || command.execution.runtime !== 'background'
       || Object.keys(command.execution).some((key) => !['type', 'runtime'].includes(key)))) {
@@ -175,7 +177,7 @@ export function validateV2Manifest(manifest, directoryName = "?") {
       if (!route || typeof route !== 'object' || Array.isArray(route)
         || Object.keys(route).some(key => !['origin', 'pathname', 'additionalPaths', 'navigation', 'workflow'].includes(key))
         || typeof route.pathname !== 'string' || !/^\/(?!\/)/.test(route.pathname)
-        || command.runtime !== 'extension' || command.execution || (command.safety === 'write' && !command.pageWrite)
+        || command.runtime !== 'extension' || command.execution || (command.safety === 'write' && !command.pageWrite && !command.uiWrite)
         || !url || !['http:', 'https:'].includes(url.protocol) || url.username || url.password
         || url.origin !== route.origin || url.pathname !== route.pathname || url.search || url.hash
         || !match?.some(host => url.hostname === host || (host.startsWith('*.') && url.hostname.endsWith(host.slice(1))))

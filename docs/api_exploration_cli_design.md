@@ -2,7 +2,13 @@
 
 更新：2026-10-18。已实现多浏览器 profile、独立 HTTP Runner、PUBLIC_API/COOKIE_API/AUTH_API、mode=http 的无浏览器 OpenAPI JSON 发现与宿主请求证据、只读局部修复和显式 2–8 步只读 workflow；最新增加 HTTP 写与具有服务端幂等契约的 Extension PAGE_FETCH 声明式写生成、mock 和真实副作用回查。具体契约见 [HTTP Runtime](http_adapter_runtime.md) 和 [写命令验证](api_exploration_write.md)，历史与验证结果见 [交接文档](api_exploration_cli_handoff.md)。
 
-最新 WebCLI 回归 115 文件/1275 项、最终写相关 76 项与源码 HTTP 15 项/页面写 10 项通过；最终打包 HTTP 15 项/页面写 10 项、完整 Chromium 1217 65 项通过；全量浏览器快照早于最后别名守卫，最终全量/打包覆盖该加固。既有 1194 兼容限制及报告详见交接文档末尾。HTTP version 2 支持 Bearer/header/Basic/声明式 HMAC 和 Cookie store/分区。下文旧阶段的“PUBLIC_API/COOKIE_API 尚未实现”是历史边界；任意站点签名/OAuth、UI 控件/多步写、数字/多 ID/响应 URL 回查、任意多步自定义流程及完整对齐仍未完成。
+最新 UI 阶段 WebCLI 回归 116 文件/1284 项、写相关 80 项、扩展相关 18 项、完整 Chromium 1217 70 项通过；最终打包 HTTP 15 项/PAGE_FETCH 10 项及 UI 专项证据见交接末尾。完整浏览器覆盖最终生产代码，之后只扩展验收中的同 URL 重载分支并更新文档。1194 既有 Shadow/frame 兼容问题未重测；复杂 UI 控件、多步写、数字/多 ID/header/响应 URL 回查、任意签名/OAuth 和完整对齐仍未完成。
+
+## UI 控件写：原生表单阶段
+
+UI_SELECTOR 写计划生成固定 uiWrite 契约。原生 setter 填写 1–10 个公开单行文本字段，不触发 input/change/click；校验唯一表单/按钮/字段后一次 requestSubmit，等待同文档、同节点、关联参数匹配的新回执。expectedSubmission 描述提交字段而不是实际网络请求；独立 GET before/after 必须绑定全部输入、稳定资源身份和改变的关联字段。复用原审阅、派发前持久消费、取消/重启不重放与安装门禁。普通 call 明确 effectVerified:false，需调用方另行读取。
+
+页面/浏览器可自行重发，本能力不假设服务端幂等，也不保证一次网络请求或一次实际修改。未知自动保存、受控组件、整页提交、多步写及 UI 响应 ID 未覆盖；完整契约和验收边界见 [写命令验证](api_exploration_write.md) 末节。Python 网站探索agent不参与。
 
 ## 写响应资源 ID 回查
 
@@ -251,7 +257,7 @@ browser_upload_target_v1 统一上传到主/子 frame 的实际原生文件节�
 
 ## HTTP 写命令阶段
 
-独立探索现已接入 HTTP 写骨架、独立 mock fixture、精确执行审阅、写前/写后 GET、持久化单次派发与不确定结果回查，详见 [写命令与副作用验证](api_exploration_write.md)。这扩展 PUBLIC_API/COOKIE_API/AUTH_API；默认 validate 不实际写入。声明式 PAGE_FETCH 幂等写与公开字符串返回 ID 回查已接入；UI 控件/多步写操作、写工具 repair 与数字/多 ID/响应 URL 回查继续留在能力台账。下面的旧验收数字是历史记录，最新证据以交接文档顶部及末尾为准。
+独立探索现已接入 HTTP 写骨架、独立 mock fixture、精确执行审阅、写前/写后 GET、持久化单次派发与不确定结果回查，详见 [写命令与副作用验证](api_exploration_write.md)。这扩展 PUBLIC_API/COOKIE_API/AUTH_API；默认 validate 不实际写入。声明式 PAGE_FETCH 幂等写与公开字符串返回 ID 回查已接入；复杂 UI 控件/多步写操作、写工具 repair 与数字/多 ID/响应 URL 回查继续留在能力台账。下面的旧验收数字是历史记录，最新证据以交接文档顶部及末尾为准。
 
 ## 后续 UI 统一
 
