@@ -108,8 +108,12 @@ export async function executePageNavigation({ chrome, ensureCdpAttached, tabId, 
       assertRunning();
       if (error) throw error;
       const current = await chrome.tabs.get(tabId), url = new URL(current.url);
-      if (url.origin !== destination.origin && (navigated || url.href !== initialUrl.href)) throw fail('PAGE_QUERY_ORIGIN_CHANGED', 'Navigation left the declared origin.');
-      if (navigated && current.status === 'complete') {
+      // CDP can report the committed document before the tabs URL snapshot
+      // updates. Only wait for the exact captured old URL; never read it as the
+      // new result or tolerate any third URL/origin. CDP redirects still fail.
+      const pendingTabSnapshot = url.href === initialUrl.href && url.href !== destination.href;
+      if (url.origin !== destination.origin && !pendingTabSnapshot) throw fail('PAGE_QUERY_ORIGIN_CHANGED', 'Navigation left the declared origin.');
+      if (navigated && current.status === 'complete' && !pendingTabSnapshot) {
         if (url.href !== destination.href) throw fail('PAGE_QUERY_ROUTE_CHANGED', 'Navigation did not reach the requested page identifier.');
         const observedVersion = version;
         const readPayload = { source: source.result, expectedOrigin: destination.origin, expectedPath: destination.pathname };

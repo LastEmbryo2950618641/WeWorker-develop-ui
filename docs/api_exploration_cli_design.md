@@ -79,6 +79,8 @@ navigate 可声明固定 `resultOrigin`；省略时保持步骤原 origin。work
 
 导航保留完整 href、新文档/loader 与稳定结果守卫；hash 保留独立业务关联、刷新标记和同目标一次 reload。重定向到未声明目标失败，不补导航、不重放。旧选定 profile 在观察、验证、普通调用前拒绝新 capability，不切换 profile。作者验证每次一个 case，取消/断线不派发后续动作或 case；已发导航可能完成，迟到结果不保存。实现与验收证据以交接末尾为准，frame 不在本增量内。
 
+CDP 提交新文档后，Chrome tabs URL 快照可能短暂滞后。运行时只在原超时预算内等待精确的导航前完整 URL，不读取该快照的结果；必须等到完整目的 href 才进入结果读取。CDP 的错误来源事件仍立即拒绝，任何第三个来源或错误目标不因等待而被授权；快照始终不更新则超时，不再次导航。普通与 hash 导航均遵循此规则。
+
 ## 有界读取控制（B01，2026-10-18）
 
 workflow 步骤可声明 when（上个已执行结果的公开 path/精确 scalar equals）与 repeat（2–8 次 maxIterations、每轮完成后的 until）。条件/循环步骤只能保持同 pathname，条件不能是首步；静态数据声明无脚本、无动态动作、无隐式重试。参数在所有步骤派发前验证，仍共享 30 秒预算、每轮精确 href/frame/loader 和底层新鲜结果守卫。

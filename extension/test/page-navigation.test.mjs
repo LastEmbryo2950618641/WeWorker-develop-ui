@@ -7,9 +7,9 @@ const source = { strategy: 'UI_SELECTOR', mode: 'navigate', resultPathname: '/it
   pathParameters: [{ segmentIndex: 1, name: 'itemId', description: 'Public item identifier' }], result: { strategy: 'DOM_STATE', path: ['exampleItem'] } };
 const payload = { version: 1, source, expectedOrigin: 'https://example.com', expectedPath: '/start', values: { itemId: '007' } };
 function setup(mode = 'success') {
-  let time = 0, route = 'https://example.com/start', data = 'Old example';
+  let time = 0, route = 'https://example.com/start', data = 'Old example', lagReads = 0, lastSnapshot;
   const listeners = new Set(), calls = [];
-  const chrome = { tabs: { get: async () => ({ url: route, status: 'complete' }) }, debugger: {
+  const chrome = { tabs: { get: async () => ({ url: lastSnapshot = lagReads-- > 0 ? 'https://example.com/start' : route, status: 'complete' }) }, debugger: {
     onEvent: { addListener: fn => listeners.add(fn), removeListener: fn => listeners.delete(fn) },
     sendCommand: async (_target, method, args) => {
       calls.push(method);
@@ -18,11 +18,16 @@ function setup(mode = 'success') {
         if (mode === 'hung') return new Promise(() => {});
         route = mode === 'origin' ? 'https://example.org/items/007' : mode === 'redirect' ? 'https://example.com/items/008' : args.url;
         data = 'Example 007';
+        if (mode === 'summary-lag') lagReads = 2;
+        if (mode === 'summary-stuck' || mode === 'summary-redirect') lagReads = Infinity;
+        if (mode === 'summary-redirect') route = 'https://other.example.org/items/007';
         if (mode !== 'no-event') for (const fn of listeners) fn({ tabId: 7 }, 'Page.frameNavigated', { frame: { id: 'main', loaderId: 'new', url: route } });
         return { loaderId: 'new' };
       }
     },
   }, scripting: { executeScript: async ({ args }) => {
+    calls.push(lastSnapshot === 'https://example.com/start' ? 'stale-read' : 'read');
+    assert.notEqual(lastSnapshot, 'https://example.com/start', 'must not read the pending old snapshot');
     if (mode === 'changed-read') for (const fn of listeners) fn({ tabId: 7 }, 'Page.frameNavigated', { frame: { id: 'main', loaderId: 'changed-' + time, url: route } });
     return [{ result: args[0].metadataOnly ? { ok: true, shape: { type: 'object' } } : { ok: true, data: { title: data } } }];
   } } };
@@ -75,4 +80,21 @@ test('declared destination origins preserve exact route guards and do not author
   assert.throws(() => assertPageQueryRoute(payload, command));
   assert.throws(() => assertPageQueryRoute({ ...payload, source: { ...cross, resultOrigin: 'https://other.example.org' } }, command));
   assert.equal((await setup('redirect').run({ source: cross })).error.code, 'PAGE_QUERY_ORIGIN_CHANGED');
+});
+
+test('waits for a lagging old tabs snapshot after a cross-origin CDP commit without reading it or replaying', async () => {
+  const f = setup('summary-lag');
+  const actual = await f.run({ source: { ...source, resultOrigin: 'https://example.org' } });
+  assert.equal(actual.ok, true); assert.deepEqual(actual.data, { title: 'Example 007' });
+  assert.equal(f.calls.includes('stale-read'), false);
+  assert.equal(f.calls.filter(method => method === 'Page.navigate').length, 1);
+  assert.equal(f.listeners.size, 0);
+});
+
+test('an old snapshot cannot hide a CDP redirect or turn a never-updated URL into a result', async () => {
+  for (const [mode, code] of [['summary-stuck', 'PAGE_QUERY_TIMEOUT'], ['summary-redirect', 'PAGE_QUERY_ORIGIN_CHANGED']]) {
+    const f = setup(mode), actual = await f.run({ source: { ...source, resultOrigin: 'https://example.org' } });
+    assert.equal(actual.error.code, code); assert.equal(f.calls.some(method => method.endsWith('read')), false);
+    assert.equal(f.calls.filter(method => method === 'Page.navigate').length, 1); assert.equal(f.listeners.size, 0);
+  }
 });

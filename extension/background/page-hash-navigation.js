@@ -64,9 +64,10 @@ export async function executePageHashNavigation({ chrome, ensureCdpAttached, tab
     while (now() < deadline) {
       active(); if (error) throw error;
       const current = await chrome.tabs.get(tabId), url = new URL(current.url);
-      if (url.origin !== destination.origin && (version || url.href !== initial.href)) throw fail('PAGE_QUERY_ORIGIN_CHANGED', 'Hash navigation left its declared origin.');
+      const pendingTabSnapshot = url.href === initial.href && url.href !== destination.href;
+      if (url.origin !== destination.origin && !pendingTabSnapshot) throw fail('PAGE_QUERY_ORIGIN_CHANGED', 'Hash navigation left its declared origin.');
       const newDocument = documentCount === 1;
-      if ((newDocument || (!sameTarget && sameBase && withinCount === 1)) && current.status === 'complete') {
+      if ((newDocument || (!sameTarget && sameBase && withinCount === 1)) && current.status === 'complete' && !pendingTabSnapshot) {
         if (url.href !== destination.href) throw fail('PAGE_QUERY_ROUTE_CHANGED', 'Hash navigation changed the complete destination URL.');
         const observedVersion = version, currentFrame = await frame();
         if (currentFrame?.id !== original.id || currentFrame?.loaderId !== loaderId) throw fail('PAGE_QUERY_ROUTE_CHANGED', 'Hash navigation document identity changed.');
