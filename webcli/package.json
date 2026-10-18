@@ -21,6 +21,7 @@
     "exploration-query.js",
     "exploration-workflow.js",
     "exploration-write.js",
+    "exploration-write-result.js",
     "exploration-extension-write.js",
     "exploration-analysis.js",
     "exploration-revisions.js",

@@ -10,6 +10,7 @@ import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { verifyHttpWrites } from './write-acceptance.mjs';
+import { verifyWriteResults } from './write-result-acceptance.mjs';
 
 const exec = promisify(execFile), delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -152,10 +153,11 @@ try {
   assert.equal(requests.length, beforeInterruptedRestart);
   pass('restart during an in-flight HTTP operation preserves its budget and marks interrupted without replay');
   await verifyHttpWrites({ call, waitTask, startBridge, stopBridge, pass });
+  await verifyWriteResults({ call, startBridge, stopBridge, pass });
   async function assertClean(target) {
     const stat = await fs.stat(target).catch(() => null); if (!stat) return;
     if (stat.isDirectory()) { for (const name of await fs.readdir(target)) await assertClean(path.join(target, name)); }
-    else assert.doesNotMatch(await fs.readFile(target, 'utf8'), /example-auth-placeholder|example-unpersisted-(?:input|response)/);
+    else assert.doesNotMatch(await fs.readFile(target, 'utf8'), /example-auth-placeholder|example-unpersisted-(?:input|response)|example-result-body-not-retained/);
   }
   for (const target of [path.join(root, 'bridge.log'), env.WEWORKER_ADAPTER_DATA_DIR, env.WEWORKER_USER_ADAPTERS_DIR]) await assertClean(target);
   assert.ok((await call('profile.list')).data.profiles.every(profile => profile.contextId === 'legacy' && !profile.online));

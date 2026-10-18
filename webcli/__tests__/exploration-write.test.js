@@ -11,7 +11,7 @@ import { generationEvidenceDir } from '../generation-harness/package-draft.js';
 
 const cleanup = [];
 afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); vi.unstubAllEnvs(); });
-async function setup({ behavior = 'normal', source, auth = false, mixed = false } = {}) {
+async function setup({ behavior = 'normal', source, auth = false, mixed = false, resultId, detail = {} } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'exploration-write-'));
   cleanup.push(() => fs.rmSync(root, { recursive: true, force: true }));
   let title = 'Before'; const requests = [];
@@ -24,8 +24,9 @@ async function setup({ behavior = 'normal', source, auth = false, mixed = false 
       if (behavior !== 'no-effect') title = JSON.parse(raw).title;
       if (behavior === 'hang') return;
       if (behavior === 'disconnect') { req.socket.destroy(); return; }
-      res.end(JSON.stringify({ ok: true, id: 'example', title, live: true })); return;
+      res.end(JSON.stringify({ ok: true, id: resultId ?? 'example', title, live: true })); return;
     }
+    if (req.url.startsWith('/records/')) { res.end(JSON.stringify({ id: resultId, title, ...detail })); return; }
     res.end(JSON.stringify({ id: 'example', title, responseOnly: 'example-unpersisted-body' }));
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -267,4 +268,103 @@ it('matches JSON content-type after host normalization and rejects unreviewed ex
   expect(extra.run.status).toBe('draft');
   expect(extra.run.runtimeSummary.errors[0].code).toBe('WRITE_REQUEST_MISMATCH');
   expect(extra.requests).toHaveLength(0);
+});
+
+async function resultFixture(f) {
+  const fixture = structuredClone(f.fixture);
+  fixture.effect.resultReadback = { url: f.origin + '/records/:id', publicId: true, responsePath: 'id', identityPath: 'id', expect: { equals: { title: 'After' } } };
+  expect((await f.saveFixture(fixture)).ok).toBe(true);
+  return reviewed(f);
+}
+
+it('reads the actual response ID, persists only that binding, installs and recovers without trusting handler mapping', async () => {
+  const f = await setup({ resultId: '007示例', source: `module.exports = async (args,api) => {
+    if (args.__confirmed !== true) return {blocked:true,requiresConfirmation:true};
+    try { const value = await api.request({url:'EXAMPLE_ORIGIN/items/example',method:'PUT',json:{title:args.title}}); return {ok:value.ok,title:value.title,id:'fabricated'}; }
+    catch(error) { return {ok:false,errorCode:error.code}; }
+  };` });
+  const review = await resultFixture(f), args = { tool: f.tool, reviewId: review.reviewId, confirmed: true };
+  expect(f.requests).toHaveLength(0);
+  await f.call('write-verify', args);
+  expect(f.run.status).toBe('review_ready');
+  expect(f.requests.map(r => r.url)).toEqual(['/items/example', '/items/example', '/items/example', '/records/007%E7%A4%BA%E4%BE%8B']);
+  expect(f.run.writeExecutions[0].resultBinding).toEqual({ id: '007示例' });
+  expect(JSON.stringify((await f.call('get')).data)).not.toContain('007示例');
+  expect(JSON.stringify((await f.call('write-review', { tool: f.tool })).data)).not.toContain('007示例');
+  const restored = new ExplorationService(f.options);
+  expect((await restored.execute('write-readback', { taskId: f.taskId, reviewId: args.reviewId })).data.passed).toBe(true);
+  await restored.execute('write-verify', { taskId: f.taskId, ...args });
+  expect(f.requests.filter(r => r.method === 'PUT')).toHaveLength(1);
+  const installReview = await f.call('review');
+  await f.call('install', { reviewId: installReview.data.reviewId, confirmed: true });
+  expect(f.run.status).toBe('installed');
+  const knowledge = await f.service.execute('knowledge-read', { site: f.run.siteKey });
+  const saved = await f.call('knowledge-save', { expectedHash: knowledge.data.hash });
+  expect(JSON.stringify(saved)).not.toContain('007示例');
+});
+
+it.each([{ id: 'different' }, { title: 'Different' }])('requires both exact resource identity and content: %j', async detail => {
+  const f = await setup({ resultId: 'example-generated', detail }), review = await resultFixture(f);
+  const args = { tool: f.tool, reviewId: review.reviewId, confirmed: true };
+  await f.call('write-verify', args);
+  expect(f.run.writeExecutions[0]).toMatchObject({ status: 'uncertain', error: { code: 'WRITE_EFFECT_MISMATCH' } });
+  expect((await f.call('review')).error.code).toBe('VALIDATION_REQUIRED');
+  expect((await f.call('write-readback', { reviewId: review.reviewId })).data.passed).toBe(false);
+  await f.call('write-verify', args);
+  expect(f.requests.filter(r => r.method === 'PUT')).toHaveLength(1);
+});
+
+it.each(['../unintended', '%2f', 7])('never dispatches detail GET for an invalid actual ID %j', async resultId => {
+  const f = await setup({ resultId }), review = await resultFixture(f);
+  await f.call('write-verify', { tool: f.tool, reviewId: review.reviewId, confirmed: true });
+  expect(f.run.writeExecutions[0]).toMatchObject({ status: 'uncertain', error: { code: 'WRITE_RESULT_ID_INVALID' } });
+  expect(f.requests.map(r => r.method)).toEqual(['GET', 'PUT']);
+  const count = f.requests.length;
+  expect((await f.call('write-readback', { reviewId: review.reviewId })).error.code).toBe('WRITE_RESULT_ID_UNAVAILABLE');
+  expect(f.requests).toHaveLength(count);
+});
+
+it('does not invent a mock ID or reissue a lost response write during recovery', async () => {
+  const f = await setup({ behavior: 'disconnect', resultId: 'unseen' }), review = await resultFixture(f);
+  const args = { tool: f.tool, reviewId: review.reviewId, confirmed: true };
+  await f.call('write-verify', args);
+  const restored = new ExplorationService(f.options);
+  expect((await restored.execute('write-readback', { taskId: f.taskId, reviewId: args.reviewId })).error.code).toBe('WRITE_RESULT_ID_UNAVAILABLE');
+  await restored.execute('write-verify', { taskId: f.taskId, ...args });
+  expect(f.requests.map(r => r.method)).toEqual(['GET', 'PUT']);
+});
+
+it('saves the actual ID before an authored handler fails and never upgrades failure on readback', async () => {
+  const f = await setup({ resultId: 'example-generated', source: `module.exports = async (args,api) => {
+    if (args.__confirmed !== true) return {blocked:true,requiresConfirmation:true};
+    try { const value = await api.request({url:'EXAMPLE_ORIGIN/items/example',method:'PUT',json:{title:args.title}}); if(value.live) return {ok:false}; return value; }
+    catch(error) { return {ok:false,errorCode:error.code}; }
+  };` }), review = await resultFixture(f);
+  await f.call('write-verify', { tool: f.tool, reviewId: review.reviewId, confirmed: true });
+  expect(f.run.writeExecutions[0].status).toBe('uncertain');
+  const restored = new ExplorationService(f.options);
+  expect((await restored.execute('write-readback', { taskId: f.taskId, reviewId: review.reviewId })).data.passed).toBe(true);
+  expect((await restored.execute('review', { taskId: f.taskId })).error.code).toBe('VALIDATION_REQUIRED');
+});
+
+it('never uses a host credential echoed as a result ID or persists it', async () => {
+  vi.stubEnv('EXAMPLE_WRITE_KEY', 'example-credential-placeholder');
+  const f = await setup({ auth: true, resultId: 'example-credential-placeholder' }), review = await resultFixture(f);
+  await f.call('write-verify', { tool: f.tool, reviewId: review.reviewId, confirmed: true });
+  expect(f.run.writeExecutions[0]).toMatchObject({ status: 'uncertain', error: { code: 'WRITE_RESULT_ID_INVALID' } });
+  expect(f.requests.map(r => r.method)).toEqual(['GET', 'PUT']);
+  expect(fs.readFileSync(path.join(f.options.rootDir, f.taskId + '.json'), 'utf8')).not.toContain('example-credential-placeholder');
+});
+
+it('stops effect GETs if the response ID cannot be durably saved', async () => {
+  const f = await setup({ resultId: 'example-generated' }), review = await resultFixture(f);
+  const save = f.service.save.bind(f.service); let failed = false;
+  f.service.save = run => {
+    if (!failed && run.writeExecutions?.[0]?.resultBinding) { failed = true; throw Object.assign(new Error('Example storage failure'), { code: 'EXAMPLE_STORE_UNAVAILABLE' }); }
+    save(run);
+  };
+  await f.call('write-verify', { tool: f.tool, reviewId: review.reviewId, confirmed: true });
+  expect(f.run.writeExecutions[0]).toMatchObject({ status: 'uncertain', error: { code: 'EXAMPLE_STORE_UNAVAILABLE' } });
+  expect(f.requests.map(r => r.method)).toEqual(['GET', 'PUT']);
+  expect((await f.call('review')).error.code).toBe('VALIDATION_REQUIRED');
 });

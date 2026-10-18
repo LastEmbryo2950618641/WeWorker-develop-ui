@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { verifyWriteResults } from './write-result-acceptance.mjs';
 
 export async function verifyExtensionWrites({ cli, record, passed, stopBridge, startBridge }) {
   const requests = [], values = new Map(), held = new Map(), deduplicated = new Map(), mutations = new Map();
@@ -123,5 +124,6 @@ export async function verifyExtensionWrites({ cli, record, passed, stopBridge, s
     assert.ok(requests.every(item => item.authenticated));
     await record('extension-write-requests', requests); await record('extension-write-verified', verified);
     passed('Extension cancellation and Bridge restart retain consumed authorization; response completion and readback never replay a write');
+    await verifyWriteResults({ call: cli, startBridge, stopBridge, pass: passed, page: true });
   } finally { await record('extension-write-requests', requests); await record('extension-write-mutations', Object.fromEntries(mutations)); await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }); }
 }

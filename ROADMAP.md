@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-18（实际写响应 ID 回查）：从 `2bb411c` 接续，HTTP/PAGE_FETCH 的 effect.resultReadback 使用已审阅同源单段模板与实际公开字符串 ID，保留固定 before/after 并严格核对资源身份和内容；最小 ID 先落盘，取消/重启仅 GET 回查，缺失/非法/丢响应不猜值、不重写，不确定状态不放行安装。真实 ID 不进入摘要/知识/安装包，普通 call 行为保持单写。WebCLI 115 文件/1275 项、最终聚焦 76 项、扩展相关 14 项通过；源码与最终打包 HTTP 各 15 项、页面写各 10 项通过。Chromium 1217 完整 65 项通过（早于最后断言别名加固，最终全量/聚焦/打包覆盖）；CLI/Bridge 构建、公开配置、10 文件语法/npm pack 617 文件通过。UI 控件写、多步写、数字/多 ID/响应 URL、写修复和完整对齐仍待办；1194 既有兼容问题保留。Python 网站探索agent未动，保存本地检查点、不推送/PR，按用户要求暂停整体目标。
+
 - 2026-10-18（Extension 声明式页面写）：PAGE_FETCH 写计划绑定固定同源路由、JSON 字符串字段和明确服务端幂等契约，复用 mock/精确审阅/派发前账本/before-write-after/安装/知识；取消、重启、丢响应不应用层重放。实测 Chromium 底层会重发，四种写方法丢响应均为 3 请求/1 实际修改，必须由服务端按稳定 key 去重；不声称单次网络写或任意接口可用。WebCLI 114 文件/1224 项、扩展 59 项、最终打包 CLI＋Bridge 页面专项 7 项及 HTTP 回归 12 项、构建/配置/17 文件语法/npm pack 616 文件通过。Chromium 1217 完整 62 项通过；1194 的 Shadow 失败在 5cabcb8 复现并保留兼容待办。UI 控件写、无幂等支持、动态 ID、多步写/写修复及完整对齐继续待办；Python 网站探索agent未动，未推送/PR。
 
 - 2026-10-18（HTTP 写命令与真实效果验证）：新增显式写来源声明、语义骨架、独立 mock fixture、精确请求审阅与 GET before/write/GET after；授权在派发前持久化消耗，同 review 重入、取消、进程重启、响应丢失均不重放。不确定结果可独立只读回查，未通过不得安装；普通 HTTP write 强制确认、单请求、禁重定向，未完成请求不能提前返回成功。WebCLI 113 文件/1218 项、最终写相关 46 项、完整 Chromium 57 项通过；源码与最终打包 CLI/Bridge 各 12 项 HTTP 验收通过，构建、公开配置、18 文件语法与 npm pack dry-run（614 文件）通过。全量后请求头规范化加固由最终聚焦及打包验收覆盖。真实副作用仅使用隔离 PUBLIC/AUTH loopback；页面/多步写、动态 ID 回查、写修复及完整 OpenCLI 对齐仍未完成。Python 网站探索agent未动；OpenCLI 桌面客户端排除，WeWorker UI 单列产品待办。

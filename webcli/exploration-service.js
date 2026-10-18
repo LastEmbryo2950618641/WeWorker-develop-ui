@@ -110,7 +110,7 @@ export class ExplorationService {
       pageSourceCount: run.pageSources?.length || 0,
       draftRevision: (run.revisions?.length || 0) + 1, preservedRevisions: run.revisions?.length || 0,
       toolNames: run.draft?.toolNames || [], validation: run.validation || null, runtimeValidation: run.runtimeSummary || null,
-      writeExecutions: (run.writeExecutions || []).map(({ http, effect, ...record }) => record),
+      writeExecutions: (run.writeExecutions || []).map(({ http, effect, resultBinding, ...record }) => record),
       ...(run.repairScope ? { repair: { ...run.repairScope, editableFiles: run.editableFiles, knowledge: run.repairKnowledge } } : {}),
       error: run.error || null, nextActions: (next[run.status] || []).filter(name => name !== 'replan' || (run.draft && !run.repairScope)).map(name => `exploration.${name}`) };
   }

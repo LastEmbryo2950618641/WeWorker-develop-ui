@@ -12,6 +12,7 @@ import { createHttpClient } from './http-client.js';
 import { runHttpTool } from './http-runner.js';
 import { strictVerifier } from './http-preview.js';
 import { resolvePageWrite } from './exploration-extension-write.js';
+import { normalizeWriteResult, resolveWriteResult, savedWriteResult, writeResultIdentityMatches } from './exploration-write-result.js';
 
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const clone = value => JSON.parse(JSON.stringify(value));
@@ -77,7 +78,7 @@ function normalizeFixture(run, command, input) {
     if (!Number.isInteger(status) || (name === 'successResponse' ? status < 200 || status > 299 : status < 400 || status > 599)) invalid('Mock responses require success 2xx and failure 4xx/5xx statuses.');
   }
   for (const name of ['successExpectation', 'failureExpectation']) if (!object(input[name]) || !Object.keys(input[name]).length) invalid('Mock interpretations must be non-empty objects.');
-  keys(input.effect, ['readback', 'before', 'after']);
+  keys(input.effect, ['readback', 'before', 'after', 'resultReadback']);
   keys(input.effect.readback, ['url']);
   assertReadRequest(input.effect.readback, run.origin, run.allowedOrigins || []);
   const readUrl = new URL(input.effect.readback.url);
@@ -85,7 +86,9 @@ function normalizeFixture(run, command, input) {
   const assertions = normalizeVerificationCases(['before', 'after'].map(id => ({ id, args: {}, expect: input.effect[id] })));
   const before = assertions[0].expect, after = assertions[1].expect;
   if (!Object.entries(before.equals || {}).some(([key, value]) => !key.includes('*') && Object.hasOwn(after.equals || {}, key) && !Object.is(value, after.equals[key]))) invalid('Before/after need a changed scalar equals assertion at the same exact path.');
-  return clone({ ...input, effect: { readback: input.effect.readback, before, after } });
+  const resultReadback = input.effect.resultReadback === undefined ? undefined
+    : normalizeWriteResult(input.effect.resultReadback, input.successResponse.body, url.origin);
+  return clone({ ...input, effect: { readback: input.effect.readback, before, after, ...(resultReadback ? { resultReadback } : {}) } });
 }
 
 export function writeCase(service, run, args, editing) {
@@ -109,9 +112,11 @@ export function writeReview(service, run, tool) {
   const fixture = normalizeFixture(run, command, writeFixtures(run).commands[command.id]);
   const reviewId = hash({ digest, tool: command.name, fixture });
   const previous = run.writeExecutions?.find(item => item.reviewId === reviewId);
+  const { resultBinding: privateBinding, ...previousSummary } = previous || {};
   return { reviewId, digest, tool: command.name, fixture, ...(command.pageWrite ? { page: { tabId: run.tabId, route: command.pageRoute, request: command.pageWrite,
     idempotency: { header: command.pageWrite.idempotency.header, key: hash({ taskId: run.taskId, reviewId }) } } } : { http: command.http }),
-    consumed: Boolean(previous), execution: previous || null, requiresConfirmation: true,
+    consumed: Boolean(previous), execution: previous ? previousSummary : null, requiresConfirmation: true,
+    ...(fixture.effect.resultReadback ? { responseIdPolicy: 'Retain only the declared public string ID from the actual transport response in this task ledger for independent recovery GETs. Never use a mock ID, handler output, response URL or replay to recover it.' } : {}),
     policy: command.pageWrite ? 'One logical page write after the before check; browser transport may resend with the same reviewed idempotency key. The declared server must deduplicate it. No application retries or rollback.'
       : 'One real write after a successful before check; no redirects, retries or rollback. Readback is an independent GET.' };
 }
@@ -142,17 +147,29 @@ async function pageRequest(service, execution, request, signal, { document, oper
   } finally { signal.removeEventListener('abort', abort); }
 }
 
-async function readEffect(service, execution, signal, phase, options = {}) {
+async function readEffectRequest(service, execution, signal, request, options) {
   if (execution.page) {
-    const reply = await pageRequest(service, execution, { ...execution.effect.readback, method: 'GET' }, signal, options);
-    return { passed: (await strictVerifier())(reply.value, execution.effect[phase]).length === 0, document: reply.document };
+    const reply = await pageRequest(service, execution, { ...request, method: 'GET' }, signal, options);
+    return { value: reply.value, document: reply.document };
   }
   const client = createHttpClient({ safety: 'read', http: execution.http }, { signal, redirects: false,
     resolveCookies: cookieResolver(service), validateRequest: input => assertReadRequest(input, execution.http.origins[0], execution.http.origins) });
   try {
-    const value = await client.request(execution.effect.readback);
-    return { passed: (await strictVerifier())(value, execution.effect[phase]).length === 0 };
+    return { value: await client.request(request) };
   } finally { client.dispose(); }
+}
+
+async function readEffect(service, execution, signal, phase, options = {}) {
+  const binding = phase === 'after' && execution.effect.resultReadback ? savedWriteResult(execution) : null;
+  const result = await readEffectRequest(service, execution, signal, execution.effect.readback, options);
+  let passed = (await strictVerifier())(result.value, execution.effect[phase]).length === 0;
+  if (binding && passed) {
+    const spec = execution.effect.resultReadback;
+    const resource = await readEffectRequest(service, execution, signal, { url: binding.url }, { ...options, ...(result.document ? { document: result.document } : {}) });
+    passed = passed && writeResultIdentityMatches(resource.value, spec, binding.id)
+      && (await strictVerifier())(resource.value, spec.expect).length === 0;
+  }
+  return { passed, document: result.document };
 }
 
 export function verifyWrite(service, run, args) {
@@ -176,7 +193,15 @@ export function verifyWrite(service, run, args) {
     if (signal.aborted) controller.abort();
     const timer = setTimeout(abort, 30000);
     const deadline = Date.now() + 30000, operationId = randomUUID();
-    let violation = false, calls = 0;
+    let violation = false, calls = 0, bindingError;
+    const captureResult = value => {
+      if (!execution.effect.resultReadback) return;
+      try {
+        const binding = resolveWriteResult(execution.effect.resultReadback, value, new URL(review.fixture.expectedRequest.url).origin);
+        execution.resultBinding = { id: binding.id };
+        service.save(run); // Keep only the public ID, before handler completion or effect GETs.
+      } catch (error) { bindingError = error; throw error; }
+    };
     try {
       await service.checkTab(run);
       const before = await readEffect(service, execution, controller.signal, 'before', { deadline, operationId });
@@ -194,8 +219,10 @@ export function verifyWrite(service, run, args) {
         service.save(run); // Durable consumption precedes sending anything to the Extension.
         calls = 1;
         result = (await pageRequest(service, execution, request, controller.signal, { deadline, operationId, document: before.document })).value;
+        captureResult(result);
       } else ({ result } = await runHttpTool({ adapter: { root: run.draft.adapterDir, digest: pkg.digest }, command }, { ...review.fixture.representativeArgs, __confirmed: true }, {
         signal: controller.signal, resolveCookies: cookieResolver(service),
+        observe: entry => { if (entry.status >= 200 && entry.status < 300) captureResult(entry.responseBody); },
         onRequestFailure: () => { violation = true; },
         validateRequest: input => {
           const observed = normalizeHttpWriteRequest(input);
@@ -212,6 +239,7 @@ export function verifyWrite(service, run, args) {
           service.save(run);
         },
       }));
+      if (bindingError) throw bindingError;
       if (violation || calls !== 1 || !execution.dispatched || result?.ok === false || result?.error || !subsetMatches(result, review.fixture.successExpectation)) throw fail('WRITE_RESULT_MISMATCH', 'The command result or request count failed the reviewed case.');
       execution.responseVerified = true;
       execution.effectVerified = (await readEffect(service, execution, controller.signal, 'after', { deadline, operationId, document: before.document })).passed;

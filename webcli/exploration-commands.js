@@ -35,10 +35,10 @@ export const explorationCommands = {
   'verification-write': { description: 'Set 1–10 real read-only test cases with exact field/type/pattern/count assertions. Use public test arguments; cases persist in the task.', params: ['taskId', 'tool', 'cases', 'expectedHash'] },
   validate: { description: 'Run static checks and real read-only browser or host HTTP validation against authored cases.', params: ['taskId'] },
   'write-verification-read': { description: 'Read a generated HTTP or declarative Extension write fixture and hash.', params: ['taskId', 'tool'] },
-  'write-verification-write': { description: 'Author mock success/failure, an exact request and independent GET before/after assertions. Use public test data; this does not execute the write.', params: ['taskId', 'tool', 'fixture', 'expectedHash'] },
-  'write-review': { description: 'Review a validated exact write request, arguments, auth/page/idempotency contract and before/after readback. No requests are sent.', params: ['taskId', 'tool'] },
+  'write-verification-write': { description: 'Author mocks, an exact request, GET before/after and optional effect.resultReadback (fixed :id URL, publicId:true, responsePath, identityPath, expect). Use public test data; no write is executed.', params: ['taskId', 'tool', 'fixture', 'expectedHash'] },
+  'write-review': { description: 'Review a validated exact write, auth/page/idempotency, before/after and optional response-ID readback including minimal public ID retention. No requests are sent.', params: ['taskId', 'tool'] },
   'write-verify': { description: 'Consume one reviewed HTTP or Extension write authorization after a before check, dispatch once, then independently read its effect. Repeating the same review never replays it.', params: ['taskId', 'tool', 'reviewId', 'confirmed'] },
-  'write-readback': { description: 'Repeat only the independent GET after a consumed write, including uncertain/cancelled/interrupted executions. Does not replay or validate a failed handler.', params: ['taskId', 'reviewId'] },
+  'write-readback': { description: 'Repeat independent effect GETs after a consumed write, including optional resource readback from its durable response ID. Missing IDs are never guessed. Does not replay or validate a failed handler.', params: ['taskId', 'reviewId'] },
   review: { description: 'Review the validated package, permissions and installation changes.', params: ['taskId'] },
   install: { description: 'Install a validated package locally after explicit user consent to the current review.', params: ['taskId', 'reviewId', 'confirmed'] },
 };

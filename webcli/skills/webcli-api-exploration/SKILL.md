@@ -160,7 +160,14 @@ webcli call exploration.query --args '{"taskId":"example-task","source":{"mode":
 - 普通 validate 只跑写 mock 和真实只读用例，返回 write_review_ready。write-review 返回完整参数/请求/回查/鉴权声明与综合摘要。已有用户授权覆盖该目标和副作用时，调用 `write-verify --tool=... --reviewId=... --confirmed=true`；否则先展示这份具体审阅并取得授权。安装授权不自动授权远端写测试。
 - 实际验证先 GET 核对 before，再一次写请求，再 GET 核对 after；总预算 30 秒。reviewId 在派发前持久化并消耗，同一任务重复调用/取消/重启均不重发。失败后先查看 writeExecutions；uncertain 表示可能已有副作用，使用 write-readback 仅回查，不能把它当成重新通过验证或自动重试理由。无自动回滚。
 - 全部当前读/写验证通过后才能 review/install；安装只重跑 mock。普通 HTTP write 仍需 __confirmed=true，最多一次请求、拒绝重定向。普通 call 没有探索 reviewId 去重；失败应先检查效果。新声明、修改文件或 fixture 需要重新验证与审阅，不要为了重试而机械改 fixture id。
-- 当前未支持任意作者页面 JS/UI 控件写、多步/批量写、动态返回 ID 回查、幂等键协商或写工具 repair；单个用例只证明本次明确场景。
+- 当前未支持任意作者页面 JS/UI 控件写、多步/批量写、数字/多 ID 或响应 URL 回查、幂等键协商或写工具 repair；单个用例只证明本次明确场景。
+
+### 写响应 ID 的只读回查
+
+- HTTP 与 PAGE_FETCH fixture 的 effect 可增加 `resultReadback:{url:"https://example.com/items/:id",publicId:true,responsePath:"item.id",identityPath:"id",expect:{equals:{title:"After"}}}`；原固定 readback/before/after 仍必需。successResponse.body 要包含公开 mock ID；真实执行仅从实际传输响应取 ID，HTTP 作者 handler 的结果映射不控制回查目标。
+- 只声明确认为公开且允许存储的标识。固定同写接口 origin、一个 :id 段、无 query/hash；精确属性路径不含通配符/敏感名。只收 1–512 字符字符串，Unicode 字母/数字及 `_.-`，拒绝 `.`/`..` 和分隔符/百分号，保留前导零；不转换数字或使用服务端返回 URL。
+- write-review 包含这条 GET 与最小公开 ID 持久化政策，必须在已有授权范围内确认。成功收到 ID 后在当前任务私有账本保存，仅用于独立只读恢复；get/trace/review 输出、知识与安装包不带真实 ID。固定 after 通过后再 GET 资源，严格核对 identityPath 与实际 ID 相等，并满足非 ID 的内容 equals；页面全过程保持同文档。
+- 丢响应/缺失或非法 ID 不用 mock 或猜测值补齐，不能重写来取 ID。write-readback 缺持久 ID 返回 WRITE_RESULT_ID_UNAVAILABLE 且零请求；用独立已授权的只读途径检查。已有 ID 的取消/重启/读取失败可原 reviewId 回查，但 uncertain/失败 handler 不升级为通过，不放行安装。
 
 ### 声明式 Extension PAGE_FETCH 写
 
@@ -168,7 +175,7 @@ webcli call exploration.query --args '{"taskId":"example-task","source":{"mode":
 - **只有目标服务端明确保证幂等键去重时才填写该声明**。Chromium 响应丢失时可能重发请求；一次 fetch 不等于一次网络发送。支持 idempotency-key/x-idempotency-key，不自动探测或协商，不能凭空声称服务端已支持。
 - 生成固定注册模块及 manifest.pageWrite，参数映射直接在计划/manifest 中声明；不要编辑模块为自定义 JS。每工具写 fixture 沿用上述格式，失败解释为 `{ok:false,errorCode:"PAGE_WRITE_HTTP_STATUS"}`，成功返回原始 JSON。validate 只跑 mock；write-review 明列路由、请求、回查和实际幂等 header/key。
 - 用户授权覆盖目标副作用后 write-verify；相同 review 消耗后不再派发。浏览器同源 Cookie/HttpOnly 保留在浏览器，before/write/after 必须同一文档，取消/断线阻止后续步骤，已派发请求可能完成。响应丢失仍 uncertain，独立只读 readback 不会放行安装。
-- 普通 call 需 `__confirmed:true`，每次显式调用有新幂等键，不能把重复 call 当成安全重试。没有服务端幂等保证、动态 CSRF/签名、任意正文/结果映射、UI 点击提交、多步写/动态 ID/写修复继续未支持。
+- 普通 call 需 `__confirmed:true`，每次显式调用有新幂等键，不能把重复 call 当成安全重试。没有服务端幂等保证、动态 CSRF/签名、任意正文/结果映射、UI 点击提交、多步写/数字或多 ID/写修复继续未支持。
 
 ### 多步只读网站流程（UI_SELECTOR workflow）
 

@@ -12,7 +12,7 @@ import { readPackageDirectory } from '../adapter-package-files.js';
 const roots = [];
 afterEach(() => { for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
 const origin = 'https://example.com', url = origin + '/items/example';
-async function setup(behavior = 'normal') {
+async function setup(behavior = 'normal', resultId = 'example') {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'extension-write-test-')); roots.push(root);
   const paths = resolveAdapterPaths({ home: root, env: { WEWORKER_USER_ADAPTERS_DIR: path.join(root, 'user'), WEWORKER_ADAPTER_DATA_DIR: path.join(root, 'data'), WEWORKER_BUILTIN_ADAPTERS_DIR: path.join(root, 'builtin'), WEWORKER_BUILD_PROFILE: 'public' } });
   let title = 'Before', caps = true, document = { frameId: 'example', loaderId: 'first', url: origin + '/editor' };
@@ -29,8 +29,9 @@ async function setup(behavior = 'normal') {
         if (behavior !== 'noeffect') title = request.body.title;
         if (behavior === 'lost') return { ok: false, error: { code: 'PAGE_WRITE_NETWORK_ERROR' }, dispatched: true };
       }
-      const reply = { ok: true, value: { ok: true, title }, document: { ...document } };
+      const reply = { ok: true, value: { ok: true, title, id: resultId }, document: { ...document } };
       if (behavior === 'navigation' && request.method === 'GET') document.loaderId = 'changed';
+      if (behavior === 'detail-navigation' && request.method === 'GET' && title === 'After') document.loaderId = 'changed';
       return reply;
     }) };
   const service = new ExplorationService(options);
@@ -115,4 +116,22 @@ it('binds module, route, fixture body and full request permissions', async () =>
   expect(adapterPermissions(manifest)).not.toEqual(before);
   fs.appendFileSync(path.join(f.run.draft.adapterDir, command.module), '\nfetch("https://example.com/");');
   expect(() => readPackageDirectory(f.run.draft.adapterDir)).toThrow(/fixed registration/);
+});
+
+it.each(['normal', 'detail-navigation'])('keeps dynamic resource GET on the original page document: %s', async behavior => {
+  const f = await setup(behavior, '007示例');
+  const fixture = structuredClone(f.fixture);
+  fixture.successResponse.body.id = 'example-mock';
+  fixture.effect.resultReadback = { url: origin + '/records/:id', publicId: true, responsePath: 'id', identityPath: 'id', expect: { equals: { title: 'After' } } };
+  expect((await f.save(fixture)).ok).toBe(true);
+  await f.call('validate');
+  const review = (await f.call('write-review', { tool: f.tool })).data;
+  expect(review.reviewId).not.toBe(f.review.reviewId);
+  await f.call('write-verify', { tool: f.tool, reviewId: review.reviewId, confirmed: true });
+  const execution = f.run.writeExecutions[0];
+  expect(execution.status).toBe(behavior === 'normal' ? 'verified' : 'uncertain');
+  expect(execution.resultBinding).toEqual({ id: '007示例' });
+  expect(f.requests.filter(r => r.url.includes('/records/'))).toHaveLength(behavior === 'normal' ? 1 : 0);
+  if (behavior === 'normal') expect(f.requests.at(-1).url).toBe(origin + '/records/007%E7%A4%BA%E4%BE%8B');
+  else expect(execution.error.code).toBe('PAGE_WRITE_DOCUMENT_CHANGED');
 });

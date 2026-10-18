@@ -2,7 +2,11 @@
 
 更新：2026-10-18。已实现多浏览器 profile、独立 HTTP Runner、PUBLIC_API/COOKIE_API/AUTH_API、mode=http 的无浏览器 OpenAPI JSON 发现与宿主请求证据、只读局部修复和显式 2–8 步只读 workflow；最新增加 HTTP 写与具有服务端幂等契约的 Extension PAGE_FETCH 声明式写生成、mock 和真实副作用回查。具体契约见 [HTTP Runtime](http_adapter_runtime.md) 和 [写命令验证](api_exploration_write.md)，历史与验证结果见 [交接文档](api_exploration_cli_handoff.md)。
 
-最新 WebCLI 回归 114 文件/1224 项及 Chromium 1217 完整 62 项通过；页面写/HTTP 打包链路、59 项扩展测试与 1194 兼容失败详见交接文档末尾。HTTP version 2 支持 Bearer/header/Basic/声明式 HMAC 和 Cookie store/分区。下文旧阶段的“PUBLIC_API/COOKIE_API 尚未实现”是历史边界；任意站点签名/OAuth、UI 控件/多步写、动态写结果回查、任意多步自定义流程及完整对齐仍未完成。
+最新 WebCLI 回归 115 文件/1275 项、最终写相关 76 项与源码 HTTP 15 项/页面写 10 项通过；最终打包 HTTP 15 项/页面写 10 项、完整 Chromium 1217 65 项通过；全量浏览器快照早于最后别名守卫，最终全量/打包覆盖该加固。既有 1194 兼容限制及报告详见交接文档末尾。HTTP version 2 支持 Bearer/header/Basic/声明式 HMAC 和 Cookie store/分区。下文旧阶段的“PUBLIC_API/COOKIE_API 尚未实现”是历史边界；任意站点签名/OAuth、UI 控件/多步写、数字/多 ID/响应 URL 回查、任意多步自定义流程及完整对齐仍未完成。
+
+## 写响应资源 ID 回查
+
+最新增加 effect.resultReadback，HTTP 与 PAGE_FETCH 共用宿主规范化、最小公开 ID 账本和效果验证。保留固定 GET before/after，另按实际响应的精确字段填入同写接口 origin 的单段 :id 模板，资源 ID 与内容均须匹配。HTTP ID 在宿主脱敏后、Worker 映射前提取；页面原有幂等/文档/取消边界不变。收到 ID 后先落盘，缺失/非法/丢响应不猜值、不重放；重启或取消后可只读回查，不能将 uncertain 升级为通过。实际 ID 不进入摘要、知识和安装包。完整字段、限制与恢复语义见 [写命令验证](api_exploration_write.md)。
 
 ## Extension 页面写：声明式单请求阶段
 
@@ -247,7 +251,7 @@ browser_upload_target_v1 统一上传到主/子 frame 的实际原生文件节�
 
 ## HTTP 写命令阶段
 
-独立探索现已接入 HTTP 写骨架、独立 mock fixture、精确执行审阅、写前/写后 GET、持久化单次派发与不确定结果回查，详见 [写命令与副作用验证](api_exploration_write.md)。这扩展 PUBLIC_API/COOKIE_API/AUTH_API；默认 validate 不实际写入。页面/多步写操作、写工具 repair 和动态返回 ID 回查继续留在能力台账。下面的旧验收数字是历史记录，最新证据以交接文档顶部及末尾为准。
+独立探索现已接入 HTTP 写骨架、独立 mock fixture、精确执行审阅、写前/写后 GET、持久化单次派发与不确定结果回查，详见 [写命令与副作用验证](api_exploration_write.md)。这扩展 PUBLIC_API/COOKIE_API/AUTH_API；默认 validate 不实际写入。声明式 PAGE_FETCH 幂等写与公开字符串返回 ID 回查已接入；UI 控件/多步写操作、写工具 repair 与数字/多 ID/响应 URL 回查继续留在能力台账。下面的旧验收数字是历史记录，最新证据以交接文档顶部及末尾为准。
 
 ## 后续 UI 统一
 
