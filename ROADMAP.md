@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-18（B01 查询导航进行中）：navigate 支持显式 queryParameters，与 path/workflow 组合，完整 URL/新文档/不重放/逐参数两组作者值及旧 profile 拒绝保持。源码 Chromium 1217 导航专项 8 项通过（ma1h9k），最终双打包完整回归运行中；不提前计通过。U06 已补固定 1.8.8 tag 扩展源码审计，区分 Worker/流式正文/命令结果复用与统一诊断导出，未关闭实机欠账。整体目标 active。
+
 - 2026-10-18（U01 规范审计）：新增 adapter convention-audit，复用 v2 来源/摘要校验和只编译语法，七类配置/启发式提示不执行 Adapter。源码/最终打包各 3 项、聚焦 7 项、WebCLI 127 文件/1409 项通过，npm pack 625 文件含新模块。显示报告避免表格只展示包信息而丢提示；动态/helper/Toolkit/legacy 及统一 verify/evidence 仍开放。整体目标 active。
 
 

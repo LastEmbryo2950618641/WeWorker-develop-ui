@@ -52,3 +52,16 @@ test('a hung CDP navigation releases the task and listener at timeout without re
   const f = setup('hung'); assert.equal((await f.run()).error.code, 'PAGE_QUERY_TIMEOUT');
   assert.equal(f.calls.filter(method => method === 'Page.navigate').length, 1); assert.equal(f.listeners.size, 0);
 });
+
+test('query navigation encodes each literal value once and binds exact query keys to the manifest', async () => {
+  const query = { ...source, resultPathname: '/items', pathParameters: [], queryParameters: [{ name: 'keyword', queryKey: 'q', description: 'Public query' }] };
+  const value = '007 &示例+?#%';
+  const next = { ...payload, source: query, values: { keyword: value } };
+  const command = { safety: 'read', pageWorkflow: true, pageRoute: { origin: payload.expectedOrigin, pathname: '/start', navigation: { pathname: '/items', pathParameters: [], queryParameters: query.queryParameters } } };
+  const destination = new URL(assertPageQueryRoute(next, command));
+  assert.equal(destination.searchParams.get('q'), value); assert.equal(destination.hash, '');
+  assert.throws(() => assertPageQueryRoute({ ...next, source: { ...query, queryParameters: [{ ...query.queryParameters[0], queryKey: 'other' }] } }, command));
+  const f = setup(); assert.equal((await f.run({ source: query, values: { keyword: value } })).ok, true);
+  assert.equal(f.calls.filter(method => method === 'Page.navigate').length, 1);
+  const redirect = setup('redirect'); assert.equal((await redirect.run({ source: query, values: { keyword: value } })).error.code, 'PAGE_QUERY_ROUTE_CHANGED');
+});

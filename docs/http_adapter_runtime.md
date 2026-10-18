@@ -1,5 +1,7 @@
 # 独立 HTTP Adapter 与探索策略
 
+2026-10-18 边界补充：只读页面 navigate 的 `queryParameters` 属于 Extension 页面导航契约（见开发设计），不改变 HTTP 鉴权/请求权限、PAGE_FETCH/UI 写 URL 或 effect.resultReadback 限制，不赋予业务写授权。
+
 2026-10-17：v2 包运行时 `http` 支持契约版本 `http.version=1|2`。version 2 增加宿主环境鉴权与 Cookie store/分区；兼容 version 1，旧宿主明确拒绝 version 2。它由 WebCLI 的 Node Worker 执行，与 Extension、Toolkit 各自的 Runner 分开。无需 Python、桌面客户端或模型 Key。
 
 `PUBLIC_API`、`AUTH_API` 的普通调用在 CLI 进程直接执行，不启动 Bridge、不选择浏览器。AUTH_API 使用明确声明的宿主环境凭据。`COOKIE_API` 经 Bridge 固定选定 profile，只读取明确声明的 Cookie，HTTP 请求仍由宿主发送；缺失、歧义、离线和断线均不回退。多连接使用 `--profile`，选择规则与 browser 命令一致。

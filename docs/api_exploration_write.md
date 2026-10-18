@@ -1,5 +1,7 @@
 # HTTP／Extension 写命令与副作用验证
 
+2026-10-18 边界补充：只读页面 navigate 的 `queryParameters` 属于 Extension 页面导航契约（见开发设计），不改变 HTTP 鉴权/请求权限、PAGE_FETCH/UI 写 URL 或 effect.resultReadback 限制，不赋予业务写授权。
+
 ## 共享文件修复与写授权
 
 `repair.sharedFiles` 选择已有 internal 文本文件时，必须把包内全部读写命令放入计划；服务绑定完整影响范围。所有写命令的历史 fixture 仅供复验，不能导入旧 review、执行记录或真实 ID。validate 只跑 mock/读取 cases，必须逐个完成新精确审阅和独立真实效果后才能安装；修改任一共享文件使全包验证和旧审阅失效。取消、重启、丢响应不重放，uncertain 只读恢复不能安装。

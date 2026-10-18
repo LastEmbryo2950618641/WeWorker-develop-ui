@@ -1,6 +1,6 @@
 # API 自动探索 CLI 改造跟进与交接
 
-> 更新日期：2026-10-18。持续目标仍 active；R01/R02/R03 修复与知识阶段均已隔离验证，最新双打包 Chromium 1217 完整 83 项、HTTP 24 项通过。U01 增加七类静态规范提示，WebCLI 最新 127 文件/1409 项、npm pack 625 文件；U05 外部 CLI 实际差距已审计。检查点不停止目标，后续 B01 动态 query/hash 正在核对，最新细节以文末为准；Python 网站探索agent未动。
+> 更新日期：2026-10-18。持续目标仍 active，HEAD 检查点 96c9fd1；当前 B01 动态 queryParameters 未提交，源码 Chromium 1217 导航专项 8 项通过，最终双打包完整回归运行中。前阶段完整 83 项只证明前阶段。U06 已追加固定 1.8.8 扩展源码审计，统一诊断导出有实际差距，其余实机欠账保留。最新证据、失败和剩余边界以文末为准；Python 网站探索agent未动。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
 
 ## 新会话从这里接手
@@ -810,3 +810,16 @@ npm run test:exploration:browser --prefix webcli -- \
 
 - R02 最终完整验收：Chromium revision 1217 双打包 **83 项全部通过**，报告 `webcli-browser-acceptance-8pxFNg/report.json`，日志 `/tmp/weworker-shared-browser-bundled-full.log`。此快照包含最终 R02 辅助命令 read/fingerprint 守卫及此前 managed 刷新加固，未包含并行开发的纯 CLI convention-audit。最新静态管理改动另由全量 1409/最终打包 dAtyu9 覆盖。最终 **3867 文件/28 私有 resultBinding** 隐私扫描通过 `/tmp/weworker-shared-browser-privacy.log`。无需日常 Chrome/用户 Bridge，1194/平台/独立 Agent/真实账户欠账保持。
 - 本检查点之后继续 B01：已核对宿主 normalizePageQuery 与扩展 resolvePageDestination，navigate 确实只接受路径段，不支持声明式 query/hash；现有 search 的 matchQuery 仅校验搜索控件结果，不等价。下一步复用精确路径/文档身份/不重放/两组参数断言与安装权限，处理动态 URL 查询/片段，尚未实现，不标完成。整体目标继续 active。
+
+### 2026-10-18：96c9fd1 后继续 B01 查询导航与 U06 审计（active）
+
+- 重新核对 Git/目标/最新台账，保留已有未提交查询实现，未重建分支或重复已完成能力。上游 1.8.8 `clis/google-scholar/search.js:21`、`51job/search.js:61` 实际构造动态 query 后导航；本项目旧 search.matchQuery 仅校验控件结果、navigate 只接受路径参数，因此确认为声明式生成的实际缺口。未运行真实站点/账户。
+- navigate 新增 queryParameters（name/queryKey/description，1–16 个），可查询串单独或与路径组合，workflow 同样接入。保留字符串/前导零/Unicode 与字面分隔符，完整 href/新主文档/稳定结果校验；禁止凭据、动作、redirect 键。旧选定 profile 缺 page_navigation_query_v1 时观察/验证/普通调用零派发、不回退。每个 query 参数需两个不同作者值，观察值不保存为默认/cases；manifest 权限与 scoped repair 固定完整映射。
+- 初步全量 127 文件/1415 项 `/tmp/weworker-query-all.log`；最终聚焦 4 文件/57 项 `/tmp/weworker-query-focused-complete.log`，扩展 13 项 `/tmp/weworker-query-extension-final.log`。源码 Chromium 1217 导航专项 **8 项** `webcli-browser-acceptance-ma1h9k/report.json`，日志 `/tmp/weworker-query-browser-source-final4.log`，包含旧路径两项及新 query/修复/mixed/workflow 四项和启动两项；87 文件隐私扫描、额外 query/category 未保留标记扫描通过。最终全量和双打包完整回归仍运行，不提前计入。
+- 失败与修复：sWks6T 使用旧 extension-dist，缺新 capability，正确拒绝；构建后复跑。4hJ1r4 验收误用参数错误的 ok 字段；jJ8cH2 workflow 夹具缺 DOM fields；IpMcoW 再暴露 workflow 的错误是结构对象而普通导航参数错误是字符串。最终按既有返回明确断言 error.code/message 和零请求，不修改生产协议、不弱化结果。提前启动的双打包 1DKJnP 加载旧验收脚本，也停在该断言；完整复跑日志 `/tmp/weworker-query-browser-bundled-final.log`，旧失败不算通过。
+- CLI/Bridge build、公开配置/3 项配置测试、20 文件语法、探索 Skill quick_validate、npm prepack/pack dry-run **627 文件**含两端新 helper 通过；源码/build/npm 扩展模块字节一致。通用 Skill 既有 version 校验限制保持。
+- U06 审计详见 opencli_network_audit.md：npm 中没有扩展源码，额外取得 v1.8.8 固定 tag 8271afc67e8504bda94c147f446ee29775d08274，核对 cdp/journal Git blob 摘要。上游完成后 getResponseBody 不等于未结束流，iframe 目标处理不等于 Worker 自发请求；命令 journal 的结果续取不等于流量重发。统一 trace/receipt/summary/network/console/state/screenshots 导出是本项目实际待补差距，其余保留隔离行为核对，没有静默缩减范围。
+- hash 的实际上游例子是 `clis/gmail/utils.js:588–589`，可切换片段并等待站点响应；本项目不能直接放宽新文档守卫，否则可能读取旧数据。下一步独立设计明确 hash 目标与业务结果关联，不照搬其临时切回其他页面的行为。hash/循环/分支/跨源/frame、W/A/U 余项和 E01–04 全部保持；未 push/PR/创建新聊天/子 Agent，受限目录与 Python 网站探索agent未动。
+
+- 后续证据：最终 WebCLI **127 文件/1416 项** `/tmp/weworker-query-all-final.log`、双打包 HTTP **24 项** `webcli-http-discovery-heIeNv` 及 390 文件/14 私有绑定扫描通过。完整 Baik7x 已通过新增 query/workflow，但重启知识断言仍预期旧 10 页，实际新增三来源后为 13；改为精确 13 并分别核对两个 query navigate 和一个 query workflow，继续完整复跑 `/tmp/weworker-query-browser-bundled-final2.log`。生产实现未改，不把此失败称为通过。
+- U04 已补实际源码审计 `opencli_cdp_audit.md`，明确上游独立 CDPBridge/Electron registry/launcher 与本项目扩展内部 CDP 的差别；实现与实机仍待办。继续 B01 hash 参数/业务结果关联，现有 query 最终完整验收尚在运行，检查点只保留可追踪进度，不停止整体目标。

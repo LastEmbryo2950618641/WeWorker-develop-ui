@@ -1,5 +1,6 @@
 import { explorationError as fail } from './exploration-commands.js';
 import { normalizePageQuery, pageQueryValues } from './exploration-query.js';
+import { navigationParameters } from './page-navigation-parameters.js';
 
 const invalid = message => { throw fail('INVALID_PAGE_WORKFLOW', message); };
 // Kept data-only to match the extension's manifest guard; result extraction may
@@ -24,7 +25,7 @@ export function validatePageWorkflowContract(contract) {
 export function workflowParameters(source) {
   const parameters = new Map();
   for (const { query } of source.steps) {
-    const bindings = query.mode === 'navigate' ? query.pathParameters : query.trigger.parameter ? [{ name: query.trigger.parameter, description: query.trigger.description }] : [];
+    const bindings = query.mode === 'navigate' ? navigationParameters(query) : query.trigger.parameter ? [{ name: query.trigger.parameter, description: query.trigger.description }] : [];
     for (const binding of bindings) {
       const previous = parameters.get(binding.name);
       const maxLength = query.mode === 'navigate' ? 512 : 1000;
@@ -64,6 +65,6 @@ export function workflowValues(source, values = {}) {
 }
 
 export function stepValues(query, values) {
-  const names = query.mode === 'navigate' ? query.pathParameters.map(binding => binding.name) : query.trigger.parameter ? [query.trigger.parameter] : [];
+  const names = query.mode === 'navigate' ? navigationParameters(query).map(binding => binding.name) : query.trigger.parameter ? [query.trigger.parameter] : [];
   return Object.fromEntries(names.filter(name => Object.hasOwn(values, name)).map(name => [name, values[name]]));
 }

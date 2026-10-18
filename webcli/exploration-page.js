@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { explorationError as fail, textArg } from './exploration-commands.js';
 import { draftCommandId } from './generation-harness/package-draft.js';
 import { workflowParameters, pageWorkflowContract } from './exploration-workflow.js';
+import { navigationParameters } from './page-navigation-parameters.js';
 
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 const sensitive = /password|passwd|secret|cookie|authorization|credential|api.?key|csrf|session|token/i;
@@ -66,7 +67,7 @@ export function buildPageTool(site, tool, observation) {
   const intercept = observation.source.strategy === 'INTERCEPT', navigation = observation.source.mode === 'navigate', query = ['query', 'navigate', 'workflow', 'filter'].includes(observation.source.mode);
   const parameter = (intercept || query) && observation.source.trigger?.parameter;
   const parameters = { type: 'object', properties: parameter ? { [parameter]: { type: 'string', minLength: 1, maxLength: 1000, description: observation.source.trigger.description } } : {}, required: parameter ? [parameter] : [], additionalProperties: false };
-  if (navigation) for (const binding of observation.source.pathParameters) {
+  if (navigation) for (const binding of navigationParameters(observation.source)) {
     parameters.properties[binding.name] = { type: 'string', minLength: 1, maxLength: 512, description: binding.description };
     parameters.required.push(binding.name);
   }
@@ -77,7 +78,8 @@ export function buildPageTool(site, tool, observation) {
   return { toolDefinition: { name, access: 'read', description: tool.purpose || `Read the observed ${observation.source.strategy} source on the current page.`,
     pageRoute: { origin: observation.expectedOrigin, pathname: observation.expectedPath,
       ...(workflow ? { workflow: pageWorkflowContract(observation.source) }
-        : navigation ? { navigation: { pathname: observation.source.resultPathname, pathParameters: observation.source.pathParameters } }
+        : navigation ? { navigation: { pathname: observation.source.resultPathname, pathParameters: observation.source.pathParameters,
+          ...(observation.source.queryParameters ? { queryParameters: observation.source.queryParameters } : {}) } }
         : query && observation.source.resultPathname !== observation.expectedPath ? { additionalPaths: [observation.source.resultPathname] } : {}) },
     ...(query ? { pageWorkflow: true } : {}),
     pageStrategy: observation.source.strategy,

@@ -11,6 +11,7 @@ import { WebSocketServer } from "ws";
 import { EventEmitter } from "events";
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { BrowserProfiles, profileError } from './browser-profiles.js';
+import { usesNavigationQuery } from './page-navigation-parameters.js';
 import { GenerationRunStore } from './generation-harness/run-store.js';
 import { createGenerationRunTransportSnapshot } from './generation-transport.js';
 import { execFile } from "child_process";
@@ -1669,6 +1670,7 @@ export class WebSocketBridge extends EventEmitter {
     }
     if (selected?.command.pageWorkflow && !this._extensionCapabilities?.includes('page_query_v1')) throw new Error('Reload the browser extension before calling navigation-aware page queries.');
     if (selected?.command.pageRoute?.navigation && !this._extensionCapabilities?.includes('page_navigation_v1')) throw new Error('Reload the browser extension before calling parameterized page navigation.');
+    if ((usesNavigationQuery(selected?.command.pageRoute?.navigation) || usesNavigationQuery(selected?.command.pageRoute?.workflow)) && !this._extensionCapabilities?.includes('page_navigation_query_v1')) throw new Error('Reload the browser extension before calling public URL query navigation.');
     if (selected?.command.pageRoute?.workflow && !this._extensionCapabilities?.includes('page_workflow_v1')) throw new Error('Reload the browser extension before calling ordered page workflows.');
     if (selected?.command.uiWrite && !this._extensionCapabilities?.includes('ui_write_v1')) throw new Error('Reload the browser extension before calling UI writes.');
     if (selected?.command.uiWrite?.result && !this._extensionCapabilities?.includes('ui_write_result_v1')) throw new Error('Reload the browser extension before reading UI receipt IDs.');

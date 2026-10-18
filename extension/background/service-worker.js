@@ -66,6 +66,7 @@ const EXTENSION_CAPABILITIES = [
   'intercept_read_v1',
   'page_query_v1',
   'page_navigation_v1',
+  'page_navigation_query_v1',
   'page_workflow_v1',
   'page_write_v1',
   'ui_write_v1',

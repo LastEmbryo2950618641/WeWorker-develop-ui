@@ -19,6 +19,7 @@
     "exploration-page.js",
     "exploration-intercept.js",
     "exploration-query.js",
+    "page-navigation-parameters.js",
     "exploration-workflow.js",
     "exploration-write.js",
     "exploration-write-result.js",

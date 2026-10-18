@@ -649,3 +649,41 @@ it('authored case edits invalidate replan hashes and active/terminal tasks canno
     expect((await f.service.execute('replan', { taskId, expectedDraftHash: current.draftHash, reason: 'Choose a different source' })).error.code).toBe(error);
   }
 });
+
+it.each([false, true])('requires query capability and independent author values without retaining observation values (workflow=%s)', async workflow => {
+  const capabilities = ['passive_exploration_v1', 'page_sources_v1', 'page_query_v1', 'page_navigation_v1', 'page_workflow_v1', 'strict_output_contract_v1'];
+  const f = setup({ capabilities: () => ({ connected: true, capabilities }) });
+  const taskId = await start(f.service), result = { strategy: 'DOM_STATE', path: ['publicRows'] };
+  const navigate = { mode: 'navigate', resultPathname: '/items', queryParameters: [
+    { name: 'keyword', queryKey: 'q', description: 'Public query' }, { name: 'category', queryKey: 'category', description: 'Public category' },
+  ], result };
+  const source = workflow ? { mode: 'workflow', steps: [
+    { pathname: '/list', query: { mode: 'navigate', resultPathname: '/list', result } },
+    { pathname: '/list', query: navigate },
+  ] } : navigate;
+  const args = { taskId, source, values: { keyword: 'example-unretained-query', category: 'example-unretained-category' }, reason: 'Explicit public query' };
+  expect((await f.service.execute('query', args)).error.code).toBe('CAPABILITY_UNAVAILABLE');
+  expect(f.requestExtension.mock.calls.some(([message]) => message.type === 'exploration_page_query')).toBe(false);
+  capabilities.push('page_navigation_query_v1');
+  const original = f.requestExtension.getMockImplementation();
+  f.requestExtension.mockImplementation(message => message.type === 'exploration_page_query' ? { ok: true, shape: { type: 'object' } } : original(message));
+  expect((await f.service.execute('query', args)).ok).toBe(true); await f.service.jobs.get(taskId);
+  expect(fs.readFileSync(path.join(f.options.rootDir, `${taskId}.json`), 'utf8')).not.toContain('example-unretained');
+  const evidence = (await f.service.execute('evidence', { taskId })).data;
+  const generated = await f.service.execute('generate', { taskId, plan: { tools: [{ name: 'query_navigation', risk: 'read', strategy: 'UI_SELECTOR', sourcePageId: evidence.pageSources[0].id, readReason: 'Read public query pages' }] } });
+  expect(generated.ok).toBe(true); const tool = generated.data.toolNames[0];
+  const writeCases = async categories => {
+    const before = (await f.service.execute('verification-read', { taskId, tool })).data;
+    expect((await f.service.execute('verification-write', { taskId, tool, expectedHash: before.hash, cases: categories.map((category, i) => ({ id: 'case-' + i, args: { keyword: 'example-' + i, category }, expect: { requiredPaths: ['data'] } })) })).ok).toBe(true);
+  };
+  await writeCases(['books', 'books']);
+  expect((await f.service.execute('validate', { taskId })).error.code).toBe('VERIFICATION_REQUIRED');
+  await writeCases(['books', 'music']);
+  capabilities.pop();
+  expect((await f.service.execute('validate', { taskId })).error.code).toBe('CAPABILITY_UNAVAILABLE');
+  expect(f.runtimeValidator).not.toHaveBeenCalled();
+  capabilities.push('page_navigation_query_v1');
+  f.runtimeValidator.mockResolvedValue({ passed: true, executionSummary: { attempted: 2, passed: 2, failed: 0, skipped: 0 } });
+  expect((await f.service.execute('validate', { taskId })).ok).toBe(true); await f.service.jobs.get(taskId);
+  expect((await f.service.execute('get', { taskId })).data.status).toBe('review_ready');
+});

@@ -1,7 +1,8 @@
 import { matchesPagePath, resolvePageDestination } from './page-navigation.js';
+import { navigationParameters } from './page-navigation-parameters.js';
 
 const fail = (code, message) => Object.assign(new Error(message), { code });
-const namesFor = query => query.mode === 'navigate' ? (query.pathParameters || []).map(binding => binding.name) : query.trigger?.parameter ? [query.trigger.parameter] : [];
+const namesFor = query => query.mode === 'navigate' ? navigationParameters(query).map(binding => binding.name) : query.trigger?.parameter ? [query.trigger.parameter] : [];
 export function pageWorkflowContract(source) {
   return { steps: source.steps.map(({ pathname, query }) => {
     const { result, ...action } = query;

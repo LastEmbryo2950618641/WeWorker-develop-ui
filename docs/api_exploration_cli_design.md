@@ -67,7 +67,13 @@ filter 只操作已有 search/filter/pagination 读控件，保持同 origin/pat
 
 page_workflow_v1 在观察/验证/调用前检查；manifest.pageRoute.workflow 固定动作顺序、选择器、参数、关联条件和路由，总预算最多 30 秒，纳入 page-workflow 权限。结果提取声明不属于动作授权，可在 scoped repair 中修复并重跑历史断言；改动作、参数或顺序须重新生成和审阅。预览与普通调用复用同一后台序列及 manifest 检查，仍只续接一次映射结果。
 
-观察与作者验证分配临时 operationId；cancel 发往绑定 profile，扩展记录取消并在下一动作/读取前检查。验证一次发送一个 workflow case，避免五个长流程共用一次传输时限；取消不会开始下一 case。Bridge 断线使当前工作流失效，重启任务保留 interrupted，不自动续跑。已派发动作可能完成；普通调用暂无独立取消入口。持久化仅存结构与作者明确提交的 cases，观察 values 不保存。仍限同源主 frame 原生读控件，写操作、副作用验证、动态 query/hash 模板、自定义组件和跨 frame 流程待做。
+观察与作者验证分配临时 operationId；cancel 发往绑定 profile，扩展记录取消并在下一动作/读取前检查。验证一次发送一个 workflow case，避免五个长流程共用一次传输时限；取消不会开始下一 case。Bridge 断线使当前工作流失效，重启任务保留 interrupted，不自动续跑。已派发动作可能完成；普通调用暂无独立取消入口。持久化仅存结构与作者明确提交的 cases，观察 values 不保存。仍限同源主 frame 原生读控件，写操作、副作用验证、动态 hash 模板、自定义组件和跨 frame 流程待做。
+
+## 动态查询参数导航（B01 增量）
+
+navigate 可声明 `queryParameters`，每项 name/queryKey/description，1–16 个公开唯一键；与 pathParameters 合并生成必填字符串 Schema、workflow 参数和 pageRoute.navigation 权限。宿主与扩展使用字节一致的参数规范化模块，禁止凭据/动作/重定向键；非空有效 Unicode 字符串至多 512 字符，由 URLSearchParams 逐值编码，保留前导零和字面分隔符。观察 values 不保存，也不作为默认值。
+
+`page_navigation_query_v1` 在观察、作者验证、普通调用前检查所选 profile。每个 query 参数需至少两个不同作者值；workflow 复用逐参数要求。扩展仍一次 Page.navigate、等待新文档、完整 href 相等与稳定数据；查询串被改写即失败，不重放。manifest/权限绑定完整映射，repair 只允许结果提取修复。hash 导航通常不替换文档，需要独立新鲜度方案，仍开放；循环/分支和跨源/frame 不由本增量解决。
 
 ## 参数化页面导航：已实现
 
@@ -77,7 +83,7 @@ page_workflow_v1 在观察/验证/调用前检查；manifest.pageRoute.workflow 
 
 普通调用从入口或目标模板匹配页中选择唯一页/唯一活动页，缺失/歧义不换页或新开。preview 与普通调用复用同一 manifest 路由检查和续接机制，结果映射只在续接后执行。旧插件缺能力时在派发前拒绝；每命令至少两组不同路径参数的作者 cases，保留失败不安装。知识保存来源；scoped repair 保留既有路由/绑定/权限并重新运行历史断言。
 
-限制：同源主文档单次导航读取；动态 query/hash 模板、跨源详情、任意路径正则、多步网站操作与写命令生成尚未覆盖。取消后丢弃迟到结果，已派发导航可能继续完成。验收覆盖实际公开占位详情、前导零/中文 ID、同 URL 重复调用、错误 ID 重定向和结构漂移修复；详见交接末尾。
+限制：同源主文档单次导航读取；动态 hash 模板、跨源详情和任意路径正则尚未覆盖。动态 query 见上节，多步只读操作复用 workflow；写契约另行审阅验证。取消后丢弃迟到结果，已派发导航可能继续完成。验收覆盖实际公开占位详情、前导零/中文 ID、同 URL 重复调用、错误 ID 重定向和结构漂移修复；详见交接末尾。
 
 ## 多浏览器 profile：已实现
 

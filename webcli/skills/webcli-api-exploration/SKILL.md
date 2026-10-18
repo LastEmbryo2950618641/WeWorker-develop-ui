@@ -151,7 +151,12 @@ webcli call exploration.query --args '{"taskId":"example-task","source":{"mode":
 - 首次观察可从明确的同源入口页或同一详情路由开始；已有数值 ID 会归一化为 :id，必须使用匹配模板。manifest.pageRoute.navigation 固定目标模板及参数映射，进入安装权限审阅；普通调用只选入口或模板匹配页，多页选唯一活动页，否则歧义报错；没有匹配页不另开或导航其他页。
 - 每次只派发一次 Page.navigate。即使目标 URL 等于当前 URL，也等待新的主文档以及至少 300ms 稳定结果；读取后再核对 URL/文档。跨源、跳到其他 ID、下载、超时或导航中断失败，不重放。浏览器可能已经访问重定向目标，失败不回退到旧页或旧数据。
 - 观察只保存模板、字段结构和来源理由。生成后至少两组不同路径参数的 cases，精确核对返回 ID/标题等业务含义；每组都实际导航，不能用当前页的旧数据代替。通过后 review/install、普通 call、知识保存。后续 scoped repair 保留已安装路由/参数映射/权限，带入历史 cases 重新验证。
-- 当前限同源主文档的单次导航与读取，不支持动态 query/hash 模板、跨源详情、任意路径正则或多步骤业务流程。取消后丢弃迟到结果，已派发的浏览器导航可能继续完成。
+- 当前限同源主文档的单次导航与读取，不支持动态 hash 模板、跨源详情或任意路径正则；多步只读导航使用下面的 workflow。取消后丢弃迟到结果，已派发的浏览器导航可能继续完成。
+
+动态查询串使用同一个 navigate 的 `queryParameters:[{"name":"keyword","queryKey":"q","description":"公开搜索词"}]`，values 明确传 `{"keyword":"007"}`。可单独用于 `/items`，也可与 pathParameters 组合；不要把 `?q=` 写进 resultPathname。需要 `page_navigation_query_v1`，观察、验证、普通调用均在旧选定插件派发前拒绝，不切换 profile。workflow 的 navigate 步骤也可声明相同字段。
+
+- 每项只含 name/queryKey/description，1–16 项，名称和键为公开 ASCII 标识符，名称不能与路径参数重复，queryKey 唯一；禁止凭据、action/op/method/redirect 等键。值为非空 1–512 字符字符串，无控制字符或非法 Unicode；保留前导零、Unicode 和字面 `&+?#%/`，按 URLSearchParams 编码，不作为路径/额外参数/片段解析。
+- 每个查询参数至少两种明确作者值，并以返回业务字段精确 equals 证明生效。观察值不保存、不生成默认值；安装权限和知识保留完整映射，repair 不可改映射。每次仍要求新主文档、完整目标 URL 相等和稳定结果；只改查询串的重定向同样失败，不重放。页面查询参数不扩展任何写 URL、效果回查或凭据契约。
 
 ### HTTP／Extension 写命令与效果回查
 
@@ -281,7 +286,7 @@ webcli call exploration.repair --args '{"taskId":"example-task","site":"example.
 - Bridge 重启中的任务标记 interrupted，明确选择重新 collect（HTTP 模式 discover/request）或 validate；不自动重放探测或安装。
 - `cancel` 停止后续阶段并丢弃迟到结果；已派发浏览器请求可能完成。安装开始后不能取消。
 - start 可传 allowedOrigins 数组，显式授权额外 API origin，如 `https://api.example.com`；只允许精确 origin，无路径、凭据或通配符。流量不会自动扩大权限，安装 review 会列出新域名。
-- 默认 GET、Agent 计划下的只读 POST JSON/form/GraphQL query、API 动态路径、声明式 UI_SELECTOR/DOM_STATE、单步 INTERCEPT、跨文档页面查询、参数化详情导航和显式 2–8 步只读 workflow 已支持。HTTP 和有明确幂等契约的 Extension 单请求写走独立 mock/审阅/效果验证；UI 控件写、动态 query/hash 页面路由、循环/分支/任意自定义多步 UI 仍未支持；报告限制，不伪装成功。
+- 默认 GET、Agent 计划下的只读 POST JSON/form/GraphQL query、API 动态路径、声明式 UI_SELECTOR/DOM_STATE、单步 INTERCEPT、跨文档页面查询、参数化详情导航和显式 2–8 步只读 workflow 已支持。HTTP 和有明确幂等契约的 Extension 单请求写走独立 mock/审阅/效果验证；更广 UI 控件写、动态 hash 页面路由、循环/分支/任意自定义多步 UI 仍未支持；报告限制，不伪装成功。
 - 使用 webcli-browser Skill 的 browser.* 触发搜索、翻页或检查页面状态，再 collect。采集/验证进行中不要操作同一页；TAB_BUSY 时等待。
 - trace 输出结构诊断、事件、文件清单与计划，便于交接修复；不含捕获正文或代码。verification-read 与 knowledge-read 可恢复作者测试用例；安装后修复使用 repair-info/repair，再走相同的验证、审阅与安装流程。
 - 证据的 URL 参数值被省略；不要把 `<value>` 作为实际查询值。业务参数来自用户输入，登录信息由既有浏览器运行时取得。

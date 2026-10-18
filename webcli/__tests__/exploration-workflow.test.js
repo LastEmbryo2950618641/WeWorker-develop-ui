@@ -41,3 +41,21 @@ it('rejects nested, disconnected, uncorrelated, cross-origin or unbounded workfl
     { steps: [input.steps[0], { ...input.steps[1], query: { ...input.steps[1].query, matchResult: {} } }] },
     { steps: [{ ...input.steps[0], query: { ...input.steps[0].query, resultPathname: '//example.org/search' } }, input.steps[1]] }]) expect(() => normalizePageQuery({ ...input, ...changed })).toThrow();
 });
+
+it('preserves public query navigation in workflow schemas, permissions and parameter prevalidation', () => {
+  const source = normalizePageQuery({ mode: 'workflow', steps: [input.steps[0], { pathname: '/search', query: {
+    mode: 'navigate', resultPathname: '/items', queryParameters: [{ name: 'keyword', queryKey: 'q', description: 'Public query' }], result,
+  } }] });
+  expect(workflowParameters(source).map(item => item.name)).toEqual(['keyword']);
+  expect(pageQueryValues(source, { keyword: '007 &示例' })).toEqual({ keyword: '007 &示例' });
+  for (const keyword of [7, '', '\ud800']) expect(() => pageQueryValues(source, { keyword })).toThrow();
+  const contract = pageWorkflowContract(source);
+  expect(contract).toEqual(extensionContract(source));
+  expect(validatePageWorkflowContract(contract).steps[1].query.queryParameters).toEqual(source.steps[1].query.queryParameters);
+  const generated = buildPageTool('example', { name: 'query' }, pageObservation({ source, url: 'https://example.com/entry', shape: {}, reason: 'Public query sequence' }));
+  const manifest = { schema_version: 2, name: 'example', version: '1.0.0', description: 'Public example', match: ['example.com'], commands: [{ id: 'query', description: 'Public query', runtime: 'extension', module: 'extension/commands/query.js', schema: generated.toolDefinition.parameters, safety: 'read', pageWorkflow: true, pageStrategy: 'UI_SELECTOR', pageRoute: generated.toolDefinition.pageRoute }] };
+  expect(() => validateV2Manifest(manifest)).not.toThrow();
+  expect(adapterPermissions(manifest).join('\n')).toContain('queryParameters');
+  manifest.commands[0].pageRoute.workflow.steps[1].query.queryParameters[0].queryKey = 'token';
+  expect(() => validateV2Manifest(manifest)).toThrow();
+});

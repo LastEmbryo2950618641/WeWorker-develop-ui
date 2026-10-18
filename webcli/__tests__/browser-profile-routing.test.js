@@ -11,6 +11,8 @@ vi.mock('../adapter-host.js', async original => ({ ...await original(), resolveA
   ? { command: { runtime: 'wewright', id: 'read', module: 'example.js' }, adapter: { root: '/example' } }
   : name === 'example.http' ? { command: { runtime: 'http', id: 'read', http: { version: 2, strategy: 'AUTH_API' } }, adapter: { root: '/example' } }
   : name === 'example.navigation' ? { command: { runtime: 'extension', id: 'read', pageWorkflow: true, pageRoute: { navigation: { pathname: '/items/:id' } } }, adapter: { root: '/example' } }
+  : name === 'example.query-navigation' ? { command: { runtime: 'extension', id: 'read', pageWorkflow: true, pageRoute: { navigation: { pathname: '/items', queryParameters: [{ name: 'keyword', queryKey: 'q' }] } } }, adapter: { root: '/example' } }
+  : name === 'example.query-workflow' ? { command: { runtime: 'extension', id: 'read', pageWorkflow: true, pageRoute: { workflow: { steps: [{ query: { mode: 'navigate', queryParameters: [{ name: 'keyword', queryKey: 'q' }] } }] } } }, adapter: { root: '/example' } }
   : name === 'example.ui-result' ? { command: { runtime: 'extension', safety: 'write', uiWrite: { result: { attribute: 'data-result-id', publicId: true, idType: 'integer' } }, pageRoute: { origin: 'https://example.com', pathname: '/editor' } }, adapter: { root: '/example' } }
   : name === 'example.workflow' ? { command: { runtime: 'extension', id: 'read', pageWorkflow: true, pageRoute: { workflow: { steps: [] } } }, adapter: { root: '/example' } } : null }));
 vi.mock('../toolkit-runner.js', () => ({ runToolkitTool: vi.fn(async () => ({ exitCode: 0, result: { example: 'toolkit' } })) }));
@@ -228,4 +230,14 @@ it('rejects UI result IDs on an older profile before ordinary call dispatch with
   expect(result.error).toMatch(/UI receipt IDs/);
   expect([...old.received, ...current.received].some(msg => msg.type === 'call_tool')).toBe(false);
   expect((await rpc({ type: 'call_tool', toolName: 'example.ui-result', args, browserProfile: current.contextId })).result.contextId).toBe(current.contextId);
+});
+
+it.each(['query-navigation', 'query-workflow'])('refuses %s on a selected legacy peer without any dispatch or profile fallback', async kind => {
+  const { rpc, peer } = await setup();
+  const capabilities = ['adapter_catalog_v1', 'page_sources_v1', 'page_query_v1', 'page_navigation_v1', 'page_workflow_v1'];
+  const old = await peer(randomUUID(), capabilities), current = await peer(randomUUID(), [...capabilities, 'page_navigation_query_v1']);
+  const request = browserProfile => rpc({ type: 'call_tool', toolName: 'example.' + kind, args: { keyword: '007' }, browserProfile });
+  expect((await request(old.contextId)).error).toMatch(/public URL query navigation/);
+  expect([...old.received, ...current.received].some(msg => msg.type === 'call_tool')).toBe(false);
+  expect((await request(current.contextId)).result.contextId).toBe(current.contextId);
 });

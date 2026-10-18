@@ -39,3 +39,46 @@ it('binds page path identifiers without capturing values and validates them befo
   expect(await handler({ groupId: '007', itemId: '008' }, { kind: 'page_query_result', result })).toBe(result);
   expect(pageObservation({ source, url: 'https://example.com/groups/:id/items/:id', shape: {}, reason: 'Read current detail' }).expectedPath).toBe('/groups/:id/items/:id');
 });
+
+it('binds query-only and mixed navigation parameters while preserving exact string values and shared implementations', async () => {
+  const { readFileSync } = await import('node:fs');
+  expect(readFileSync(new URL('../page-navigation-parameters.js', import.meta.url), 'utf8')).toBe(readFileSync(new URL('../../extension/background/page-navigation-parameters.js', import.meta.url), 'utf8'));
+  const { resolvePageDestination } = await import('../../extension/background/page-navigation.js');
+  const raw = { mode: 'navigate', result: input.result, resultPathname: '/items', queryParameters: [{ name: 'keyword', queryKey: 'q', description: 'Public query' }] };
+  const source = normalizePageQuery(raw);
+  expect(source.pathParameters).toEqual([]);
+  for (const keyword of ['007', '示例 & +?#%', 'a/b']) {
+    expect(pageQueryValues(source, { keyword })).toEqual({ keyword });
+    const destination = resolvePageDestination('https://example.com', source, { keyword });
+    expect(destination.searchParams.get('q')).toBe(keyword); expect([...destination.searchParams.keys()]).toEqual(['q']); expect(destination.hash).toBe('');
+  }
+  for (const keyword of [7, '', '\u0000', '\ud800', '<value>', 'x'.repeat(513)]) {
+    expect(() => pageQueryValues(source, { keyword })).toThrow();
+    expect(() => resolvePageDestination('https://example.com', source, { keyword })).toThrow();
+  }
+  for (const queryKey of ['token', 'authorization', 'action', 'redirect_uri', 'constructor']) expect(() => normalizePageQuery({ ...raw, queryParameters: [{ ...raw.queryParameters[0], queryKey }] })).toThrow();
+  const mixed = { ...raw, resultPathname: '/groups/:id', pathParameters: [{ segmentIndex: 1, name: 'groupId', description: 'Public group ID' }] };
+  expect(() => normalizePageQuery({ ...mixed, queryParameters: [{ ...raw.queryParameters[0], name: 'groupId' }] })).toThrow();
+  expect(() => pageQueryValues(source, { keyword: 'Example', extra: 'ignored' })).toThrow();
+  const observation = pageObservation({ source, url: 'https://example.com/entry', shape: {}, reason: 'Explicit public query route' });
+  const generated = buildPageTool('example.com', { name: 'query-detail' }, observation);
+  expect(generated.toolDefinition.parameters.required).toEqual(['keyword']);
+  expect(generated.toolDefinition.pageRoute.navigation.queryParameters).toEqual(source.queryParameters);
+});
+
+it('validates and permission-binds query navigation manifests and refuses ambiguous or unsafe bindings', async () => {
+  const { validateV2Manifest } = await import('../adapter-package-validation.js');
+  const { adapterPermissions } = await import('../adapter-catalog.js');
+  const source = normalizePageQuery({ mode: 'navigate', result: input.result, resultPathname: '/items', queryParameters: [{ name: 'keyword', queryKey: 'q', description: 'Public query' }] });
+  const generated = buildPageTool('example', { name: 'query' }, pageObservation({ source, url: 'https://example.com/entry', shape: {}, reason: 'Public query navigation' }));
+  const manifest = { schema_version: 2, name: 'example', version: '1.0.0', description: 'Public example', match: ['example.com'], commands: [{ id: 'query', description: 'Public query', runtime: 'extension', module: 'extension/commands/query.js', schema: generated.toolDefinition.parameters, safety: 'read', pageWorkflow: true, pageStrategy: 'UI_SELECTOR', pageRoute: generated.toolDefinition.pageRoute }] };
+  expect(() => validateV2Manifest(manifest)).not.toThrow();
+  const permissions = adapterPermissions(manifest);
+  expect(permissions.join('\n')).toContain('queryParameters');
+  const changed = structuredClone(manifest); changed.commands[0].pageRoute.navigation.queryParameters[0].queryKey = 'search';
+  expect(adapterPermissions(changed)).not.toEqual(permissions);
+  for (const queries of [[], [{ name: 'keyword', queryKey: 'token', description: 'Public query' }], [...source.queryParameters, ...source.queryParameters]]) {
+    const bad = structuredClone(manifest); bad.commands[0].pageRoute.navigation.queryParameters = queries;
+    expect(() => validateV2Manifest(bad)).toThrow();
+  }
+});

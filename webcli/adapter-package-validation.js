@@ -15,6 +15,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync } from "fs";
 import { basename, join, resolve, sep } from "path";
 import { validateHttpContract } from './http-contract.js';
 import { normalizePathParameters } from './generation-harness/path-parameters.js';
+import { normalizeNavigationQueryParameters } from './page-navigation-parameters.js';
 import { validatePageWorkflowContract } from './exploration-workflow.js';
 import { validateUiWrite } from './exploration-ui-write.js';
 import { validatePageWrite } from './exploration-extension-write.js';
@@ -188,11 +189,13 @@ export function validateV2Manifest(manifest, directoryName = "?") {
     if (command.pageRoute?.navigation !== undefined) {
       const route = command.pageRoute, navigation = route.navigation;
       let valid = command.pageWorkflow === true && navigation && typeof navigation === 'object' && !Array.isArray(navigation)
-        && Object.keys(navigation).every(key => ['pathname', 'pathParameters'].includes(key)) && typeof navigation.pathname === 'string' && /^\/(?!\/)/.test(navigation.pathname);
+        && Object.keys(navigation).every(key => ['pathname', 'pathParameters', 'queryParameters'].includes(key)) && typeof navigation.pathname === 'string' && /^\/(?!\/)/.test(navigation.pathname);
       try {
         const url = new URL(route.origin + navigation.pathname);
-        const bindings = normalizePathParameters({ url: url.href }, navigation.pathParameters);
-        valid &&= url.origin === route.origin && url.pathname === navigation.pathname && !url.search && !url.hash && bindings.length > 0
+        const bindings = normalizePathParameters({ url: url.href }, navigation.queryParameters?.length && navigation.pathParameters?.length === 0 ? undefined : navigation.pathParameters);
+        const queries = normalizeNavigationQueryParameters(navigation.queryParameters, bindings);
+        valid &&= url.origin === route.origin && url.pathname === navigation.pathname && !url.search && !url.hash && (bindings.length + queries.length) > 0
+          && JSON.stringify(queries) === JSON.stringify(navigation.queryParameters || [])
           && bindings.every(binding => navigation.pathname.slice(1).split('/')[binding.segmentIndex] === ':id')
           && (!route.pathname.includes(':id') || route.pathname === navigation.pathname);
       } catch { valid = false; }
