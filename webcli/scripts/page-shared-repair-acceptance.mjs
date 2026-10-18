@@ -4,12 +4,16 @@ import http from 'node:http';
 export async function verifyPageSharedRepair({ cli, record, passed, stopBridge, startBridge }) {
   let drift = false; const requests = [];
   const server = http.createServer((req, res) => {
-    requests.push({ method: req.method, path: req.url });
+    requests.push({ method: req.method, path: req.url, host: req.headers.host });
     if (req.url === '/items') { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ id: 'example-item', [drift ? 'label' : 'title']: 'Public example' })); return; }
     res.writeHead(200, { 'content-type': 'text/html' }); res.end('<!doctype html><title>Public shared repair</title><h1>Public example</h1><script>fetch("/items").then(r=>r.json()).then(v=>window.exampleReady=true)</script>');
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  const origin = 'http://localhost:' + server.address().port, session = 'example-page-shared-repair';
+  // Package discovery matches hostnames. Cross-origin cases already add
+  // localhost to the main package, so this independent three-command fixture
+  // needs an independent hostname. localhost subdomains also overlap. The
+  // owned acceptance Chromium maps this public placeholder to 127.0.0.1.
+  const origin = 'http://shared-repair.example.org:' + server.address().port, session = 'example-page-shared-repair';
   const shared = 'extension/internal/shared-map.js';
   const settle = async taskId => {
     for (let i = 0; i < 100; i++) {
@@ -77,6 +81,7 @@ export async function verifyPageSharedRepair({ cli, record, passed, stopBridge, 
     assert.deepEqual((await cli('exploration.get', { taskId: repair.taskId })).data.repair.sharedFiles, [shared]);
     for (const tool of generated.toolNames) assert.equal((await cli(tool)).title, 'Public example');
     assert.ok(requests.every(request => request.method === 'GET'));
+    assert.ok(requests.length > 0 && requests.every(request => request.host === new URL(origin).host));
     await record('shared-page-repair', { validation: validated, requests });
     passed('Extension shared mapper drift fails both old cases; exact shared scope, complete revalidation, install and restart calls pass without writes');
   } finally {

@@ -257,7 +257,7 @@ try {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
   browser = await chromium.launchPersistentContext(path.join(root, 'browser-profile'), { channel: 'chromium', executablePath, headless: true, acceptDownloads: true, downloadsPath: path.join(root, 'downloads'),
-    args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`] });
+    args: [`--disable-extensions-except=${extension}`, `--load-extension=${extension}`, '--host-resolver-rules=MAP shared-repair.example.org 127.0.0.1'] });
   browser.on('page', current => {
     current.on('framenavigated', frame => { if (frame === current.mainFrame()) browserEvents.push({ at: Date.now(), type: 'navigation', url: frame.url() }); });
     current.on('pageerror', error => browserEvents.push({ type: 'error', message: error.message }));
@@ -327,6 +327,7 @@ try {
     startBridge: async () => { await startBridge(); await connected(); },
   });
   if (process.argv.includes('--shared-repair-only')) { await sharedRepair(); return; }
+  if (process.argv.includes('--origins-shared-only')) { await originNavigation(); await sharedRepair(); return; }
 
   const tabs = (await cli('exploration.tabs')).data.tabs;
   const tabId = tabs.find(tab => tab.url === origin + '/').id;
