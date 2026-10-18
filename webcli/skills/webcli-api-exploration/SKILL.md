@@ -5,6 +5,10 @@ description: 通过 WebCLI 探索公开/鉴权 HTTP API，或通过浏览器插�
 
 # API 探索与 Adapter 生成
 
+## 简单查询的先后顺序
+
+用户要“准备后无需业务页”且网站请求需要 localStorage 上下文时，必须分成：**页面准备命令 → 真实验证并安装/调用准备 → 后台查询命令 → 真实验证并安装查询**。准备使用页面策略（例如 PAGE_FETCH）及页面 `chrome.runtime.sendMessage` 的 storage_get，读取当前页面并缓存；查询才使用 EXTENSION_API、cookies_get、storage_get(cacheOnly:true)、backend_fetch(browserFallback:false)。两个命令不能都标为后台，也不能把准备改为 cacheOnly:true 来通过验证。`BACKGROUND_PREPARATION_REQUIRES_PAGE` 要求修正准备的运行时，不能关闭守卫或将查询退回页面。仅打开网页、缓存已存在、返回 prepared:true 都不是刷新证据。
+
 ## 先确认来源和凭据边界
 
 先按用户的业务目标确认网站和账号口径，再观察页面请求或用户明确提供的 API 文档。不得凭品牌相同猜接口、Token、存储键或把模型服务账户当成网站当前成员。用户要求登录网站的当前成员数据时，从选定浏览器的真实页面和请求开始；“准备后无需业务页”允许首次观察和显式准备，不能据此跳过观察而猜测 HTTP 接口。
@@ -111,11 +115,11 @@ webcli call exploration.generate --args '{"taskId":"example-task","plan":{"tools
 
 先校验输入枚举，再读取凭据和发请求；参数归一化后用于选择数据的键必须一致。每个用户要求的选项都要有真实 case，包括默认值，避免只测 all 掩盖单项选择错误。数据项缺失或字段类型异常应明确失败；缺少可选重置时间返回 null，不编造时间。
 
-运行错误抛出固定公开 `code`，例如 `throw Object.assign(new Error("请先完成登录准备"), {code:"LOGIN_REQUIRED"})`。后台 validate 仅保留以下公开分类：`LOGIN_REQUIRED`、`PAGE_CONTEXT_REQUIRED`、`INVALID_ARGS`、`HTTP_ERROR`、`API_ERROR`、`INVALID_RESPONSE`、`BACKEND_HELPER_ERROR`、`MISSING_PERMISSION`、`RUNTIME_UNAVAILABLE`、`ADAPTER_COMMAND_UNAVAILABLE`；其他异常统一为 `BACKGROUND_PREVIEW_FAILED`，所有异常原文/details 均不导出。登录缺失先恢复登录，缺缓存先显式准备，HTTP/业务错误核对完整请求契约。不要把整个响应/请求头放入错误，也不要通过修改断言编码或猜测错误内容。缺少新观察证据时报告阻塞，不安装诊断命令。
+运行错误抛出固定公开 `code`，例如 `throw Object.assign(new Error("请先完成登录准备"), {code:"LOGIN_REQUIRED"})`。后台 validate 仅保留以下公开分类：`LOGIN_REQUIRED`、`PAGE_CONTEXT_REQUIRED`、`BACKGROUND_PREPARATION_REQUIRES_PAGE`、`INVALID_ARGS`、`HTTP_ERROR`、`API_ERROR`、`INVALID_RESPONSE`、`BACKEND_HELPER_ERROR`、`MISSING_PERMISSION`、`RUNTIME_UNAVAILABLE`、`ADAPTER_COMMAND_UNAVAILABLE`；其他异常统一为 `BACKGROUND_PREVIEW_FAILED`，所有异常原文/details 均不导出。登录缺失先恢复登录，缺缓存先显式准备，HTTP/业务错误核对完整请求契约。不要把整个响应/请求头放入错误，也不要通过修改断言编码或猜测错误内容。缺少新观察证据时报告阻塞，不安装诊断命令。
 
 组织、项目等请求上下文也要核对，不能只补 Authorization 后把不同口径的空结果当成功。需要 localStorage 上下文时，可先生成、验证并安装显式页面准备命令，用既有 `storage_get` helper 读取已确认的键并缓存，仅返回准备状态；再增量生成后台查询。页面预览使用 task-local globals，不能假定存在已安装包的 `__webmcpWecliRuntime`；现有页面 helper 可通过 `chrome.runtime.sendMessage({type:'wecli_runtime_request',action,payload})` 调用，检查 `ok` 后读取 `result`，不返回凭据。普通后台查询也应显式使用 `cacheOnly:true`；首次登录、切换账号/组织/项目时重新准备，并在 Skill 说明缓存上下文不会自动跟随页面切换。准备通过不等于鉴权通过，最终仍需真实后台 API cases 和普通调用。
 
-**准备与查询必须按真实行为区分。** 刷新 localStorage 缓存的准备命令使用页面策略（例如基于同一已观察读取来源的 `PAGE_FETCH`），由页面 helper 读取当前页面后更新缓存，不声明为 `EXTENSION_API`。后台 `storage_get` 的 `cacheOnly:false` 仍会优先返回已有缓存，单靠它不能证明上下文已刷新；后台预览还会强制 cacheOnly，缓存已存在时的“prepare 验证通过”不能证明准备流程。不得以此冒称首次准备或切换成功，也不要为让验证通过删除缓存/破坏登录态。页面准备完成后，查询始终保持 `EXTENSION_API` 和 `cacheOnly:true`。新增命令用 generate；修改已安装的同名查询先用 repair-info/repair，避免 generate 为名称碰撞另造重复命令。
+**准备与查询必须按真实行为区分。** 刷新 localStorage 缓存的准备命令使用页面策略（例如基于同一已观察读取来源的 `PAGE_FETCH`），由页面 helper 读取当前页面后更新缓存，不声明为 `EXTENSION_API`。普通后台 `storage_get` 的 `cacheOnly:false` 仍会优先返回已有缓存，单靠它不能证明上下文已刷新；后台预览明确拒绝 cacheOnly:false 或 forceRefresh:true，不会悄悄改成缓存查询后通过。不得为让验证通过删除缓存/破坏登录态。页面准备完成后，查询始终保持 `EXTENSION_API` 和 `cacheOnly:true`。新增命令用 generate；修改已安装的同名查询先用 repair-info/repair，避免 generate 为名称碰撞另造重复命令。
 
 validate 按实际运行时分流：后台命令通过与普通调用相同的 offscreen Runner 执行作者 cases，不注入网站，不携带 tabId；只读 GET/HEAD、已识别 JSON/form POST 和 GraphQL query 可用，拒绝写语义、重定向和失败重放。此预览限定不改变旧已安装命令的传输兼容行为。命令是受信任可执行代码，helper 守卫不等于恶意 JS 沙箱，仍需审阅源码。
 

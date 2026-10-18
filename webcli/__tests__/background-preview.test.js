@@ -27,13 +27,21 @@ it('rejects page metadata, empty cases, continuations and private runtime errors
 });
 it('forces helper calls to avoid pages, caches and authentication fallback', () => {
   expect(backgroundPreviewRequest('cookies_get', { browserDebugger: true })).toEqual({ browserDebugger: false });
-  expect(backgroundPreviewRequest('storage_get', { url: 'https://example.com', cacheOnly: false }).cacheOnly).toBe(true);
+  expect(backgroundPreviewRequest('storage_get', { url: 'https://example.com' }).cacheOnly).toBe(true);
+  expect(backgroundPreviewRequest('storage_get', { cacheOnly: true }).cacheOnly).toBe(true);
   expect(backgroundPreviewRequest('backend_fetch', { browserFallback: true })).toMatchObject({ backgroundPreviewRead: true, browserFallback: false, redactBodyInTrace: true });
   for (const action of ['navigate', 'browser_fetch', 'main_world_eval', 'backend_file_write']) expect(() => backgroundPreviewRequest(action, {})).toThrow();
 });
+it.each([{ cacheOnly: false }, { forceRefresh: true }, { cacheOnly: true, forceRefresh: true }])('does not silently validate a preparation request as a cached read %j', async payload => {
+  const request = vi.fn();
+  const result = await validate([testCase], async () => request(backgroundPreviewRequest('storage_get', payload)));
+  expect(result.errors[0].code).toBe('BACKGROUND_PREPARATION_REQUIRES_PAGE');
+  expect(result.passed).toBe(false);
+  expect(request).not.toHaveBeenCalled();
+});
 it.each(['LOGIN_REQUIRED', 'PAGE_CONTEXT_REQUIRED', 'INVALID_ARGS', 'HTTP_ERROR', 'API_ERROR',
   'INVALID_RESPONSE', 'BACKEND_HELPER_ERROR', 'MISSING_PERMISSION', 'RUNTIME_UNAVAILABLE',
-  'ADAPTER_COMMAND_UNAVAILABLE'])('reports the public category %s without exception content', async code => {
+  'ADAPTER_COMMAND_UNAVAILABLE', 'BACKGROUND_PREPARATION_REQUIRES_PAGE'])('reports the public category %s without exception content', async code => {
   const result = await validate([testCase], async () => {
     throw Object.assign(Error('example-private-message'), { code, details: { token: 'example-private-token' } });
   });

@@ -61,6 +61,7 @@
 - 后台实测又暴露 helper 契约文档不完整与预览异常分类缺失。Skill 已补准确的 Cookie 集合、storage value、fetch 参数/返回值及逐选项 cases；预览只返回固定公开错误分类，任意 code/message/details 继续屏蔽。聚焦 2 文件/45 项、helper 11 项和 Chromium 1217 双打包后台专项 8 项通过，后者覆盖无页登录缺失与服务端 401 分类及敏感文本不外泄；不是实际账号登录恢复验证。源码/打包 Skill 各 4 项通过，客户端后续生成仍在验收。
 - 后续客户端在 8 分 46 秒内自行定位组织/项目请求头、编写后台查询、通过 4 组真实 cases 并安装，普通调用成功；但它接续了自己此前的草稿且额外包含月度窗口，不能作为最终干净验收。增量准备命令错误标为后台，`cacheOnly:false` 仍优先使用旧缓存，无法证明切换后的刷新，因此停止该轮，不计最终完成。共享 Skill 补页面准备/后台查询的区别、同名 repair 和 browser session 占用恢复；保存全部候选包并新建空 Adapter/任务目录，从单句完整业务需求重新验收。最终随包 Skill 4 项（Y9ynoW）及源码/build/实际客户端三份 Skill 字节一致通过；用户默认包保留。
 - 当前聚焦证据：Backend 13 文件/96 项和 typecheck，WebCLI 路径/HTTP 4 文件/81 项，Electron 环境 7 项，桌面 HTTP 校验实际 bundle 2 项，双打包 HTTP 24 项，双打包 Chromium 后台专项 8 项、随包 Skill 4 项通过。Renderer 未改，构建通过；CLI/Bridge/Backend 构建通过，既有三个列映射资源缺失 warning 保留。这些自动化结果不替代下面待完成的客户端实站闭环。
+- 空安装目录中的重验再次生成了后台准备命令，因此停止而未安装。定位到后台预览会把显式 `storage_get(cacheOnly:false)` 静默改成缓存读取的验证语义缺口：现改为对 `cacheOnly:false` 或 `forceRefresh:true` 返回固定公开分类 `BACKGROUND_PREPARATION_REQUIRES_PAGE`，不派发 helper。Skill 前置正确的页面准备→验证安装/调用→后台查询顺序，明确不能改成 cacheOnly:true 冒充准备。聚焦 49 项、Chromium 1217 CLI＋Bridge 双打包后台 9 项（4NkByV）通过，包含拒绝时零请求/零页面与异常文本脱敏；客户端完整闭环仍须重新完成。
 
 仍待完成：客户端真实生成与安装、业务断言、无页/后续聊天/重连查询，以及恢复验收环境。验收记录仅保留状态和结构，真实额度与凭据不进入仓库。
 

@@ -7,7 +7,7 @@ const background = command => command?.runtime === 'extension' && command.execut
 // can contain credentials in their message, details, or even a custom code.
 const publicFailureCodes = new Set(['LOGIN_REQUIRED', 'PAGE_CONTEXT_REQUIRED', 'INVALID_ARGS',
   'HTTP_ERROR', 'API_ERROR', 'INVALID_RESPONSE', 'BACKEND_HELPER_ERROR', 'MISSING_PERMISSION',
-  'RUNTIME_UNAVAILABLE', 'ADAPTER_COMMAND_UNAVAILABLE']);
+  'RUNTIME_UNAVAILABLE', 'ADAPTER_COMMAND_UNAVAILABLE', 'BACKGROUND_PREPARATION_REQUIRES_PAGE']);
 
 /** Execute authored reads in the same offscreen runner as installed commands.
  * No page lookup, injection, navigation or capture-bound arguments are allowed. */
@@ -42,7 +42,12 @@ export async function validateBackgroundPreview({ bundle, expectedToolNames, tes
 
 export function backgroundPreviewRequest(action, payload) {
   if (action === 'cookies_get') return { ...payload, browserDebugger: false };
-  if (action === 'storage_get') return { ...payload, cacheOnly: true };
+  if (action === 'storage_get') {
+    if (payload.cacheOnly === false || payload.forceRefresh === true) {
+      throw Object.assign(new Error('Explicit context refresh requires a page preparation command; background preview only verifies cached reads.'), { code: 'BACKGROUND_PREPARATION_REQUIRES_PAGE' });
+    }
+    return { ...payload, cacheOnly: true };
+  }
   // The Bridge checks read semantics before dispatch, rejects redirects and
   // bypasses replay fallbacks. Never let authentication failure open a page.
   if (action === 'backend_fetch') return { ...payload, backgroundPreviewRead: true, browserFallback: false, redactBodyInTrace: true };

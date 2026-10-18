@@ -91,6 +91,13 @@ export async function verifyBackgroundApi({ browser, cli, record, passed, stopBr
     const authored = await author(initial.taskId, 'quota');
     await cli('browser.close', { session }); noPage();
     const pageRequests = requests.filter(row => row.path === '/').length;
+    await edit(initial.taskId, authored.command.module, `window.__webcliRegisterCommand('quota',async()=>window.__webmcpWecliRuntime.requestPrivileged('storage_get',{url:${JSON.stringify(origin)},area:'local',key:'example_context',cacheOnly:false}));`);
+    const beforePreparation = requests.length;
+    const preparation = await validate(initial.taskId, 'draft');
+    assert.ok(preparation.runtimeValidation.errors.every(item => item.code === 'BACKGROUND_PREPARATION_REQUIRES_PAGE'));
+    assert.equal(requests.length, beforePreparation); noPage();
+    await edit(initial.taskId, authored.command.module, source('quota'));
+    passed('background preview rejects explicit preparation instead of silently replacing it with a cached read');
     const validation = await validate(initial.taskId); await install(initial.taskId);
     for (const period of ['5h', 'week', '5h']) assert.deepEqual(await call(authored.tool, { period }), { period, available: period === '5h' ? 75 : 90 });
     noPage(); assert.equal(requests.filter(row => row.path === '/').length, pageRequests);
