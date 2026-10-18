@@ -31,6 +31,21 @@ it('forces helper calls to avoid pages, caches and authentication fallback', () 
   expect(backgroundPreviewRequest('backend_fetch', { browserFallback: true })).toMatchObject({ backgroundPreviewRead: true, browserFallback: false, redactBodyInTrace: true });
   for (const action of ['navigate', 'browser_fetch', 'main_world_eval', 'backend_file_write']) expect(() => backgroundPreviewRequest(action, {})).toThrow();
 });
+it.each(['LOGIN_REQUIRED', 'PAGE_CONTEXT_REQUIRED', 'INVALID_ARGS', 'HTTP_ERROR', 'API_ERROR',
+  'INVALID_RESPONSE', 'BACKEND_HELPER_ERROR', 'MISSING_PERMISSION', 'RUNTIME_UNAVAILABLE',
+  'ADAPTER_COMMAND_UNAVAILABLE'])('reports the public category %s without exception content', async code => {
+  const result = await validate([testCase], async () => {
+    throw Object.assign(Error('example-private-message'), { code, details: { token: 'example-private-token' } });
+  });
+  expect(result.errors[0]).toMatchObject({ code, caseId: 'example-first' });
+  expect(result.executionSummary).toMatchObject({ passed: 0, failed: 1 });
+  expect(JSON.stringify(result)).not.toContain('example-private');
+});
+it.each(['example-private-code', 'LOGIN_REQUIRED example-private-code', '', undefined])('redacts non-allowlisted exception codes %s', async code => {
+  const result = await validate([testCase], async () => { throw Object.assign(Error('example-private-message'), { code }); });
+  expect(result.errors[0].code).toBe('BACKGROUND_PREVIEW_FAILED');
+  expect(JSON.stringify(result)).not.toContain('example-private');
+});
 it.each([
   { url: 'https://example.com/api/delete' },
   { url: 'https://example.com/api/list?action=remove' },

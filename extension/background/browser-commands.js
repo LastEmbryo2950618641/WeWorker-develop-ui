@@ -157,7 +157,10 @@ export async function executeBrowserCommand({ command, tabId, args = {}, identit
     }
     else if (command === 'network') {
       if (typeof args.detail === 'string' && args.detail.startsWith('event:')) return { ok: true, data: await readNetworkEventDetail(chrome, tabId, args.detail) };
-      const snapshot = await getCdpNetworkSnapshot(tabId, { businessOnly: !(args.all === true || args.all === 'true'), limit: 200 });
+      // A key returned by an all=true listing must remain readable without
+      // requiring the caller to repeat that display filter. The key and tab
+      // identity still select one captured request; no new request is made.
+      const snapshot = await getCdpNetworkSnapshot(tabId, { businessOnly: !args.detail && !(args.all === true || args.all === 'true'), limit: 200 });
       let entries = snapshot.entries.map(entry => ({ ...entry, key: String(entry.requestId || `${entry.timestamp}:${entry.method}:${entry.url}`) }));
       if (args.match !== undefined) entries = entries.filter(entry => entry.url.includes(String(args.match)));
       const { lower, upper } = browserTimeWindow(args);

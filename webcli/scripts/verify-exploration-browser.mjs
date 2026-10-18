@@ -340,6 +340,17 @@ try {
   assert.equal((await cli('browser.doctor')).data.ready, true);
   await cli('browser.bind', { session: 'acceptance', tabId });
   const browserCall = (command, args = {}, expectedOk = true) => cli(`browser.${command}`, { session: 'acceptance', ...args }, expectedOk);
+  await browserCall('eval', { expression: "fetch('/api/items?q=example-monitor').then(r=>r.json()).then(()=>true)" });
+  // The default business filter classifies URLs containing monitor as telemetry.
+  // Explicit detail lookup must still resolve keys returned by an all listing.
+  const monitorEntry = (await browserCall('network', { all: true, match: 'example-monitor' })).data.entries[0];
+  assert.ok(monitorEntry);
+  assert.equal((await browserCall('network', { match: 'example-monitor' })).data.entries.length, 0);
+  const monitorDetail = await browserCall('network', { detail: monitorEntry.key });
+  assert.ok(monitorDetail.data.entry.response.data.items.length);
+  assert.equal((await browserCall('network', { detail: 'example-missing-request' }, false)).error.code, 'NETWORK_ENTRY_EXPIRED');
+  passed('all-traffic request key resolves detail without the default business filter; missing keys remain rejected');
+  if (process.argv.includes('--network-detail-only')) return;
   if(!['--downloads-only','--events-only','--ax-only','--screenshots-only','--shadow-only','--compounds-only'].some(flag=>process.argv.includes(flag)))await verifyBrowserUploads({cli,root,record,passed});
   if(process.argv.includes('--uploads-only'))return;
   if(!['--downloads-only','--events-only','--ax-only','--screenshots-only','--shadow-only'].some(flag=>process.argv.includes(flag)))await verifyBrowserCompounds({cli,root,record,passed});

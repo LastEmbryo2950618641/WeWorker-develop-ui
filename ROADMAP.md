@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-18（客户端实测阻塞修复）：修复网络 all 列表中的明确请求 key 在 detail 时被默认业务过滤误判过期；扩展 network/events 11 项、Chromium 1217 CLI＋Bridge 双打包专项 3 项通过。实测再补后台 helper 准确契约、仅固定公开分类的失败诊断，聚焦 45 项/helper 11 项及双打包后台 8 项通过。用户重载后客户端已成功读取原先失败的额度详情，生成验收继续；完整闭环仍未完成，全面 OpenCLI 目标保持暂停。
+
 - 2026-10-18（客户端共享 WebCLI 演示接入进行中）：普通聊天移除旧探索工具竞争，按 full 权限使用共享探索/browser Skill 和 `exploration.*`；同步同分发 Skill 并按内容刷新 SDK 会话，后台执行指引保持无业务页。修复开发构建 profile 缺省 legacy 字段与纯用户包 disabled 后桌面回退；补 ZIP 类型依赖。Backend 最终聚焦 13 文件/96 项、typecheck、双打包后台专项 8 项、随包 Skill 4 项及相关构建通过。开发客户端真实生成暴露模型凭据误用，已停止失败轮次并前置通用凭据/服务归属指引，正在用干净验收目录重跑；尚未标记客户端闭环完成。全面 OpenCLI 目标仍暂停，W/B/A/U/E、frame 和 1194 欠账完整保留；无 push/PR。
 
 - 2026-10-18（优先准备客户端自然语言演示，目标待新对话启动）：用户明确继续暂停 OpenCLI 全面对齐，先完成客户端聊天复用同一套 WebCLI 探索与 Skill。已核对 bf3b22d 干净检查点、GLM 无页证据与已知欠账；简单查询演示无需等待 frame/多步写/外部 CDP 等能力。新目标、客户端入口/指引差异、验收条件和边界见 docs/client_webcli_demo_goal.md；本轮只整理交接，客户端尚未实现或验收，完整 W/B/A/U/E 保留，无 push/PR。

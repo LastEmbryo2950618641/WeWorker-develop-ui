@@ -97,6 +97,22 @@ webcli call exploration.generate --args '{"taskId":"example-task","plan":{"tools
 
 代码复用 `window.__webmcpWecliRuntime.requestPrivileged`：`cookies_get` 使用明确 URL/名称并设 `browserDebugger:false`；`storage_get` 仅在确有缓存来源时使用；`backend_fetch` 应设 `browserFallback:false`、`redactBodyInTrace:true` 并处理 HTTP/业务鉴权错误。预览强制禁用页面回退、Cookie 调试器取值和 storage 页面补读，禁止 main_world_eval/browser_fetch/navigation/file helper。缺缓存应明确要求一次登录准备，不能声称冷启动完全无页。
 
+#### 后台 helper 的准确契约
+
+`requestPrivileged(action, payload)` 已解包消息层：成功直接返回下面的业务结果，失败抛出带 `code` 的错误。不要猜测额外的 `{ok,result}` 包装。只有直接调用 `chrome.runtime.sendMessage` 的页面准备代码才需要检查消息层 `ok` 并取 `result`。
+
+| action | payload | 成功结果 |
+| --- | --- | --- |
+| `cookies_get` | `{url:"https://example.com/", names:["example_session"], browserDebugger:false}`；过滤参数为复数 `names` | `{cookies:[{name,value,domain,path,secure,httpOnly,sameSite}]}`；先按名称和已观察作用域选择唯一 Cookie，再读取 `value`，缺失/歧义报错；不是 `{value}` |
+| `storage_get` | `{url:"https://example.com/", area:"local", key:"example_context", cacheOnly:true}`；area 为 `local` 或 `session` | `{value}`；若来源是 localStorage 中的 JSON 字符串，按已观察结构解析。缺缓存抛 `PAGE_CONTEXT_REQUIRED`，普通查询不改成页面补读 |
+| `backend_fetch` | `{url:"https://example.com/api/items", options:{method:"GET", headers:{Accept:"application/json"}}, browserFallback:false, redactBodyInTrace:true}` | `{status,ok,headers,body,url,...}`，`body` 为响应文本，JSON 接口需 `JSON.parse(response.body)`；HTTP `ok` 不等于业务成功 |
+
+以上地址、键和 Cookie 名仅为公开占位，不是目标网站契约。Cookie 的解码/前缀与组织项目请求头必须根据网站观察确定，不能只带 Authorization 就假设账号口径正确。凭据及上下文值只在命令内使用，不写日志、返回值、草稿字面量或 cases。
+
+先校验输入枚举，再读取凭据和发请求；参数归一化后用于选择数据的键必须一致。每个用户要求的选项都要有真实 case，包括默认值，避免只测 all 掩盖单项选择错误。数据项缺失或字段类型异常应明确失败；缺少可选重置时间返回 null，不编造时间。
+
+运行错误抛出固定公开 `code`，例如 `throw Object.assign(new Error("请先完成登录准备"), {code:"LOGIN_REQUIRED"})`。后台 validate 仅保留以下公开分类：`LOGIN_REQUIRED`、`PAGE_CONTEXT_REQUIRED`、`INVALID_ARGS`、`HTTP_ERROR`、`API_ERROR`、`INVALID_RESPONSE`、`BACKEND_HELPER_ERROR`、`MISSING_PERMISSION`、`RUNTIME_UNAVAILABLE`、`ADAPTER_COMMAND_UNAVAILABLE`；其他异常统一为 `BACKGROUND_PREVIEW_FAILED`，所有异常原文/details 均不导出。登录缺失先恢复登录，缺缓存先显式准备，HTTP/业务错误核对完整请求契约。不要把整个响应/请求头放入错误，也不要通过修改断言编码或猜测错误内容。缺少新观察证据时报告阻塞，不安装诊断命令。
+
 组织、项目等请求上下文也要核对，不能只补 Authorization 后把不同口径的空结果当成功。需要 localStorage 上下文时，可先生成、验证并安装显式页面准备命令，用既有 `storage_get` helper 读取已确认的键并缓存，仅返回准备状态；再增量生成后台查询。页面预览使用 task-local globals，不能假定存在已安装包的 `__webmcpWecliRuntime`；现有页面 helper 可通过 `chrome.runtime.sendMessage({type:'wecli_runtime_request',action,payload})` 调用，检查 `ok` 后读取 `result`，不返回凭据。普通后台查询也应显式使用 `cacheOnly:true`；首次登录、切换账号/组织/项目时重新准备，并在 Skill 说明缓存上下文不会自动跟随页面切换。准备通过不等于鉴权通过，最终仍需真实后台 API cases 和普通调用。
 
 validate 按实际运行时分流：后台命令通过与普通调用相同的 offscreen Runner 执行作者 cases，不注入网站，不携带 tabId；只读 GET/HEAD、已识别 JSON/form POST 和 GraphQL query 可用，拒绝写语义、重定向和失败重放。此预览限定不改变旧已安装命令的传输兼容行为。命令是受信任可执行代码，helper 守卫不等于恶意 JS 沙箱，仍需审阅源码。

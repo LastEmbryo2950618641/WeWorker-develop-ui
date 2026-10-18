@@ -59,9 +59,9 @@ export async function verifyBackgroundApi({ browser, cli, record, passed, stopBr
     const runtime=window.__webmcpWecliRuntime;
     const values=runtime.validateArgs(args,{type:'object',properties:{period:{type:'string',enum:['5h','week']}},required:['period'],additionalProperties:false});
     const result=await runtime.requestPrivileged('cookies_get',{url:${JSON.stringify(origin)},names:['example_session'],browserDebugger:false});
-    const cookie=result.cookies.find(item=>item.name==='example_session');if(!cookie)throw Error('EXAMPLE_LOGIN_REQUIRED');
+    const cookie=result.cookies.find(item=>item.name==='example_session');if(!cookie)throw Object.assign(Error('example-private-login-details'),{code:'LOGIN_REQUIRED'});
     const response=await runtime.requestPrivileged('backend_fetch',{url:${JSON.stringify(apiOrigin + '/api/list')}${method === 'GET' ? "+'?period='+encodeURIComponent(values.period)" : ''},browserFallback:false,redactBodyInTrace:true,options:{method:${JSON.stringify(method)},headers:{authorization:'Bearer '+cookie.value,'content-type':'application/json'}${method === 'POST' ? ',body:JSON.stringify({period:values.period})' : ''}}});
-    if(!response.ok)throw Error('EXAMPLE_HTTP_ERROR');const data=JSON.parse(response.body);return {period:data.period,available:data.${field}};
+    if(!response.ok)throw Object.assign(Error('example-private-http-details'),{code:'HTTP_ERROR'});const data=JSON.parse(response.body);return {period:data.period,available:data.${field}};
   });`;
   const author = async (taskId, id, field = 'available', method = 'GET') => {
     const manifest = JSON.parse((await cli('exploration.draft-read', { taskId, file: 'manifest.json' })).data.content);
@@ -140,13 +140,17 @@ export async function verifyBackgroundApi({ browser, cli, record, passed, stopBr
     await cli('browser.close', { session });
     await browser.clearCookies({ name: 'example_session', domain: 'background.example.org' });
     const beforeExpiry = requests.length;
-    await validate(expired.taskId, 'draft');
+    const missingLogin = await validate(expired.taskId, 'draft');
+    assert.ok(missingLogin.runtimeValidation.errors.every(item => item.code === 'LOGIN_REQUIRED'));
+    assert.ok(!JSON.stringify(missingLogin).includes('example-private-login-details'));
     assert.equal(requests.length, beforeExpiry, 'Missing cookie must fail without opening a login page or sending API requests');
     noPage();
     passed('missing login cookie blocks validation with no website navigation or API replay');
     await browser.addCookies([{ name: 'example_session', value: 'example-session-placeholder', url: origin }]);
     revoked = true;
-    await validate(expired.taskId, 'draft');
+    const expiredLogin = await validate(expired.taskId, 'draft');
+    assert.ok(expiredLogin.runtimeValidation.errors.every(item => item.code === 'HTTP_ERROR'));
+    assert.ok(!JSON.stringify(expiredLogin).includes('example-private-http-details'));
     assert.equal(requests.length, beforeExpiry + 2, 'Exactly one 401 request per authored case, with no transport or browser fallback');
     assert.ok(requests.slice(beforeExpiry).every(item => item.path === '/api/list'));
     noPage(); passed('server-side login expiry fails each case once without opening a page or replaying');

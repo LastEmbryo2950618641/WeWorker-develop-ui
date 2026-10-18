@@ -57,6 +57,8 @@
 - 修复桌面开发 profile 缺省 legacy 字段、纯用户包 disabled 后桌面 legacy 回退，以及开发 CLI/Bridge 定位到不完整扩展资源导致 HTTP 校验 ENOENT。新增 @types/yauzl 仅为现有 ZIP 模块类型检查补齐类型。
 - 验收使用本分支 WeWorker 1.1.0 开发客户端、当前客户端模型、Chrome 155.0.8059.80/扩展 1.1.0、独立 Adapter/host-data 目录。默认根已有 GLM 包保留，尚未用它代替生成。
 - 第一轮模型余额不足，用户自行切换模型；下一轮误将模型凭据用于网站 AUTH_API，主动停止并补通用凭据/服务规则。后续从空目录实际探索、写草稿时发现开发包 HTTP 校验资源路径缺失，修复后重试；模型仍未先确认鉴权和字段语义，反复改断言，因此停止而未计为成功。共享 Skill 已前置来源、Cookie/请求头转换、字段映射与有效 cases 的要求，新聊天正在重新验收。
+- 后续真实客户端观察发现 `browser.network all=true` 返回的业务请求，在按 key 读取 detail 时再次套用默认流量过滤，误报 `NETWORK_ENTRY_EXPIRED`。已修复为明确 detail key 不重复应用展示过滤，保留标签身份、实际捕获存在性及敏感字段脱敏；扩展 network/events 11 项、Chromium 1217 CLI＋Bridge 双打包专项 3 项通过。用户手动重载匹配扩展后，客户端实际读取额度详情成功并继续生成；这一步尚不等于安装或后台查询验收通过。
+- 后台实测又暴露 helper 契约文档不完整与预览异常分类缺失。Skill 已补准确的 Cookie 集合、storage value、fetch 参数/返回值及逐选项 cases；预览只返回固定公开错误分类，任意 code/message/details 继续屏蔽。聚焦 2 文件/45 项、helper 11 项和 Chromium 1217 双打包后台专项 8 项通过，后者覆盖无页登录缺失与服务端 401 分类及敏感文本不外泄；不是实际账号登录恢复验证。源码/打包 Skill 各 4 项通过，客户端后续生成仍在验收。
 - 当前聚焦证据：Backend 13 文件/96 项和 typecheck，WebCLI 路径/HTTP 4 文件/81 项，Electron 环境 7 项，桌面 HTTP 校验实际 bundle 2 项，双打包 HTTP 24 项，双打包 Chromium 后台专项 8 项、随包 Skill 4 项通过。Renderer 未改，构建通过；CLI/Bridge/Backend 构建通过，既有三个列映射资源缺失 warning 保留。这些自动化结果不替代下面待完成的客户端实站闭环。
 
 仍待完成：客户端真实生成与安装、业务断言、无页/后续聊天/重连查询，以及恢复验收环境。验收记录仅保留状态和结构，真实额度与凭据不进入仓库。

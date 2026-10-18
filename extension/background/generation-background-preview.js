@@ -3,6 +3,12 @@ import { validateGenerationPreviewOutputV2 } from './generation-output-validator
 const background = command => command?.runtime === 'extension' && command.execution?.type === 'api'
   && command.execution?.runtime === 'background' && !command.pageRoute && !command.pageWorkflow && !command.pageStrategy;
 
+// Only fixed, public categories cross the preview boundary. Adapter exceptions
+// can contain credentials in their message, details, or even a custom code.
+const publicFailureCodes = new Set(['LOGIN_REQUIRED', 'PAGE_CONTEXT_REQUIRED', 'INVALID_ARGS',
+  'HTTP_ERROR', 'API_ERROR', 'INVALID_RESPONSE', 'BACKEND_HELPER_ERROR', 'MISSING_PERMISSION',
+  'RUNTIME_UNAVAILABLE', 'ADAPTER_COMMAND_UNAVAILABLE']);
+
 /** Execute authored reads in the same offscreen runner as installed commands.
  * No page lookup, injection, navigation or capture-bound arguments are allowed. */
 export async function validateBackgroundPreview({ bundle, expectedToolNames, testCases = [], execute }) {
@@ -23,8 +29,8 @@ export async function validateBackgroundPreview({ bundle, expectedToolNames, tes
       if (output?.__webcli_page_query || output?.__webcli_navigation || output?.__cdp_action || output?.__after) throw new Error('Page continuation is not background execution.');
       toolResults.push({ ...identity, attempted: true, ...validateGenerationPreviewOutputV2(output, item.contract || {}) });
     } catch (error) {
-      // Runtime exceptions may contain source, credentials or business values.
-      toolResults.push({ ...identity, attempted: true, passed: false, errors: [{ code: 'BACKGROUND_PREVIEW_FAILED', message: 'Background read failed; inspect the authored authentication/request contract without exporting credentials.' }] });
+      const code = publicFailureCodes.has(error?.code) ? error.code : 'BACKGROUND_PREVIEW_FAILED';
+      toolResults.push({ ...identity, attempted: true, passed: false, errors: [{ code, message: 'Background read failed; inspect the authored authentication/request contract without exporting credentials.' }] });
     }
   }
   const errors = toolResults.flatMap(item => (item.errors || []).map(error => ({ ...error, toolName: item.toolName, ...(item.caseId ? { caseId: item.caseId } : {}) })));
