@@ -65,7 +65,7 @@ HTTP write 每次普通调用也强制 `__confirmed:true`、最多一个请求�
 
 ## 当前限制与证据
 
-HTTP 路径不支持任意 UI 写操作、批量/多步写工作流、多 ID/响应 URL 或 header 回查、自动回滚、服务端幂等键协商、写工具局部 repair。单次 fixture 不能证明任意输入和任意站点的正确性。Cookie 写通道复用已有 profile/鉴权契约，但本阶段真实副作用验收使用独立 PUBLIC/AUTH loopback 服务，未对真实账户发写请求。
+HTTP 路径不支持任意 UI 写操作、批量/多步写工作流、多 ID/响应 URL 或 header 回查、自动回滚、服务端幂等键协商、PAGE_FETCH/UI 写工具局部 repair。单次 fixture 不能证明任意输入和任意站点的正确性。Cookie 写通道复用已有 profile/鉴权契约，但本阶段真实副作用验收使用独立 PUBLIC/AUTH loopback 服务，未对真实账户发写请求。
 
 自动化见 `webcli/__tests__/exploration-write.test.js` 与 HTTP Runner 测试；真实 CLI/Bridge 验收见 `webcli/scripts/verify-exploration-http.mjs`（支持 `--bundled`），其中 write-acceptance 使用独立本地服务验证实际状态、响应丢失、无效果、重定向、取消和进程重启。具体本次结果见交接文档与 ROADMAP。
 
@@ -258,3 +258,16 @@ UI fixture 仍不提供 HTTP successResponse。声明 result 后必须配套 `ef
 回执成功后、任何效果 GET 前仅将 `{id}` 保存到当前任务私有执行账本。get/list/trace、write-review 执行摘要、知识和安装包不包含真实 ID；普通调用按其输出契约向调用者返回 ID。复用 effect.poll 的 pending/resultPending、原 30 秒总验证和 15 秒恢复预算、同文档身份；资源 ID 类型/值错误即使处于 pending 也立即停止。存储失败不能继续效果 GET。缺失持久 ID 的恢复零 GET、返回 WRITE_RESULT_ID_UNAVAILABLE；已有 ID 的取消/重启只允许独立 GET 恢复，uncertain 不升级、不放行安装。原生输入无 input/change、一次 requestSubmit、不保证一次网络/实际修改均保持。
 
 自动化与隔离源码/双打包入口继续使用 exploration-ui-write 与 ui-write-acceptance。任意网络响应 ID、多个 ID、header/响应 URL、复杂控件、多步写和写 repair 仍待办；验证数量与报告见交接末尾。
+
+
+## 已安装 HTTP 写命令的定向修复
+
+`repair-info` 返回当前安装摘要，新的任务明确 declare-write 或选择已观察写来源，再以原 canonical kebab-case ID 提交 `repair`，risk=write、sourceApiKind=action。只支持既有 HTTP 单请求写命令；PUBLIC_API/COOKIE_API/AUTH_API 的完整 `http` 契约必须与当前安装包相同。Cookie 仍依赖选定 profile，mode=http 仍只运行 PUBLIC/AUTH。允许修改所选命令模块、schema/description，其他命令、共享文件、metadata、路由、权限和运行时原样保留。扩展声明式 PAGE_FETCH/UI 写契约修复仍待办。
+
+服务持久保存 `repairScope.writeCommandIds`，草稿 source.json 不能自行扩大修复权限。历史命令知识只有 packageDigest 与当前包一致、kind=http_single_write_v1 且 fixture 可针对新声明重新规范化时才导入；返回 importedWriteTools/skippedWriteTools 及跳过原因，累计大小仍有任务上限。导入的是作者 fixture，不导入执行记录、真实响应 ID、审阅或授权。缺失/摘要不匹配/非法 fixture 需作者补写；历史数据不是当前行为或授权证据。
+
+`validate` 重跑独立 mock 和选中读命令 cases，绝不执行 retained 写命令或实际修复写；通过后仅进入 write_review_ready。新的 write-review 包含 repair 范围、authorizationInherited:false，reviewId 绑定修复任务及摘要；跨任务同内容也不能复用。只有当前精确审阅与明确 confirmed:true 才走 before GET → 一次写 → after GET/实际 ID GET，复用数字 ID、严格资源身份、有界 pending 轮询及派发前持久消费。安装基线在审阅、before GET 完成后、实际 HTTP 派发前和安装时重新核对，变化拒绝继续。
+
+这不是自动重试失败业务请求：应先核对原写效果和当前测试副作用授权。取消、重启、响应丢失仍不重放；恢复仅 GET，uncertain 即使匹配也不能安装。全部读写验证通过后按原 review/install 与 knowledge-save 流程完成更新。普通 call 仍是新的单次显式写调用，没有自动效果认证或探索 reviewId 去重。
+
+聚焦测试在 `exploration-write.test.js`；真实源码与双打包 CLI/Bridge 验收由 `verify-exploration-http.mjs` 调用 `write-repair-acceptance.mjs`，使用隔离 AUTH loopback，覆盖真实字段漂移、mock 零网络、重新授权、数字 ID/轮询、安装、保留读写命令及取消/重启/丢响应。最新运行证据见交接末尾，不代表真实账户、Cookie 修复全组合、多步写或共享文件修复已验收。

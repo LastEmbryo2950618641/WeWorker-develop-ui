@@ -3,10 +3,16 @@ import http from 'node:http';
 
 /** Shared real CLI acceptance; all writes and retained IDs belong to this loopback fixture. */
 export async function verifyWriteResults({ call, startBridge, stopBridge, pass, page = false }) {
-  const requests = [], resources = new Map(), states = new Map(), keys = new Map(), released = new Set(), createdAt = new Map(), navigated = new Set();
+  const requests = [], resources = new Map(), states = new Map(), keys = new Map(), released = new Set(), pendingReads = new Map(), navigated = new Set();
   const polling = label => label.startsWith('poll');
-  const waiting = (label, resource = false) => polling(label) && !released.has(label)
-    && (label !== 'pollsuccess' || Date.now() - createdAt.get(label) < (resource ? 1600 : 700));
+  const waiting = (label, resource = false) => {
+    if (!polling(label) || released.has(label)) return false;
+    if (label !== 'pollsuccess') return true;
+    // Both endpoints must actually be observed pending, even on slow machines.
+    const key = `${label}:${resource}`, count = (pendingReads.get(key) || 0) + 1;
+    pendingReads.set(key, count);
+    return count <= 2;
+  };
   let serial = 0;
   const pause = () => new Promise(resolve => setTimeout(resolve, 100));
   const server = http.createServer(async (req, res) => {
@@ -43,7 +49,7 @@ export async function verifyWriteResults({ call, startBridge, stopBridge, pass, 
       let id = keys.get(key);
       if (!keys.has(key)) {
         id = label === 'numeric' ? 0 : label === 'unsafeinteger' ? Number.MAX_SAFE_INTEGER + 1 : polling(label) || label === 'wrongtype' ? ++serial : '007示例-' + (++serial); keys.set(key, id);
-        resources.set(String(id), { id, label, title: JSON.parse(raw).title }); states.set(label, 'After'); createdAt.set(label, Date.now());
+        resources.set(String(id), { id, label, title: JSON.parse(raw).title }); states.set(label, 'After');
       }
       if (label === 'lost') { req.socket.destroy(); return; }
       res.end(JSON.stringify({ ok: true, title: 'After', item: { ...(label === 'missing' ? {} : { id: label === 'unsafe' ? '../unintended' : id }) }, extra: 'example-result-body-not-retained' })); return;

@@ -29,7 +29,7 @@ import { normalizeInterceptSource, interceptValues } from './exploration-interce
 import { isHttpStrategy, httpToolContract, buildHttpTool } from './exploration-http.js';
 import { httpCredentialsCapability } from './http-contract.js';
 import { startHostExploration, collectHostEvidence } from './exploration-host.js';
-import { declareWriteSource, plannedWrites, writeCase, writeReview, verifyWrite, readbackWrite, writeProofDigest, writeFixtures, finishWriteValidation } from './exploration-write.js';
+import { declareWriteSource, plannedWrites, writeCase, writeReview, verifyWrite, readbackWrite, writeProofDigest, writeFixtures, finishWriteValidation, importRepairWriteFixtures } from './exploration-write.js';
 import { verifyGeneratedWriteTools } from './generation-harness/write-tool-verifier.js';
 import { buildUiWriteTool } from './exploration-ui-write.js';
 import { buildExtensionWriteTool } from './exploration-extension-write.js';
@@ -486,9 +486,10 @@ export class ExplorationService {
       }
       const candidate = run.candidates[tool.sourceApiIndexes?.[0]];
       if (tool.risk === 'write') {
-        if (repair || tool.sourceApiKind !== 'action' || (!isHttpStrategy(tool.strategy) && !['PAGE_FETCH', 'UI_SELECTOR'].includes(tool.strategy)) || tool.sourceApiIndexes?.length !== 1 || !candidate || candidate.risk?.level !== 'write'
+        if (tool.sourceApiKind !== 'action' || (!isHttpStrategy(tool.strategy) && !['PAGE_FETCH', 'UI_SELECTOR'].includes(tool.strategy)) || tool.sourceApiIndexes?.length !== 1 || !candidate || candidate.risk?.level !== 'write'
           || !['POST', 'PUT', 'PATCH', 'DELETE'].includes(candidate.method)
-          || (!candidate.declared && !(candidate.status >= 200 && candidate.status < 300))) throw fail('INVALID_PLAN', 'Write plans require one declared or successfully observed write source and an explicit HTTP, PAGE_FETCH or UI_SELECTOR strategy. Write repair is not supported yet.');
+          || (!candidate.declared && !(candidate.status >= 200 && candidate.status < 300))) throw fail('INVALID_PLAN', 'Write plans require one declared or successfully observed write source and an explicit HTTP, PAGE_FETCH or UI_SELECTOR strategy.');
+        if (repair && !isHttpStrategy(tool.strategy)) throw fail('REPAIR_RUNTIME_UNSUPPORTED', 'Write repair currently supports HTTP commands; declarative page/UI contracts remain unchanged.');
         if (tool.strategy === 'UI_SELECTOR') buildUiWriteTool(run.siteKey, tool, candidate, run.origin);
         else if (tool.strategy === 'PAGE_FETCH') buildExtensionWriteTool(run.siteKey, tool, candidate, run.origin);
         else httpToolContract(tool, candidate);
@@ -521,10 +522,13 @@ export class ExplorationService {
         staleCommands: knowledge.staleCommands, importedTools: [] };
       const verification = {};
       for (const tool of prepared.draft.toolNames) {
+        if (prepared.scope.writeCommandIds?.includes(tool.slice(run.siteKey.length + 1))) continue;
         const cases = knowledge.knowledge?.commands?.[tool]?.cases;
         if (cases?.length) { verification[tool] = normalizeVerificationCases(cases); repairKnowledge.importedTools.push(tool); }
       }
-      run.plan = clone(plan); run.draft = prepared.draft; run.repairScope = prepared.scope; run.editableFiles = prepared.editableFiles;
+      const repairRun = { ...run, plan: clone(plan), draft: prepared.draft, repairScope: prepared.scope };
+      if (prepared.scope.writeCommandIds?.length) Object.assign(repairKnowledge, importRepairWriteFixtures(repairRun, knowledge.knowledge));
+      run.plan = repairRun.plan; run.draft = prepared.draft; run.repairScope = prepared.scope; run.editableFiles = prepared.editableFiles;
       run.repairKnowledge = repairKnowledge; run.verification = verification;
       run.draftFiles = [...readPackageDirectory(run.draft.adapterDir).files.keys()];
       this.update(run, 'draft', 'Scoped repair created. Review historical cases and verify against the current page before installation.');
@@ -613,7 +617,7 @@ export class ExplorationService {
     }
     if (run.plan?.tools?.some(tool => tool.strategy === 'INTERCEPT') && !this.capabilities().capabilities.includes('intercept_read_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating intercepted queries.');
     if (run.plan?.tools?.some(tool => tool.sourcePageId) && !this.capabilities().capabilities.includes('page_sources_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating page sources.');
-    if ((run.repairScope ? run.draft.toolNames : pageTools).some(tool => !run.verification?.[tool]?.length)) throw fail('VERIFICATION_REQUIRED', 'Every repaired or page-based command needs authored verification cases; read or write cases before validation.');
+    if ((run.repairScope ? run.draft.toolNames.filter(tool => !plannedWrites(run).includes(tool)) : pageTools).some(tool => !run.verification?.[tool]?.length)) throw fail('VERIFICATION_REQUIRED', 'Every repaired read or page-based command needs authored verification cases; write commands require independent write fixtures.');
     if (Object.keys(run.verification || {}).length && !this.capabilities().capabilities.includes('strict_output_contract_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating authored assertions.');
     if (run.mode !== 'http') this.assertTabAvailable(run.tabId, run.taskId);
     run.review = null; run.runtimeDigest = null; run.runtimeSummary = null; run.preWriteDigest = null;
@@ -626,7 +630,7 @@ export class ExplorationService {
       const writes = plannedWrites(run);
       const proof = writes.length ? writeProofDigest(run) : null;
       if (writes.length) {
-        const mock = await verifyGeneratedWriteTools({ adapterDir: run.draft.adapterDir, expectedSiteKey: run.siteKey, paths: this.paths, signal });
+        const mock = await verifyGeneratedWriteTools({ adapterDir: run.draft.adapterDir, expectedSiteKey: run.siteKey, paths: this.paths, repairScope: run.repairScope, signal });
         if (signal.aborted) return;
         if (!mock.passed) {
           run.runtimeSummary = { passed: false, errors: mock.errors.map(({ code, toolName }) => ({ code, tool: toolName })) };

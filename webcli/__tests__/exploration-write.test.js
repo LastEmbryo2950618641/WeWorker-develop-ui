@@ -8,13 +8,16 @@ import { resolveAdapterPaths } from '../paths.js';
 import { resolveAdapterCall } from '../adapter-host.js';
 import { runHttpTool } from '../http-runner.js';
 import { generationEvidenceDir } from '../generation-harness/package-draft.js';
+import { readPackageDirectory } from '../adapter-package-files.js';
+import { readGenerationEvidence } from '../generation-harness/package-inspection.js';
+import { verifyRetainedPackage, verifyRepairRetention } from '../generation-harness/existing-site.js';
 
 const cleanup = [];
 afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); vi.unstubAllEnvs(); });
 async function setup({ behavior = 'normal', source, auth = false, mixed = false, resultId, detail = {}, asyncEffect } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'exploration-write-'));
   cleanup.push(() => fs.rmSync(root, { recursive: true, force: true }));
-  let title = 'Before', effectReads = 0; const requests = [];
+  let title = 'Before', effectReads = 0, responseField = 'title', beforeRead; const requests = [];
   const server = createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
     requests.push({ method: req.method, url: req.url, body: raw, auth: req.headers.authorization });
@@ -24,9 +27,10 @@ async function setup({ behavior = 'normal', source, auth = false, mixed = false,
       if (behavior !== 'no-effect') title = JSON.parse(raw).title;
       if (behavior === 'hang') return;
       if (behavior === 'disconnect') { req.socket.destroy(); return; }
-      res.end(JSON.stringify({ ok: true, id: resultId ?? 'example', title, live: true })); return;
+      res.end(JSON.stringify({ ok: true, id: resultId ?? 'example', [responseField]: title, live: true })); return;
     }
     if (req.url.startsWith('/records/')) { res.end(JSON.stringify({ id: resultId, title, ...detail })); return; }
+    beforeRead?.();
     const state = !asyncEffect ? undefined : title === 'Before' ? 'idle' : ++effectReads <= asyncEffect.pendingReads ? 'pending' : 'ready';
     res.end(JSON.stringify({ id: 'example', title, state, responseOnly: 'example-unpersisted-body' }));
   });
@@ -80,7 +84,9 @@ async function setup({ behavior = 'normal', source, auth = false, mixed = false,
     const readTool = run.draft.toolNames[1], current = await call('verification-read', { tool: readTool });
     await call('verification-write', { tool: readTool, expectedHash: current.data.hash, cases: [{ id: 'example-identity', args: {}, expect: { equals: { id: 'example' } } }] });
   }
-  return { root, origin, service, options, run, taskId, tool, call, requests, paths, fixture, saveFixture, edit, manifest, setTitle: value => { title = value; } };
+  return { root, origin, service, options, run, taskId, tool, call, requests, paths, fixture, saveFixture, edit, manifest,
+    setTitle: value => { title = value; effectReads = 0; }, setBehavior: value => { behavior = value; },
+    setResponseField: value => { responseField = value; }, onRead: fn => { beforeRead = fn; } };
 }
 
 async function reviewed(f) {
@@ -435,4 +441,218 @@ it('cancels waiting polls and independently cancels recovery on a terminal task 
   expect(f.run.status).toBe('cancelled'); expect(f.service.readbacks.size).toBe(0);
   await f.service.execute('write-verify', args);
   expect(f.requests).toHaveLength(4);
+});
+
+async function installedWrite(f, { knowledge = true } = {}) {
+  const review = await reviewed(f);
+  await f.call('write-verify', { tool: f.tool, reviewId: review.reviewId, confirmed: true });
+  expect(f.run.status).toBe('review_ready');
+  const install = (await f.call('review')).data;
+  expect((await f.call('install', { reviewId: install.reviewId, confirmed: true })).ok).toBe(true);
+  expect(f.run.status).toBe('installed');
+  if (knowledge) {
+    const old = (await f.service.execute('knowledge-read', { site: f.run.siteKey })).data;
+    expect((await f.call('knowledge-save', { expectedHash: old.hash })).ok).toBe(true);
+  }
+  f.setTitle('Before'); f.requests.length = 0;
+  return review;
+}
+
+async function repairWrite(f, { mixed = false, create = true, requestId = 'example-repair' } = {}) {
+  const info = (await f.service.execute('repair-info', { site: f.run.siteKey })).data;
+  const taskId = (await f.service.execute('start', { origin: f.origin, goal: 'Repair public example mapping', requestId })).data.taskId;
+  const call = async (command, args = {}) => {
+    const reply = await f.service.execute(command, { taskId, ...args });
+    await f.service.jobs.get(taskId); return reply;
+  };
+  if (mixed) await call('request', { request: { url: f.origin + '/items/example' }, reason: 'Observe public example' });
+  await call('declare-write', { url: f.origin + '/items/example', method: 'PUT', bodyKeys: ['title'], reason: 'Declare repair without replaying a write' });
+  const plan = structuredClone(f.run.plan);
+  plan.tools = plan.tools.filter(tool => mixed || tool.risk === 'write').map(tool => ({ ...tool, name: tool.name.replace(/_/g, '-'), sourceApiIndexes: [tool.risk === 'write' && mixed ? 1 : 0] }));
+  const args = { site: info.site, expectedDigest: info.digest, plan };
+  const response = create ? await call('repair', args) : null;
+  if (create) expect(response, JSON.stringify(response)).toMatchObject({ ok: true, data: { status: 'draft' } });
+  const run = f.service.runs.get(taskId);
+  const edit = async (file, content) => {
+    const old = (await call('draft-read', { file })).data;
+    return call('draft-write', { file, content, expectedHash: old.hash });
+  };
+  return { ...f, run, taskId, call, edit, args, info, response };
+}
+
+it('repairs installed HTTP write mappings using historical data, fresh consent, numeric IDs and bounded effect polling', async () => {
+  const f = await setup({ mixed: true, resultId: 731, asyncEffect: { pendingReads: 1 } });
+  const fixture = structuredClone(f.fixture);
+  fixture.successResponse.body.id = 1;
+  fixture.effect.resultReadback = { url: f.origin + '/records/:id', publicId: true, idType: 'integer', responsePath: 'id', identityPath: 'id', expect: { equals: { title: 'After' } } };
+  fixture.effect.after.equals.state = 'ready';
+  fixture.effect.poll = { maxAttempts: 3, intervalMs: 250, pending: { equals: { state: 'pending' } } };
+  await f.saveFixture(fixture);
+  const priorReview = await installedWrite(f);
+  const installed = resolveAdapterCall(f.tool, { paths: f.paths }).adapter.root, before = readPackageDirectory(installed);
+  f.setResponseField('label');
+  const r = await repairWrite(f);
+  expect(f.requests).toEqual([]);
+  expect(r.run.repairKnowledge.importedWriteTools).toEqual([f.tool]);
+  expect(r.run.writeExecutions || []).toEqual([]);
+  expect(r.run.preWriteDigest).toBeFalsy();
+  expect(JSON.stringify(r.response)).not.toContain('"id":731');
+  const old = (await r.call('write-verification-read', { tool: r.tool })).data;
+  const next = structuredClone(old.fixture);
+  next.successResponse.body.label = next.successResponse.body.title; delete next.successResponse.body.title;
+  await r.call('write-verification-write', { tool: r.tool, expectedHash: old.hash, fixture: next });
+  await r.call('validate');
+  expect(r.run.status).toBe('draft'); expect(f.requests).toEqual([]);
+  const module = f.manifest.commands[0].module;
+  const source = fs.readFileSync(path.join(r.run.draft.adapterDir, module), 'utf8')
+    .replace('return await api.request(', 'const value = await api.request(')
+    .replace('json:{title:args.title}});', 'json:{title:args.title}}); return {ok:value.ok,title:value.label};');
+  expect((await r.edit(module, source)).ok).toBe(true);
+  const review = await reviewed(r);
+  expect(review).toMatchObject({ consumed: false, execution: null, repair: { writeCommandIds: ['update-item'], authorizationInherited: false } });
+  expect(review.reviewId).not.toBe(priorReview.reviewId);
+  expect((await r.call('write-verify', { tool: r.tool, reviewId: priorReview.reviewId, confirmed: true })).error.code).toBe('STALE_REVIEW');
+  expect((await r.call('write-verify', { tool: r.tool, reviewId: review.reviewId })).error.code).toBe('CONFIRMATION_REQUIRED');
+  expect(f.requests).toEqual([]);
+  await r.call('write-verify', { tool: r.tool, reviewId: review.reviewId, confirmed: true });
+  expect(r.run.status).toBe('review_ready');
+  expect(r.run.writeExecutions[0].resultBinding).toEqual({ id: 731 });
+  expect(f.requests.filter(item => item.method === 'PUT')).toHaveLength(1);
+  expect(f.requests.filter(item => item.url === '/records/731')).toHaveLength(1);
+  const install = (await r.call('review')).data;
+  await r.call('install', { reviewId: install.reviewId, confirmed: true });
+  expect(r.run.status).toBe('installed');
+  const after = readPackageDirectory(installed);
+  for (const [name, bytes] of before.files) if (!r.run.editableFiles.includes(name)) expect(after.files.get(name)).toEqual(bytes);
+  expect(after.manifest.commands[1]).toEqual(before.manifest.commands[1]);
+  expect((await runHttpTool(resolveAdapterCall(r.tool, { paths: f.paths }), { title: 'Ordinary', __confirmed: true })).result).toMatchObject({ ok: true, title: 'Ordinary' });
+  expect((await runHttpTool(resolveAdapterCall(f.run.draft.toolNames[1], { paths: f.paths }), {})).result.id).toBe('example');
+  const knowledge = (await r.service.execute('knowledge-read', { site: r.run.siteKey })).data;
+  const saved = await r.call('knowledge-save', { expectedHash: knowledge.hash });
+  expect(saved.ok).toBe(true); expect(JSON.stringify(saved)).not.toContain('"id":731');
+});
+
+it('revalidates mixed repair read cases without running the selected write in the read validator', async () => {
+  const f = await setup({ mixed: true }); await installedWrite(f);
+  const r = await repairWrite(f, { mixed: true });
+  expect(r.run.repairKnowledge.importedTools).toEqual([f.run.draft.toolNames[1]]);
+  const cases = r.run.verification; r.run.verification = {};
+  expect((await r.call('validate')).error.code).toBe('VERIFICATION_REQUIRED');
+  r.run.verification = cases;
+  await reviewed(r);
+  expect(f.requests.every(item => item.method === 'GET')).toBe(true);
+  expect(r.run.runtimeSummary.executionSummary).toEqual({ attempted: 1, passed: 1, skipped: 0, failed: 0 });
+});
+
+it.each(['missing', 'digest', 'kind', 'invalid'])('skips %s historical write fixtures and never imports authorization', async variation => {
+  const f = await setup(); await installedWrite(f, { knowledge: variation !== 'missing' });
+  if (variation !== 'missing') {
+    const file = f.service.knowledge.file(f.run.siteKey), data = JSON.parse(fs.readFileSync(file));
+    const record = data.commands[f.tool];
+    if (variation === 'digest') record.packageDigest = 'example-stale-digest';
+    if (variation === 'kind') record.writeVerification.kind = 'ui_single_submit_v1';
+    if (variation === 'invalid') record.writeVerification.fixture.representativeArgs.__confirmed = true;
+    record.writeExecutions = f.run.writeExecutions;
+    fs.writeFileSync(file, JSON.stringify(data));
+  }
+  const r = await repairWrite(f);
+  expect(r.run.repairKnowledge.importedWriteTools).toEqual([]);
+  expect(r.run.repairKnowledge.skippedWriteTools).toEqual([{ tool: f.tool, code: variation === 'missing' ? 'WRITE_FIXTURE_MISSING' : variation === 'invalid' ? 'INVALID_WRITE_CASE' : 'WRITE_KNOWLEDGE_BASE_MISMATCH' }]);
+  expect(r.run.writeExecutions || []).toEqual([]);
+  await r.call('validate'); expect(r.run.status).toBe('draft');
+  expect((await r.call('review')).ok).toBe(false); expect(f.requests).toEqual([]);
+});
+
+it('rejects changing risk, strategy, origin or authentication during write repair planning', async () => {
+  const f = await setup({ auth: true }); vi.stubEnv('EXAMPLE_WRITE_KEY', 'example-write-placeholder');
+  await installedWrite(f);
+  const r = await repairWrite(f, { create: false });
+  for (const change of [tool => { tool.risk = 'read'; }, tool => { tool.strategy = 'PUBLIC_API'; delete tool.auth; },
+    tool => { tool.auth.env = 'EXAMPLE_OTHER_KEY'; }, tool => { tool.auth.origin = 'https://example.org'; }]) {
+    const args = structuredClone(r.args); change(args.plan.tools[0]);
+    expect((await r.call('repair', args)).ok).toBe(false);
+  }
+  expect(f.requests).toEqual([]);
+  expect((await r.call('repair', r.args)).ok).toBe(true);
+});
+
+it('protects shared bytes, sibling reads/writes, runtime and grants even against forged source scope', async () => {
+  const f = await setup({ mixed: true }); await installedWrite(f);
+  const r = await repairWrite(f), pkg = readPackageDirectory(r.run.draft.adapterDir);
+  const before = readPackageDirectory(resolveAdapterCall(f.tool, { paths: f.paths }).adapter.root);
+  const module = f.manifest.commands[0].module;
+  await r.edit(module, pkg.files.get(module).toString() + '\n// repaired mapping\n');
+  const evidence = readGenerationEvidence(r.run.draft.adapterDir);
+  evidence.repairScope = r.run.repairScope;
+  expect(() => verifyRetainedPackage(readPackageDirectory(r.run.draft.adapterDir), evidence, { paths: f.paths })).toThrow();
+  expect(() => verifyRepairRetention(before, pkg, { ...r.run.repairScope, writeCommandIds: [] })).toThrow();
+  for (const change of [
+    manifest => { manifest.commands[0].safety = 'read'; },
+    manifest => { manifest.commands[0].runtime = 'extension'; },
+    manifest => { manifest.commands[0].http.origins.push('https://example.org'); },
+    manifest => { manifest.commands[1].description += ' changed'; },
+    manifest => { manifest.match.push('example.org'); },
+  ]) {
+    const next = { ...pkg, manifest: structuredClone(pkg.manifest) }; change(next.manifest);
+    expect(() => verifyRepairRetention(before, next, r.run.repairScope)).toThrow();
+  }
+  const shared = [...before.files.keys()].find(name => name !== 'manifest.json' && !r.run.editableFiles.includes(name));
+  expect(shared).toBeTruthy();
+  expect((await r.edit(shared, 'modified shared bytes')).error.code).toBe('REPAIR_SCOPE_CHANGED');
+  const siblingWrite = { ...before.manifest.commands[0], id: 'retained-write', module: 'http/commands/retained-write.js' };
+  const withWrite = { ...before, manifest: { ...before.manifest, commands: [...before.manifest.commands, siblingWrite] }, files: new Map([...before.files, [siblingWrite.module, Buffer.from('throw new Error("MUST_NOT_RUN")')]]) };
+  const changed = { ...withWrite, files: new Map(withWrite.files) }; changed.files.set(siblingWrite.module, Buffer.from('changed'));
+  expect(() => verifyRepairRetention(withWrite, changed, r.run.repairScope)).toThrow();
+});
+
+it.each(['review', 'dispatch', 'before-read', 'install'])('rejects an installed baseline changed before %s', async phase => {
+  const f = await setup(); await installedWrite(f);
+  const r = await repairWrite(f), review = await reviewed(r);
+  const mutate = () => fs.appendFileSync(path.join(resolveAdapterCall(f.tool, { paths: f.paths }).adapter.root, 'manifest.json'), '\n');
+  if (phase === 'before-read') f.onRead(mutate);
+  else if (phase !== 'install') mutate();
+  if (phase === 'review') expect((await r.call('write-review', { tool: f.tool })).error.code).toBe('ADAPTER_BASE_CHANGED');
+  else {
+    const result = await r.call('write-verify', { tool: f.tool, reviewId: review.reviewId, confirmed: true });
+    if (phase === 'dispatch') expect(result.error.code).toBe('ADAPTER_BASE_CHANGED');
+    if (phase === 'before-read') expect(r.run.writeExecutions[0]).toMatchObject({ status: 'not_dispatched', dispatched: false, error: { code: 'ADAPTER_BASE_CHANGED' } });
+    if (phase === 'install') {
+      const install = (await r.call('review')).data; mutate();
+      expect((await r.call('install', { reviewId: install.reviewId, confirmed: true })).error.code).toBe('ADAPTER_BASE_CHANGED');
+    }
+  }
+  expect(f.requests.filter(item => item.method === 'PUT')).toHaveLength(phase === 'install' ? 1 : 0);
+});
+
+it('binds identical repair reviews to their own task and preserves cancelled or interrupted writes without replay', async () => {
+  const f = await setup(); await installedWrite(f);
+  const r = await repairWrite(f), review = await reviewed(r);
+  const other = await repairWrite(f, { requestId: 'example-other-repair' }), otherReview = await reviewed(other);
+  expect(otherReview.reviewId).not.toBe(review.reviewId);
+  expect((await other.call('write-verify', { tool: f.tool, reviewId: review.reviewId, confirmed: true })).error.code).toBe('STALE_REVIEW');
+  f.setBehavior('hang');
+  const args = { taskId: r.taskId, tool: f.tool, reviewId: review.reviewId, confirmed: true };
+  await f.service.execute('write-verify', args);
+  await vi.waitFor(() => expect(f.requests.filter(item => item.method === 'PUT')).toHaveLength(1));
+  const restored = new ExplorationService(f.options);
+  expect(restored.runs.get(r.taskId).writeExecutions[0].status).toBe('uncertain');
+  await restored.execute('write-verify', args);
+  await f.service.execute('cancel', { taskId: r.taskId }); await f.service.jobs.get(r.taskId);
+  expect(r.run.status).toBe('cancelled');
+  expect((await r.call('write-readback', { reviewId: review.reviewId })).data.passed).toBe(true);
+  expect((await r.call('review')).ok).toBe(false);
+  expect(f.requests.filter(item => item.method === 'PUT')).toHaveLength(1);
+});
+
+
+it('revalidates imported fixtures against the newly declared source before making a repair executable', async () => {
+  const f = await setup(); await installedWrite(f);
+  const r = await repairWrite(f, { create: false });
+  await r.call('declare-write', { url: f.origin + '/items/other', method: 'PUT', bodyKeys: ['title'], reason: 'Explicit public replacement route' });
+  r.args.plan.tools[0].sourceApiIndexes = [1];
+  expect((await r.call('repair', r.args)).ok).toBe(true);
+  expect(r.run.repairKnowledge.skippedWriteTools).toEqual([{ tool: f.tool, code: 'INVALID_WRITE_CASE' }]);
+  await r.call('validate'); expect(r.run.status).toBe('draft');
+  expect((await r.call('write-review', { tool: f.tool })).ok).toBe(false);
+  expect(f.requests).toEqual([]);
 });

@@ -1,8 +1,14 @@
 # API 自动探索 CLI 开发设计与首版实现
 
-更新：2026-10-18。已实现多浏览器 profile、独立 HTTP Runner、PUBLIC_API/COOKIE_API/AUTH_API、mode=http 的无浏览器 OpenAPI JSON 发现与宿主请求证据、只读局部修复和显式 2–8 步只读 workflow；最新增加 HTTP 写与具有服务端幂等契约的 Extension PAGE_FETCH 声明式写生成、mock 和真实副作用回查。具体契约见 [HTTP Runtime](http_adapter_runtime.md) 和 [写命令验证](api_exploration_write.md)，历史与验证结果见 [交接文档](api_exploration_cli_handoff.md)。
+更新：2026-10-18。已实现多浏览器 profile、独立 HTTP Runner、PUBLIC_API/COOKIE_API/AUTH_API、mode=http 的无浏览器 OpenAPI JSON 发现与宿主请求证据、读命令局部修复和显式 2–8 步只读 workflow；HTTP/PAGE_FETCH/原生 UI 单写、实际 ID 与有界 GET 已接通，最新增加 HTTP 单请求写命令定向修复。具体契约见 [HTTP Runtime](http_adapter_runtime.md) 和 [写命令验证](api_exploration_write.md)，历史与验证结果见 [交接文档](api_exploration_cli_handoff.md)。
 
-当前增量从 `05b4b44` 继续，UI 同文档原生表单支持公开新回执 ID，复用数字/字符串 ID、持久账本和有界 GET 轮询。WebCLI 1341 项、最终聚焦 152 项、扩展 16 项、源码 UI 11 项、双打包 HTTP 18 项与 Chromium 1217 双打包完整 77 项通过，详细证据见交接最新记录。复杂 UI、多步写、多 ID/header/响应 URL、任意 UI 网络响应拦截、签名/OAuth 与完整对齐仍未完成；1194 既有 Shadow/frame 兼容及平台欠账保留。
+前序增量从 `05b4b44` 继续，UI 同文档原生表单支持公开新回执 ID，复用数字/字符串 ID、持久账本和有界 GET 轮询。WebCLI 1341 项、最终聚焦 152 项、扩展 16 项、源码 UI 11 项、双打包 HTTP 18 项与 Chromium 1217 双打包完整 77 项通过，详细证据见交接最新记录。复杂 UI、多步写、多 ID/header/响应 URL、任意 UI 网络响应拦截、签名/OAuth 与完整对齐仍未完成；1194 既有 Shadow/frame 兼容及平台欠账保留。
+
+## HTTP 写命令定向修复
+
+从 `35cd7f8` 接续，repair 的服务 scope 可显式包含 HTTP writeCommandIds。保持所选命令 safety/runtime、完整 http 契约、权限、共享文件与其他命令；仅模块/schema/description 可改。历史 fixture 按命令 packageDigest、kind 和新来源重新规范化，跳过原因可读；执行、实际 ID、审阅和授权不导入。普通 validate 仍只跑 mock 与选中读 cases，实际写必须重新精确审阅和确认。
+
+修复 reviewId 绑定任务/范围，安装基线在审阅、before GET 后及 HTTP beforeDispatch 再检查，安装时仍重验。复用既有持久消费、数字 ID、严格效果身份、有界轮询、取消/重启不重放与 uncertain 只读恢复限制。PAGE_FETCH/UI 契约修复、共享文件、多步写和知识冲突修订仍待办。具体流程与验收入口见写契约末节；WebCLI 1355 项、聚焦 139 项、扩展 20 项、源码/双打包 HTTP 各 21 项、Chromium 1217 双打包完整 77 项通过，最终证据与保留限制见交接。
 
 ## UI 公开新回执 ID
 
@@ -130,7 +136,7 @@ Codex / Claude / 其他 CLI Agent + Skill
 | query | 单次只读控件触发后跨文档等待，以同源结果路径和 URL 参数关联 DOM/状态；观察仅存结构 |
 | cancel | 停止后续阶段，丢弃迟到结果；已经派发的浏览器操作可能完成 |
 | generate | 默认最多两个 GET；Agent plan 支持 1–50 个读取工具、JSON/form POST、GraphQL query、动态路径绑定与页面来源；POST/动态路径必须有 readReason |
-| repair-info / repair | 查看当前安装包摘要/历史 cases，从新证据建立所选已有只读命令的修复草稿；其他文件与命令保留 |
+| repair-info / repair | 查看当前安装包摘要/历史 cases，从新证据建立所选已有读命令或 HTTP 单请求写命令的修复草稿；其他文件与命令保留 |
 | draft-read / draft-write / draft-add | 列文件、读取内容和 hash、按 expectedHash 修改现有文件，或新增 helper/command/guidance 文件 |
 | verification-read / verification-write | 按工具读写带 hash 的 1–10 组真实参数及精确输出断言；修改后重新验证 |
 | knowledge-read / knowledge-save | 按 Adapter 名读取历史知识；从验证成功的任务保存选中端点、字段含义、作者测试用例和备注 |
@@ -265,11 +271,11 @@ browser_upload_target_v1 统一上传到主/子 frame 的实际原生文件节�
 
 ## 已安装命令修复
 
-已安装命令维护使用 repair-info/repair：先读取当前包摘要并采集新证据，再将已有只读命令复制到隔离草稿，绑定当前任务的修复范围。只允许改所选模块、schema 和 description，其他文件/命令、身份、路由、权限不变，禁止新增共享代码。静态检查、运行验证及发布三处均核对当前包摘要和服务保存的修复范围；草稿文件内的声明不能扩大范围。历史 cases 会带入并标记过期信息，每个目标至少一组，全部重新运行通过才能安装。当前支持 Extension-only 包；写命令、共享文件重构仍待后续。
+已安装命令维护使用 repair-info/repair：先读取当前包摘要并采集新证据，再将已有只读命令复制到隔离草稿，绑定当前任务的修复范围。只允许改所选模块、schema 和 description，其他文件/命令、身份、路由、权限不变，禁止新增共享代码。静态检查、运行验证及发布三处均核对当前包摘要和服务保存的修复范围；草稿文件内的声明不能扩大范围。历史 cases 会带入并标记过期信息，每个目标至少一组，全部重新运行通过才能安装。当前支持 Extension/HTTP 包；HTTP 单请求写命令流程见上节，PAGE_FETCH/UI 写契约和共享文件重构仍待后续。
 
 ## HTTP 写命令阶段
 
-独立探索现已接入 HTTP 写骨架、独立 mock fixture、精确执行审阅、写前/写后 GET、持久化单次派发与不确定结果回查，详见 [写命令与副作用验证](api_exploration_write.md)。这扩展 PUBLIC_API/COOKIE_API/AUTH_API；默认 validate 不实际写入。声明式 PAGE_FETCH 幂等写与公开字符串返回 ID 回查已接入；复杂 UI 控件/多步写操作、写工具 repair 与数字/多 ID/响应 URL 回查继续留在能力台账。下面的旧验收数字是历史记录，最新证据以交接文档顶部及末尾为准。
+独立探索现已接入 HTTP 写骨架、独立 mock fixture、精确执行审阅、写前/写后 GET、持久化单次派发与不确定结果回查，详见 [写命令与副作用验证](api_exploration_write.md)。这扩展 PUBLIC_API/COOKIE_API/AUTH_API；默认 validate 不实际写入。声明式 PAGE_FETCH 幂等写与公开字符串返回 ID 回查已接入；复杂 UI 控件/多步写操作、PAGE_FETCH/UI 写工具 repair 与多 ID/响应 URL 回查继续留在能力台账。下面的旧验收数字是历史记录，最新证据以交接文档顶部及末尾为准。
 
 ## 后续 UI 统一
 
@@ -283,6 +289,6 @@ browser_upload_target_v1 统一上传到主/子 frame 的实际原生文件节�
 
 验收脚本为 `webcli/scripts/verify-exploration-browser.mjs`；使用临时副本改变连接端口及 CLI 配置目录，生产协议和默认端口未改。只启动/停止脚本自己创建的服务和浏览器，Adapter 安装、任务和浏览器配置均隔离。Playwright 用于测试浏览器启动、示例导航及下载取消刺激/诊断；下载观察、探索/生成/验证/安装和业务调用均经过真实 CLI 与插件，不 mock 扩展传输、fetch 或验证器。隔离浏览器显式允许下载并使用临时目录；日常 Chrome 另行验收，不把该测试设置当成用户浏览器的默认策略。
 
-待做：独立 PUBLIC_API/COOKIE_API 执行、动态页面路由/多步 UI、通用 CSRF/签名、写命令、知识冲突修订与共享文件/写命令修复；Codex/Claude 各一次全新独立对话验收、各平台安装包；API 探索 UI/旧聊天入口统一，以及能力台账中的其他差距。当前由调用 Agent 通过 analyze/replan 明确切换策略，没有运行时静默回退。当前证据不代表任意 Agent 在任意站点上的生成质量已验证。
+当前待做：复杂 UI/多步写、动态 query/hash、任意站点签名/OAuth、知识冲突修订、共享文件与 PAGE_FETCH/UI 写契约修复；Codex/Claude 各一次全新独立对话验收、各平台安装包；API 探索 UI/旧聊天入口统一，以及能力台账中的其他差距。当前由调用 Agent 通过 analyze/replan 明确切换策略，没有运行时静默回退。当前证据不代表任意 Agent 在任意站点上的生成质量已验证。
 
 跨文档查询真实增量：用户 Chrome 的新页面搜索命令以 excel/spreadsheet 两组严格预览通过；安装后普通调用分别读取 24/27 张视频卡片，标题与链接逐项等于当前页面，结果随关键词变化。旧 API 三组返回 17/20/20 视频、DOM 24 张、INTERCEPT 下一页返回 38 视频，均通过。B 站相同关键词不会触发新查询，命令明确 PAGE_QUERY_TIMEOUT，不能用同词搜索重置页码；已通过切换词恢复 excel 第一页。该限制写入本地知识，不作通用多步流程完成结论。

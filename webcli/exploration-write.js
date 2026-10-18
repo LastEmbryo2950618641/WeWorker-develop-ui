@@ -95,6 +95,30 @@ function normalizeFixture(run, command, input) {
   return clone({ ...input, effect: { readback: input.effect.readback, before, after, ...(command.uiWrite ? { argumentPaths: input.effect.argumentPaths, identityPath: input.effect.identityPath } : {}), ...(resultReadback ? { resultReadback } : {}), ...(poll ? { poll } : {}) } });
 }
 
+/** Historical authored fixtures are data only: never import executions or consent. */
+export function importRepairWriteFixtures(run, knowledge) {
+  const fixtures = { format: 2, commands: {} }, importedWriteTools = [], skippedWriteTools = [];
+  for (const tool of plannedWrites(run)) {
+    const prior = knowledge?.commands?.[tool];
+    if (!prior?.writeVerification?.fixture) { skippedWriteTools.push({ tool, code: 'WRITE_FIXTURE_MISSING' }); continue; }
+    if (prior.packageDigest !== run.repairScope.digest || prior.writeVerification.kind !== 'http_single_write_v1') {
+      skippedWriteTools.push({ tool, code: 'WRITE_KNOWLEDGE_BASE_MISMATCH' }); continue;
+    }
+    try {
+      const command = writeCommand(run, tool);
+      const fixture = normalizeFixture(run, command, prior.writeVerification.fixture);
+      if (JSON.stringify({ ...fixtures.commands, [command.id]: fixture }).length > 499000) throw fail('INVALID_WRITE_CASE', 'Imported write fixtures exceed the task limit.');
+      fixtures.commands[command.id] = fixture;
+      importedWriteTools.push(tool);
+    } catch (error) { skippedWriteTools.push({ tool, code: error.code || 'INVALID_WRITE_CASE' }); }
+  }
+  if (importedWriteTools.length) {
+    const file = assertManagedFile(path.dirname(run.draft.adapterDir), `.generation/${run.siteKey}/write-verification.json`);
+    fs.writeFileSync(file, JSON.stringify(fixtures), { flag: 'wx', mode: 0o600 });
+  }
+  return { importedWriteTools, skippedWriteTools };
+}
+
 export function writeCase(service, run, args, editing) {
   const tool = textArg(args.tool, 'tool', 200), command = writeCommand(run, tool);
   const fixtures = writeFixtures(run), fixture = fixtures.commands[command.id] || null;
@@ -110,16 +134,18 @@ export function writeCase(service, run, args, editing) {
 }
 
 export function writeReview(service, run, tool) {
+  service.assertPlannedDraft(run);
   const command = writeCommand(run, textArg(tool, 'tool', 200));
   const digest = writeProofDigest(run);
   if (!run.validation?.passed || run.preWriteDigest !== digest) throw fail('VALIDATION_REQUIRED', 'Validate the current draft and mocks before reviewing a write.');
   const fixture = normalizeFixture(run, command, writeFixtures(run).commands[command.id]);
-  const reviewId = hash({ digest, tool: command.name, fixture });
+  const reviewId = hash({ digest, tool: command.name, fixture, ...(run.repairScope ? { taskId: run.taskId, repair: run.repairScope } : {}) });
   const previous = run.writeExecutions?.find(item => item.reviewId === reviewId);
   const { resultBinding: privateBinding, ...previousSummary } = previous || {};
   return { reviewId, digest, tool: command.name, fixture, ...(command.uiWrite ? { page: { tabId: run.tabId, route: command.pageRoute, ui: command.uiWrite } } : command.pageWrite ? { page: { tabId: run.tabId, route: command.pageRoute, request: command.pageWrite,
     idempotency: { header: command.pageWrite.idempotency.header, key: hash({ taskId: run.taskId, reviewId }) } } } : { http: command.http }),
     consumed: Boolean(previous), execution: previous ? previousSummary : null, requiresConfirmation: true,
+    ...(run.repairScope ? { repair: { ...run.repairScope, authorizationInherited: false } } : {}),
     ...(fixture.effect.resultReadback ? { responseIdPolicy: `Retain only the declared public string or non-negative safe integer ID from the ${command.uiWrite ? 'fresh correlated page receipt' : 'actual transport response'} in this task ledger for independent recovery GETs. Never use a mock ID, handler output, response URL or replay to recover it.` } : {}),
     ...(fixture.effect.poll ? { pollingPolicy: 'Only repeat reviewed GETs for explicitly declared pending states within the attempt/time budget. Errors, identity changes and other mismatches stop. Recovery never promotes an uncertain write or permits installation.' } : {}),
     policy: command.uiWrite ? 'One native requestSubmit after silent input assignment. Page acknowledgement is not business proof; independent GET binds every input and a changed correlation. No assumption of server idempotency or single network request. Never automatically retry an uncertain submission.' : command.pageWrite ? 'One logical page write after the before check; browser transport may resend with the same reviewed idempotency key. The declared server must deduplicate it. No application retries or rollback.'
@@ -207,6 +233,7 @@ export function verifyWrite(service, run, args) {
       if (!before.passed) throw fail('WRITE_PRECONDITION_FAILED', 'The before assertion failed; no write was sent.');
       if (controller.signal.aborted) throw fail('HTTP_ABORTED', 'Write verification cancelled.');
       if (writeProofDigest(run) !== review.digest) throw fail('STALE_DRAFT', 'Draft or fixture changed before write dispatch.');
+      service.assertPlannedDraft(run);
       const pkg = readPackageDirectory(run.draft.adapterDir), command = pkg.commands.find(item => item.name === review.tool);
       let result;
       if (execution.page) {
@@ -234,6 +261,7 @@ export function verifyWrite(service, run, args) {
         },
         beforeDispatch: () => {
           if (controller.signal.aborted || writeProofDigest(run) !== review.digest) { violation = true; throw fail('STALE_DRAFT', 'Write verification changed before dispatch.'); }
+          service.assertPlannedDraft(run);
           execution.status = 'dispatching'; execution.dispatched = true;
           service.save(run);
         },

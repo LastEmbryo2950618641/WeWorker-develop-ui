@@ -664,9 +664,17 @@ try {
   const dynamicTaskId = (await cli('exploration.start', { ...args, requestId: 'example-dynamic-paths' })).data.taskId;
   await settle(dynamicTaskId);
   await cli('browser.bind', { session: 'acceptance', tabId });
-  await browserCall('eval', { expression: "Promise.all([fetch('/api/groups/101/items/201?lang=en&term=Example'),fetch('/api/groups/101/items/201/query?lang=en',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({term:'Example'})})]).then(()=>true)" });
-  await cli('exploration.collect', { taskId: dynamicTaskId }); await settle(dynamicTaskId);
-  const dynamicEvidence = (await cli('exploration.evidence', { taskId: dynamicTaskId })).data.candidates;
+  await browserCall('eval', { expression: "Promise.all([fetch('/api/groups/101/items/201?lang=en&term=Example'),fetch('/api/groups/101/items/201/query?lang=en',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({term:'Example'})})]).then(responses=>Promise.all(responses.map(response=>response.json()))).then(()=>true)" });
+  // Network response metadata can arrive before CDP finishes capturing its body.
+  // Only reread evidence; never replay the requests to fill a capture race.
+  let dynamicEvidence;
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await cli('exploration.collect', { taskId: dynamicTaskId }); await settle(dynamicTaskId);
+    dynamicEvidence = (await cli('exploration.evidence', { taskId: dynamicTaskId })).data.candidates;
+    if (['GET', 'POST'].every(method => dynamicEvidence.some(item => item.method === method && item.url.includes('/api/groups/:id/items/:id') && item.responseEvidence?.bodyKind === 'json'))) break;
+    await delay(100);
+  }
+  assert.ok(['GET', 'POST'].every(method => dynamicEvidence.some(item => item.method === method && item.url.includes('/api/groups/:id/items/:id') && item.responseEvidence?.bodyKind === 'json')), 'Captured complete dynamic GET/POST response evidence');
   const pathParameters = [{ segmentIndex: 2, name: 'groupId', description: 'Public group identifier' }, { segmentIndex: 4, name: 'itemId', description: 'Public item identifier' }];
   const dynamicPlan = { tools: ['GET', 'POST'].map((method, i) => ({ name: `detail_query_${i}`, risk: 'read', sourceApiKind: 'list',
     sourceApiIndexes: [dynamicEvidence.findIndex(item => item.method === method && item.url.includes('/api/groups/:id/items/:id'))], pathParameters, readReason: 'Queries public item details; no mutation.' })) };

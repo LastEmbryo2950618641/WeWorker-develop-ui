@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { buildAdapterCatalog } from './adapter-catalog.js';
 import { assertManagedDirectory, assertManagedFile, readPackageDirectory, writePackageDirectory } from './adapter-package-files.js';
 import { explorationError as fail, textArg } from './exploration-commands.js';
@@ -7,7 +8,7 @@ import { generationEvidenceDir } from './generation-harness/package-draft.js';
 import { buildApiSourceEvidence } from './generation-harness/source-evidence.js';
 import { verifyRepairRetention } from './generation-harness/existing-site.js';
 import { pageSourceEvidence } from './exploration-page.js';
-import { isHttpStrategy } from './exploration-http.js';
+import { isHttpStrategy, httpToolContract } from './exploration-http.js';
 
 export function repairTarget(site, paths) {
   textArg(site, 'site', 128);
@@ -25,9 +26,12 @@ export function writeRepairDraft({ site, expectedDigest, plan, memory, candidate
   const commandIds = plan.tools.map(tool => tool.name);
   for (const tool of plan.tools) {
     const command = pkg.commands.find(item => item.id === tool.name);
+    if (!command || command.safety !== tool.risk) throw fail('REPAIR_SCOPE_CHANGED', 'Repair must preserve the selected command and its read/write safety.');
     if (command?.runtime === 'http' ? command.http.strategy !== tool.strategy : isHttpStrategy(tool.strategy)) throw fail('REPAIR_RUNTIME_MISMATCH', 'Repair must preserve the installed command runtime and strategy.');
+    if (tool.risk === 'write' && (command.runtime !== 'http' || !isDeepStrictEqual(command.http, httpToolContract(tool, candidates[tool.sourceApiIndexes[0]])))) throw fail('REPAIR_RUNTIME_MISMATCH', 'HTTP write repair must preserve the exact installed origin and authentication contract.');
   }
-  const scope = { name: site, digest: pkg.digest, commandIds };
+  const writeCommandIds = plan.tools.filter(tool => tool.risk === 'write').map(tool => tool.name);
+  const scope = { name: site, digest: pkg.digest, commandIds, ...(writeCommandIds.length ? { writeCommandIds } : {}) };
   verifyRepairRetention(pkg, pkg, scope);
   const manifest = { ...pkg.manifest, version: pkg.manifest.version.replace(/^(\d+)\.(\d+)\.(\d+).*$/, (_m, a, b, c) => `${a}.${b}.${Number(c) + 1}`) };
   const files = new Map(pkg.files);
@@ -38,9 +42,10 @@ export function writeRepairDraft({ site, expectedDigest, plan, memory, candidate
   if (fs.existsSync(adapterDir)) throw fail('DRAFT_EXISTS', 'Repair requires a new isolated directory.');
   writePackageDirectory(adapterDir, files);
   const evidence = { format: 2, name: site, retainedPackage: { name: site, digest: pkg.digest },
-    commands: Object.fromEntries(plan.tools.map(tool => [tool.name, { originalName: `${site}.${tool.name}`, safety: 'read',
+    commands: Object.fromEntries(plan.tools.map(tool => [tool.name, { originalName: `${site}.${tool.name}`, safety: tool.risk,
       generationSource: tool.sourcePageId ? pageSourceEvidence(memory.pageSources.find(item => item.id === tool.sourcePageId))
-        : candidates[tool.sourceApiIndexes[0]].sourceEvidence || buildApiSourceEvidence(candidates[tool.sourceApiIndexes[0]], { sourceKind: 'passive_list' }) }])) };
+        : tool.risk === 'write' ? { ...buildApiSourceEvidence(candidates[tool.sourceApiIndexes[0]], { sourceKind: candidates[tool.sourceApiIndexes[0]].declared ? 'authored_write_declaration' : 'observed_write' }), risk: { level: 'write', confidence: 1 } }
+          : candidates[tool.sourceApiIndexes[0]].sourceEvidence || buildApiSourceEvidence(candidates[tool.sourceApiIndexes[0]], { sourceKind: 'passive_list' }) }])) };
   const evidenceDir = generationEvidenceDir(adapterDir);
   assertManagedDirectory(evidenceDir);
   fs.mkdirSync(evidenceDir, { recursive: true, mode: 0o700 });

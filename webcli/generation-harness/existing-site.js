@@ -81,9 +81,12 @@ export function verifyRepairRetention(before, pkg, scope) {
   if (scope.name !== before.name || scope.digest !== before.digest || !Array.isArray(scope.commandIds) || !scope.commandIds.length
     || scope.commandIds.length > 50 || new Set(scope.commandIds).size !== scope.commandIds.length) reject();
   const selected = new Set(scope.commandIds), modules = new Set();
+  const writeIds = scope.writeCommandIds || [];
+  if (!Array.isArray(writeIds) || new Set(writeIds).size !== writeIds.length || writeIds.some(id => !selected.has(id))) reject();
   for (const id of selected) {
     const command = before.manifest.commands.find(item => item.id === id);
-    if (!command || !['extension', 'http'].includes(command.runtime) || command.safety !== 'read'
+    if (!command || !['extension', 'http'].includes(command.runtime)
+      || (writeIds.includes(id) ? command.runtime !== 'http' || command.safety !== 'write' : command.safety !== 'read')
       || !command.module.startsWith(command.runtime + '/commands/')
       || before.manifest.commands.some(other => other.id !== id && other.module === command.module)) reject();
     modules.add(command.module);

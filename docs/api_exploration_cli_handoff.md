@@ -1,14 +1,14 @@
 # API 自动探索 CLI 改造跟进与交接
 
-> 更新日期：2026-10-18。本阶段从 `05b4b44` 接续，补原生 UI 同节点公开新回执 ID：显式字符串/非负安全整数、旧值拒绝、最小 ID 先落盘、资源全部输入关联及复用有界 GET 轮询。精确审阅/权限、取消与重启不重放、uncertain 不放行安装保持。WebCLI 117 文件/1341 项、最终聚焦 152 项、扩展 16 项、源码 UI 11 项、双打包 HTTP 18 项通过；Chromium 1217 双打包完整 77 项通过，最终证据见末尾。整体目标未完成，Python 网站探索agent未动。
+> 更新日期：2026-10-18。本阶段从 `35cd7f8` 接续，补已安装 HTTP 单请求写命令定向 repair：保留完整鉴权/权限/共享文件和其他命令，历史 fixture 只作待复验数据，精确审阅绑定新任务，实际写派发前复核安装基线。复用数字 ID、有界 GET 轮询与持久消费；取消/重启不重放，uncertain 恢复不放行安装。WebCLI 117 文件/1355 项、聚焦 139 项、扩展 20 项、源码/双打包 HTTP 各 21 项与 Chromium 1217 双打包完整 77 项通过，最终隐私检查通过；证据见末尾。整体目标未完成，Python 网站探索agent未动。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
 
 ## 新会话从这里接手
 
 - 范围澄清：用户明确不需要 OpenCLI 桌面客户端。只对齐 CLI、浏览器扩展与相关工具能力；WeWorker API 探索 UI/内置聊天/profile 选择界面单列产品集成，不作为 CLI 对齐完成条件。多步 UI 指目标网站操作，CDP/Electron 指 CLI 控制外部目标，不是开发桌面客户端。
-- 继续当前分支 `codex/api-exploration-cli`，最新 UI 新回执 ID 阶段起点 `05b4b44`；检查点 SHA 见 Git 最新提交。先核对工作区/日志，不重建分支或重复实现 profile/HTTP Runner/宿主探索/参数化详情导航/声明式只读 workflow/单请求 HTTP 写验证/声明式 Extension 幂等写。根 AGENTS.md、ROADMAP.md、本文末尾、[开发设计](api_exploration_cli_design.md)、[HTTP 契约](http_adapter_runtime.md)、[写命令契约](api_exploration_write.md) 和 [能力台账](opencli_parity.md) 为接手入口。
+- 继续当前分支 `codex/api-exploration-cli`，最新 HTTP 写修复阶段起点 `35cd7f8`；检查点 SHA 见 Git 最新提交。先核对工作区/日志，不重建分支或重复实现 profile/HTTP Runner/宿主探索/参数化详情导航/声明式只读 workflow/单请求 HTTP 写验证/声明式 Extension 幂等写。根 AGENTS.md、ROADMAP.md、本文末尾、[开发设计](api_exploration_cli_design.md)、[HTTP 契约](http_adapter_runtime.md)、[写命令契约](api_exploration_write.md) 和 [能力台账](opencli_parity.md) 为接手入口。
 - 已完成多浏览器 profile，使用 `webcli call profile.list` 和 `--profile=<contextId|alias>`；唯一在线可自动选择，显式/default 离线不回退。旧 browser/exploration 根通过 `--profile=legacy` 只读访问，新 profile 不继承旧 tabId。桌面尚无 profile 选择 UI，多连接时需 CLI 保存默认或由调用方显式传路由。
-- PUBLIC_API/COOKIE_API/AUTH_API runner、version 2 环境鉴权/分区，以及 mode=http 的 JSON OpenAPI 发现/显式请求已实现，保持 Extension/Toolkit Runner 边界。HTTP start 不发请求；http- taskId 自动路由宿主，task-free 命令需 mode=http，文档声明不能代替真实证据。参数化导航与 2–8 步只读 workflow 已实现；HTTP 单请求写也已接通生成、mock、精确审阅、实际效果、安装和不确定状态回查，默认 validate 不写。Extension PAGE_FETCH 写现已完成固定同源请求、明确 JSON 参数映射与服务端幂等契约版本，实际派发由扩展固定函数完成；任意作者 JS 不在此版本内。公开字符串/显式非负安全整数返回 ID 回查已增加：固定 before/after 后，按实际传输响应 ID 读取同源模板资源并核对身份/内容；先存最小 ID，丢响应不猜值/不重放。三种写验证已支持显式 pending 的有界 GET 轮询；只对声明状态等待，错误/身份变化/超时立即停止，恢复匹配不放行安装。原生 UI 表单写现已支持一次 requestSubmit、同文档关联回执和独立资源 GET；可声明同节点公开新回执 ID，类型严格匹配、先落盘后读取实际 ID 资源，缺失/陈旧/非法失败不重交。输入不发 input/change，实际网络/副作用次数不保证；下一步补复杂/受控控件、整页提交安全方案/多步写流程，再推进知识修订/共享与写修复、CDP/外部 CLI/插件生态及站点覆盖。循环/分支/自定义组件、跨 frame/跨源流程、动态 query/hash 页面路由、YAML/任意 API 文档、任意签名/OAuth 尚未覆盖；独立 Agent 对话及平台分发仍在台账，不能把本阶段当作完整对齐完成。
+- PUBLIC_API/COOKIE_API/AUTH_API runner、version 2 环境鉴权/分区，以及 mode=http 的 JSON OpenAPI 发现/显式请求已实现，保持 Extension/Toolkit Runner 边界。HTTP start 不发请求；http- taskId 自动路由宿主，task-free 命令需 mode=http，文档声明不能代替真实证据。参数化导航与 2–8 步只读 workflow 已实现；HTTP 单请求写也已接通生成、mock、精确审阅、实际效果、安装和不确定状态回查，默认 validate 不写。Extension PAGE_FETCH 写现已完成固定同源请求、明确 JSON 参数映射与服务端幂等契约版本，实际派发由扩展固定函数完成；任意作者 JS 不在此版本内。公开字符串/显式非负安全整数返回 ID 回查已增加：固定 before/after 后，按实际传输响应 ID 读取同源模板资源并核对身份/内容；先存最小 ID，丢响应不猜值/不重放。三种写验证已支持显式 pending 的有界 GET 轮询；只对声明状态等待，错误/身份变化/超时立即停止，恢复匹配不放行安装。原生 UI 表单写现已支持一次 requestSubmit、同文档关联回执和独立资源 GET；可声明同节点公开新回执 ID，类型严格匹配、先落盘后读取实际 ID 资源，缺失/陈旧/非法失败不重交。输入不发 input/change，实际网络/副作用次数不保证；下一步补复杂/受控控件、整页提交安全方案/多步写流程，再推进知识修订/共享与 PAGE_FETCH/UI 写契约修复、CDP/外部 CLI/插件生态及站点覆盖。HTTP 单请求写模块 repair 已补：历史 fixture 重新规范化，仅待复验，不继承授权；新审阅绑定任务和范围，派发前复核安装基线。循环/分支/自定义组件、跨 frame/跨源流程、动态 query/hash 页面路由、YAML/任意 API 文档、任意签名/OAuth 尚未覆盖；独立 Agent 对话及平台分发仍在台账，不能把本阶段当作完整对齐完成。
 - WebCLI + 插件继续面向任意能执行 CLI 的 Agent，调用方处理自然语言，不依赖桌面或第二模型 Key。Python 网站探索agent源码、环境、测试、生命周期和数据全程不动。
 - 集成基线 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`；本轮没有 fetch/merge/push/PR。后续同步按第 4 节“上游 → 集成基线 → 功能分支”，这些 SHA 仅是已纳入快照。
 - 用户已安装工作区 extension-dist，无需重装。HTTP 与鉴权阶段仅重建资源，在隔离浏览器实测，没有重载日常 Chrome 或重启用户 Bridge；使用新 Cookie scope 能力前需核对 `http_credentials_v2` 并重载已安装扩展/本工作区 Bridge。AUTH 普通调用读 CLI 环境；预览/COOKIE/桌面调用读相应 HTTP 宿主环境，不自动转发 CLI 环境、不加载 .env。真实外部目标仍为 B 站 Excel 搜索页，重新 doctor/tabs/bind；不要照抄历史身份/PID。历史 source Bridge 快照 PID 47386、日志 `/tmp/weworker-profile-live-bridge.log`，本阶段未重新核实，重启前必须检查完整命令和归属。
@@ -22,7 +22,7 @@
 - 功能分支在集成提交后创建为 `codex/api-exploration-cli`，最终操作结果见文末。未推送或创建 PR，最终发布目标仍待明确。
 - [开发设计](api_exploration_cli_design.md) 为本次审阅入口。
 - [OpenCLI 能力对齐台账](opencli_parity.md) 为最新范围与缺口清单；用户要求尽力对齐完整能力，不能把当前 36 个 browser 命令或单站点验收视为目标完成。
-- 首版功能实现提交为 `821a7df`，最新功能为原生 UI 同节点公开新回执 ID 及复用现有类型/账本/GET 轮询（本轮起点 `05b4b44`），检查点 SHA 见 Git 日志。集成基线仍为 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`。这些是已纳入快照，后续同步前应重新 fetch，不能据此推断远端未变化。
+- 首版功能实现提交为 `821a7df`，最新功能为 HTTP 单请求写命令定向修复，复用已有类型/账本/GET 轮询（本轮起点 `35cd7f8`），检查点 SHA 见 Git 日志。集成基线仍为 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`。这些是已纳入快照，后续同步前应重新 fetch，不能据此推断远端未变化。
 > 后续每次建分支、同步上游、解决冲突、实现功能或验证后，都应更新本文和 ROADMAP.md。未验证事项不得标为完成。
 
 ## 1. 目标与范围
@@ -732,3 +732,22 @@ npm run test:exploration:browser --prefix webcli -- \
 
 
 下一轮接手：从 Git 最新本地检查点继续完整 OpenCLI 对齐目标，依次读根 AGENTS.md、ROADMAP、本文顶部和末尾，再读台账、设计及写契约。复用 profile、HTTP/PAGE_FETCH/原生 UI 单写、字符串/数字响应 ID、UI 同节点公开新回执 ID 与有界 GET 轮询，不重新开发。按最新范围表推进复杂 UI/多步写/写 repair 等下一个实际缺口，未知项目先审计。精确审阅、派发前持久消费、uncertain 不自动重放、只读恢复不放行安装和隔离公开副作用验收保持；单独授权事项仍需单独确认。允许本地检查点，不推送/PR；Python 网站探索agent和 OpenCLI 桌面客户端排除，WeWorker UI 单列。77 项双打包回归不代表 1194/跨平台/安装包/真实账户等欠账已完成，全部范围实现验证前不得标记整体完成。
+
+### 2026-10-18：已安装 HTTP 单请求写命令定向修复
+
+- 起点 `35cd7f8`（承接 `05b4b44` 的数字 ID/轮询与 UI 新回执阶段），分支 `codex/api-exploration-cli`。复用当前工作区；未 fetch/merge/push/PR，无子 Agent/新聊天。Python 网站探索agent源码/环境/生命周期/数据未动；没有修改 CI/CD、发布、数据库 schema、.env、密钥、依赖或 lockfile，没有删除仓库文件。允许本地检查点，最终 SHA 见 Git 最新提交。
+- `repair-info/repair` 现支持原 HTTP 单请求 write 命令：明确声明/观察来源、已有 canonical ID、原 risk/runtime、完整 origins/auth/cookies/version/strategy；仅选定模块/schema/description 可改。其他命令、共享文件、路由、权限保持。服务 scope 保存 writeCommandIds，作者 source.json 不能自授权。PAGE_FETCH/UI 固定写契约与共享文件修复仍不支持。
+- 知识导入只取命令 packageDigest 与当前安装包一致、kind=http_single_write_v1 且可按新来源重新规范化的 fixture；缺失/旧摘要/非法/超限按工具列出跳过原因。fixture 是待复验数据，不复制执行、真实 ID、reviewId 或授权。普通 validate 只跑 mock 与选中读 cases；新 write-review 绑定修复任务、范围和当前摘要，返回 authorizationInherited:false。真实 before/write/after 复用数字 ID、有界 pending GET、严格资源身份和持久消费；审阅、before GET 后、HTTP 派发前及安装均复核基线。取消/重启/丢响应不重放，uncertain 的独立回查不认证、不安装。修复不是失败业务写的自动重试。
+- 自动化最终 WebCLI **117 文件/1355 项**，聚焦 **7 文件/139 项**，扩展 page-write/UI/query/workflow **20 项**通过。新增场景覆盖字段漂移 mock 失败后修复、混合读写、缺失/旧摘要/非法/新来源不匹配的历史 fixture、原权限和共享/其他读写命令保护、跨任务授权拒绝、审阅/派发/before GET/安装时基线变化、数字 ID/轮询与取消/重启恢复。最终全量 `/tmp/weworker-write-repair-all-final.log`，聚焦 `/tmp/weworker-write-repair-focused-final.log`，扩展 `/tmp/weworker-write-repair-extension.log`。
+- 真实源码和双打包 CLI＋Bridge HTTP 均 **21 项**通过：系统临时根 `webcli-http-discovery-GivtMF/report.json`、`webcli-http-discovery-CSA8WW/report.json`。新增 `write-repair-acceptance.mjs` 在独立 AUTH loopback 改响应 title→label；旧实现 mock 失败且零请求，修复后新确认、一次 PUT、固定状态 pending→ready GET 和实际数字 ID 资源 GET 通过，再安装、普通调用、保留读/写命令调用和知识保存。取消、真实 Bridge 重启、丢响应始终 uncertain，不补造缺失 ID、不重写。每组最终 349 个日志/任务/安装文件占位凭据及非持久响应扫描通过；未接入浏览器/真实账户。
+- CLI/Bridge 构建、公开配置与 3 项配置测试、**10 个 JS/MJS** 语法、diff 检查通过；npm prepack/pack dry-run **620 文件**含更新模块及项目 Skill，无新增依赖，沿用 Backend esbuild NODE_PATH。既有可选列映射资源提示保持，未做实际平台安装包。日志 `/tmp/weworker-write-repair-build-cli.log`、`/tmp/weworker-write-repair-build-bridge.log`、`/tmp/weworker-write-repair-prepack.log`、`/tmp/weworker-write-repair-pack.json`。
+- 验收过程已修正的脚本问题：HTTP request 的 auth 应在 start 声明，生成摘要 Adapter 名从 manifest 取；终态 write-review 仍按原契约拒绝，历史结果使用 get/trace，不开放终态写入口。第一次完整 Chromium 在 29 项后遇动态详情响应捕获竞态：状态 200，但 bodyKind=none。脚本原先只等 fetch 响应头即 collect；现等待正文并最多 20 次重新读取结构证据，不重发请求、不放宽生产校验。失败报告 `webcli-browser-acceptance-cfEOZF/report.json` 保留；最终完整复跑结果另见下条。
+- 保留范围：PAGE_FETCH/UI 契约修复、共享文件/知识冲突修订、复杂 UI 与多步写、多 ID/header/响应 URL、任意精度/负数 ID、循环/分支、YAML/更广 API 发现、任意签名/OAuth、外部 CDP/Electron/CLI 和分发/站点映射审计。1194 兼容、其他系统/浏览器/安装包、独立 Agent、Cookie 写修复全部认证组合与真实账户验收仍欠账。OpenCLI 桌面客户端排除，WeWorker UI 单列，完整目标未完成。
+
+- 完整 Chromium 第二轮通过 65 项后在既有 pollsuccess 夹具失败：固定 700/1600 毫秒窗口在慢机器首次资源 GET 前已结束，断言未观察到多次资源 GET。改为每个端点前两次实际读取返回 pending，随后 ready，保留必须重复 GET 的断言；生产轮询规则/预算完全不变。失败报告 `webcli-browser-acceptance-umaO9Z/report.json` 保留，随后重跑完整 Chromium 和源码/双打包 HTTP。
+
+- pending 夹具修正后的最终 HTTP 复跑：源码 `webcli-http-discovery-ARxi8n/report.json`、双打包 `webcli-http-discovery-raWefC/report.json` 各 **21 项**通过，每组最终 **349** 个日志/任务/安装文件隐私扫描通过。日志 `/tmp/weworker-write-repair-http-source-final.log`、`/tmp/weworker-write-repair-http-bundled-final.log`，替代同阶段前两份 HTTP 报告作为最终脚本证据。
+
+- 最终 Chromium revision 1217 双打包完整 **77 项全部通过**，报告 `webcli-browser-acceptance-moN3yr/report.json`，日志 `/tmp/weworker-write-repair-browser-full-complete.log`。包含上述两处等待夹具修正、当前生产实现与全部原有 profile/HTTP/页面写/UI 回执 ID 回归。最终 **3238** 个 Bridge 日志/任务/安装文件凭据及非持久响应标记扫描零命中；改动内容常见密钥/私网模式扫描零命中。日常 Chrome、用户 Bridge、B 站与外部真实账户未操作；脚本仅停止自身临时服务/浏览器。1194 兼容及跨平台欠账没有因此关闭。
+
+下一轮接手：从 Git 最新本地检查点继续当前分支和完整 OpenCLI 对齐目标。按根 AGENTS.md、ROADMAP、本文顶部/末尾、台账、设计及写契约读取；复用 HTTP/PAGE_FETCH/原生 UI 单写、数字/字符串实际 ID、公开 UI 回执 ID、有界 GET 轮询和新增 HTTP 写命令定向修复。下一实际差距可从 PAGE_FETCH/UI 写契约修复、共享文件修复、复杂 UI/多步写中审计选择；未知生态/外部目标项目先核对现有实现。默认 validate 不写，精确授权、派发前持久消费、取消/重启不重放、uncertain 只读恢复不认证与隔离副作用验收保持。允许本地检查点，不推送/PR；Python 网站探索agent排除，OpenCLI 桌面客户端排除，WeWorker UI 单列。阶段完成不代表整体完成；全部约定范围实现并验证前不得标记完整目标完成。

@@ -66,7 +66,7 @@ PUBLIC_API/COOKIE_API/AUTH_API 计划必须提供 readReason、strategyNote 和�
 
 AUTH_API 计划提供 `auth:{type:"bearer",origin:"https://example.com",env:"EXAMPLE_API_TOKEN"}`，仅声明环境名。还支持 type=header（env/header）、basic（usernameEnv/passwordEnv）和 hmac（env/header/algorithm=sha256|sha512/encoding=hex|base64/canonical/separator，可选 prefix/timestamp/nonce）。HMAC canonical 使用 `{field:"method"|"origin"|"pathQuery"|"bodySha256"|"timestamp"|"nonce"}`、`{header:"x-example-kind"}` 或 `{literal:"example"}`；timestamp 需 header/unit=seconds|milliseconds，nonce 需 header。密钥为 UTF-8、每跳按实际请求重签。COOKIE_API 可叠加 auth；新 auth/scope 会要求安装权限升级。预览使用 Bridge 宿主环境，普通 AUTH_API 使用 CLI 环境；不要把真实值放入参数、草稿、知识或命令行，不读取/改写 .env。该契约不支持任意站点签名或 OAuth 自动刷新。
 
-HTTP 草稿位于 `http/commands/*.js`，导出 `module.exports = async (args, api) => ...`；`api.request({url,method,headers,json|body,response})` 返回 JSON 或 text，可引用同包 `http/internal`。参数不按 Schema 转型，默认返回原接口 JSON，作者应按目标编辑字段映射并用精确断言验证。PUBLIC 不带凭据；COOKIE 临时注入声明 Cookie/CSRF；AUTH 由宿主注入凭据/签名，不暴露给命令代码。精确 origin 授权、30 秒/50 请求/4 MiB 限额，重定向限已声明 origin 和五跳，每跳重新匹配凭据，不重试失败请求。浏览器任务验证仍检查原任务页；mode=http 验证与普通 PUBLIC/AUTH 调用无页面依赖。HTTP 只读命令可 repair，保留运行时/权限/共享文件；写命令生成仍未开放。
+HTTP 草稿位于 `http/commands/*.js`，导出 `module.exports = async (args, api) => ...`；`api.request({url,method,headers,json|body,response})` 返回 JSON 或 text，可引用同包 `http/internal`。参数不按 Schema 转型，默认返回原接口 JSON，作者应按目标编辑字段映射并用精确断言验证。PUBLIC 不带凭据；COOKIE 临时注入声明 Cookie/CSRF；AUTH 由宿主注入凭据/签名，不暴露给命令代码。精确 origin 授权、30 秒/50 请求/4 MiB 限额，重定向限已声明 origin 和五跳，每跳重新匹配凭据，不重试失败请求。浏览器任务验证仍检查原任务页；mode=http 验证与普通 PUBLIC/AUTH 调用无页面依赖。HTTP 读命令及单请求写命令可 repair，保留运行时/完整鉴权契约/权限/共享文件；写修复必须重新通过独立 mock、精确授权和实际效果验证。
 
 显式计划可填写 `strategyNote:{"reason":"选择该来源的事实理由","alternatives":"已检查的替代来源及不适用原因","limitations":"数量、稳定性或页面状态限制"}`。对 PAGE_FETCH/INTERCEPT，若提供 note，alternatives 必填；Agent 应主动填写完整说明，不因兼容旧计划允许省略就跳过判断。reason 不能只是“有请求”或“有 JSON”。API 只有非 JSON 响应时不能生成 JSON 命令；只有模糊 JSON 或已存在页面替代来源时，省略计划会返回 STRATEGY_PLAN_REQUIRED。strategy 和 note 会写进 trace 和验证后的站点知识。
 
@@ -160,7 +160,7 @@ webcli call exploration.query --args '{"taskId":"example-task","source":{"mode":
 - 普通 validate 只跑写 mock 和真实只读用例，返回 write_review_ready。write-review 返回完整参数/请求/回查/鉴权声明与综合摘要。已有用户授权覆盖该目标和副作用时，调用 `write-verify --tool=... --reviewId=... --confirmed=true`；否则先展示这份具体审阅并取得授权。安装授权不自动授权远端写测试。
 - 实际验证先 GET 核对 before，再一次写请求，再 GET 核对 after；总预算 30 秒。reviewId 在派发前持久化并消耗，同一任务重复调用/取消/重启均不重发。失败后先查看 writeExecutions；uncertain 表示可能已有副作用，使用 write-readback 仅回查，不能把它当成重新通过验证或自动重试理由。无自动回滚。
 - 全部当前读/写验证通过后才能 review/install；安装只重跑 mock。普通 HTTP write 仍需 __confirmed=true，最多一次请求、拒绝重定向。普通 call 没有探索 reviewId 去重；失败应先检查效果。新声明、修改文件或 fixture 需要重新验证与审阅，不要为了重试而机械改 fixture id。
-- 当前未支持任意作者页面 JS/复杂 UI 控件写、多步/批量写、多 ID/header/响应 URL 回查、幂等键协商或写工具 repair；单个用例只证明本次明确场景。
+- 当前未支持任意作者页面 JS/复杂 UI 控件写、多步/批量写、多 ID/header/响应 URL 回查、幂等键协商或 PAGE_FETCH/UI 写工具 repair；单个用例只证明本次明确场景。
 
 ### 写响应 ID 的只读回查
 
@@ -248,7 +248,18 @@ webcli call exploration.repair --args '{"taskId":"example-task","site":"example.
 
 返回 editableFiles 限定可改文件。只修改选中的命令模块、manifest 中该命令的 schema/description；其他命令、共享文件、权限、路由和命令身份必须保留，不增加文件。需要跨命令共享重构时报告当前边界，不绕过守卫。任务复制的是当前包，尚未覆盖已安装命令。
 
-有历史 cases 时自动带入并显示 stale 信息；阅读并核对断言，不为得到通过而删掉仍有效的字段要求。每个修复命令必须有至少一组作者用例，重新 validate；失败最多修复三轮，报告具体错误。通过后 review → 授权范围内 install → 普通 call → knowledge-save。安装基线或草稿变化会使审阅失效。没有自动后台模型，修复由当前 Agent 完成；写命令与混合 Toolkit 包暂不走此入口。
+有历史 cases 时自动带入并显示 stale 信息；阅读并核对断言，不为得到通过而删掉仍有效的字段要求。每个修复读命令必须有至少一组作者用例，重新 validate；失败最多修复三轮，报告具体错误。通过后 review → 授权范围内 install → 普通 call → knowledge-save。安装基线或草稿变化会使审阅失效。没有自动后台模型，修复由当前 Agent 完成；PAGE_FETCH/UI 写命令与混合 Toolkit 包暂不走此入口。
+
+### HTTP 单请求写命令修复
+
+使用同一 repair 入口，plan 指定原 canonical ID、risk=write、sourceApiKind=action 和单一声明/已观察来源。PUBLIC_API/COOKIE_API/AUTH_API 必须与原命令完整 http 契约一致（origins、auth、Cookie 名称/store/分区均保留）；宿主 mode=http 仍只允许 PUBLIC/AUTH，Cookie 仍固定浏览器 profile。只改选定模块及 schema/description，不能借修复切换权限、运行时或改共享文件。
+
+- 先检查旧业务调用的真实效果，不能把“修复命令”当作重试失败业务写。新任务不继承旧执行、结果 ID、reviewId 或授权。
+- 只有命令知识的 packageDigest 与当前包一致、kind=http_single_write_v1、fixture 可按新来源重新规范化时，才导入待复验 fixture；repair.knowledge 返回 importedWriteTools/skippedWriteTools 和原因。过期数据需核对；缺失/旧摘要/非法数据须作者补写公开夹具。保留仍有效的效果断言，不为通过而削弱它们。
+- 用 write-verification-read/write 审阅或更新 fixture；validate 仅执行 mock 和选中读命令的 cases，不实际写。mock 通过只是 write_review_ready。
+- write-review 展示完整修复范围与 authorizationInherited:false；审阅 ID 绑定当前修复任务。实际目标和副作用已在用户授权内时才 write-verify confirmed=true，否则先展示精确审阅取得授权。安装授权与历史测试授权不能代替本次业务写授权。
+- 安装基线在审阅、before GET 后、HTTP 派发前和安装时均重新核对；变化拒绝继续。数字/字符串实际响应 ID 和有界 pending GET 轮询复用原契约。取消/重启/丢响应不重放，uncertain 只读恢复不能认证或安装。
+- 全部通过再 review/install → 授权内普通 call → knowledge-save；普通 call 每次都是新写调用。最多三轮草稿修复，次数上限不授权重复真实写入。
 
 ## 恢复和限制
 
