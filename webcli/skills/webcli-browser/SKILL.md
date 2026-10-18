@@ -24,7 +24,7 @@ description: 通过 WebCLI 和浏览器插件直接操作已登录网页、检�
 - `tabs` 列出页面，`bind --session=work --tabId=7` 绑定明确的用户页面。`open --session=research --url=https://example.com` 创建独立页面。
 - session 在 CLI 退出、Bridge 重启后保留；浏览器重启或扩展重载后身份可能过期，`unbind` 后重新选择页面。不要复用旧 tabId 猜测目标。
 - `close` 关闭本会话创建的页面；对用户绑定页面只释放绑定。`unbind` 始终保留页面。绑定的用户页面不能用 open/back 跳转，使用新 session。
-- 同页操作与探索采集/验证互斥。`SESSION_BUSY` / `TAB_BUSY` 时等待当前命令或 exploration.get 完成。不要并发点击和采集。
+- 同页操作与探索采集/验证互斥。`SESSION_BUSY` / `TAB_BUSY` 时先读具体 message：若提示页面已属于另一 browser session，用 `browser.sessions` 查同 tabId 的绑定，复用自己有效的 session；自己过期的绑定先 unbind 再绑定。若是正在采集/验证则等待 exploration.get 结束。不要取消无关探索任务来解决 session 占用，也不要把 exploration taskId 当作 browser session 名称。
 - `dialog` 可在 click/eval 等待弹窗期间独立调用；`downloads`、`events` 与 `wait kind=download` 也可和触发操作并行，不占用页面操作锁。
 
 ## 定位与输入
