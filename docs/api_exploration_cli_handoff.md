@@ -1,6 +1,6 @@
 # API 自动探索 CLI 改造跟进与交接
 
-2026-10-18 最新专项：用户要求修正通用探索流程、保持开源/内部共架构和既有后台 API 能力。EXTENSION_API 与无业务页验证已接通，最终证据和剩余项见本文末尾及 [后台 API 探索](background_api_exploration.md)。GLM 目前仍为页面版；本专项不恢复全面对齐目标，不推送/PR，不操作用户现有 Bridge/Chrome。
+2026-10-18 最新专项已完成：按用户要求删除旧 GLM 页面版生成物，重新通过 WebCLI 探索、准备上下文、生成并安装后台版 1.0.2。用户授权重启已核实的 Bridge、重载扩展及关闭两个用量页；全部 GLM 标签关闭时 4 组真实验证、4 次普通调用与 Bridge 重启后 4 次查询通过，零新页。纯用户包卸载后重新探索及 legacy 回退防护已修复，WebCLI 1465 项通过。详细证据、失败与限制见本文末尾及 [GLM 验证](glm_quota_adapter_validation.md)。全面对齐目标继续 paused，未推送/PR，不展开下一阶段。
 
 > 更新日期：2026-10-18。本阶段已完成，按用户最新要求暂停整体目标，未全部对齐。hash/有界控制 d0e8ea9、跨源 841a412、导航竞态修复 f2f54d8；夹具隔离 a4052b3/c26226a。最终 Chromium 1217 CLI＋Bridge 完整双打包 **109 项** 9ccf6Q、**6291 文件/28 私有绑定**隐私、连续 **102 次**跨源调用、组合 **12 项**通过。frame 基础 1c4d8a9 未接入，替换后解析探针超时仍待修；完整剩余范围及最终检查点说明见末尾。
 > 下文第 2～3 节保留初始历史快照；以最新状态和追加日志为准。
@@ -15,7 +15,7 @@
 - 已完成并验证：profile、独立 HTTP Runner/环境鉴权/分区 Cookie、无浏览器 JSON OpenAPI 发现、路径导航/只读 workflow、HTTP/PAGE_FETCH/原生 UI 单写、实际字符串/整数 ID、UI 新回执 ID、有界效果 GET、三类写 repair、共享文件全包修复和有证据知识修订。默认 validate 不写，历史授权/执行/实际 ID 不继承，派发前持久消费、取消/重启/丢响应不重放、uncertain 只读恢复不能安装均保持。queryParameters、独立 hash、有界循环/分支及显式跨源主文档实现已接通，各阶段最终证据见末尾。尚余 frame 工作流、更广 UI 写、多步写/多组 fixture、更多结果 ID、API 文档/认证及生态与验收差距，逐项以 opencli_parity.md 的 W/B/A/U/E 表为准，不把阶段验收当作完整对齐。
 - WebCLI + 插件继续面向任意能执行 CLI 的 Agent，调用方处理自然语言，不依赖桌面或第二模型 Key。Python 网站探索agent源码、环境、测试、生命周期和数据全程不动。
 - 集成基线 `baf9f98`，已纳入 develop `4c3d5bd` / dev-1.1.0 `dae8932`；本轮没有 fetch/merge/push/PR。后续同步按第 4 节“上游 → 集成基线 → 功能分支”，这些 SHA 仅是已纳入快照。
-- 用户已安装工作区 extension-dist，无需重装。HTTP 与鉴权阶段仅重建资源，在隔离浏览器实测，没有重载日常 Chrome 或重启用户 Bridge；使用新 Cookie scope 能力前需核对 `http_credentials_v2` 并重载已安装扩展/本工作区 Bridge。AUTH 普通调用读 CLI 环境；预览/COOKIE/桌面调用读相应 HTTP 宿主环境，不自动转发 CLI 环境、不加载 .env。真实外部目标仍为 B 站 Excel 搜索页，重新 doctor/tabs/bind；不要照抄历史身份/PID。历史 source Bridge 快照 PID 47386、日志 `/tmp/weworker-profile-live-bridge.log`，本阶段未重新核实，重启前必须检查完整命令和归属。
+- 当前用户已重载最新工作区 extension-dist，GLM 专项已确认 background_preview_v1；已授权重启的工作区 Bridge 由本任务启动，具体 PID 必须现场核对，不沿用历史值。以下为旧阶段记录：HTTP 与鉴权阶段仅重建资源，在隔离浏览器实测，没有重载日常 Chrome 或重启用户 Bridge；使用新 Cookie scope 能力前需核对 `http_credentials_v2` 并重载已安装扩展/本工作区 Bridge。AUTH 普通调用读 CLI 环境；预览/COOKIE/桌面调用读相应 HTTP 宿主环境，不自动转发 CLI 环境、不加载 .env。真实外部目标仍为 B 站 Excel 搜索页，重新 doctor/tabs/bind；不要照抄历史身份/PID。历史 source Bridge 快照 PID 47386、日志 `/tmp/weworker-profile-live-bridge.log`，本阶段未重新核实，重启前必须检查完整命令和归属。
 - 前序响应 ID 阶段报告：源码 HTTP `webcli-http-discovery-4keDzj/report.json`（15 项）、源码页面写 `webcli-browser-acceptance-eD9wSZ/report.json`（10 项）、最终打包 CLI＋Bridge HTTP `webcli-http-discovery-SbvPth/report.json`（15 项）、最终打包页面写 `webcli-browser-acceptance-QAwCGG/report.json`（10 项）；均位于系统临时根。完整 Chromium 与版本覆盖边界见末尾，1194 旧兼容问题仍保留。报告可能被清理，缺失时按脚本复跑；日常 Chrome/Bridge/B 站和外部真实账户写请求未操作。
 
 ## 最新状态
@@ -956,3 +956,45 @@ WeWorker 自有 UI 仍为 P01 独立产品事项，不计 CLI 对齐。恢复时
 - 最后基础 Skill 已重新打包并通过 **4 项**字节一致性/读取/格式检查 NxyjJW；增强的后台专项 **8 项**通过 `webcli-browser-acceptance-agzD9n/report.json`，日志 `/tmp/weworker-background-bundled-final.log`。同时排除网站/API origin 标签；实际服务端 401 每 case 一次请求，无页面/传输回退；缺 Cookie 零 API 请求。此最终专项产品 **68 文件**中公开占位凭据值零命中。
 - 完整回归产品日志/任务/安装文件 **6354 文件**扫描本次后台 Cookie 占位值零命中（不是浏览器 profile 清理，也不替代其他隐私项验收）。全部测试只用自有隔离浏览器、Bridge、loopback 与公开数据，正常退出；用户会话未改。Git 工作区仅包含本次通用修改、相应文档与前轮已授权的 GLM 页面版报告。
 - 本阶段完成，按用户要求保持整体目标 paused；不继续展开 GLM 迁移或 OpenCLI 下一阶段。当前 GLM 页面版、匹配版本演示部署、内部同步后的逐包回归，以及完整台账 W/B/A/U/E 未完成项均明确保留；不缩减范围。仅保存本地检查点，不推送、不建 PR。
+
+## 2026-10-18 GLM 删除重建、全部业务页关闭后的最终验收
+
+本轮用户明确要求删除刚才的 GLM Adapter，重新使用 WebCLI 探索并验证流程；另明确授权重启已确认归属的工作区 Bridge、由用户重载最新扩展，以及关闭原有和任务自建的两个 GLM 用量页。上述授权只覆盖本轮具体动作，不转化为任意浏览器、进程或文件删除授权。全面对齐目标保持 paused，未恢复 W/B/A/U/E 开发。
+
+### 清理与重新探索
+
+- 正式 `adapter remove bigmodel.cn` 后，精确删除此前页面版安装快照、旧探索任务/目录、该站点旧知识与旧作者临时目录。没有删除登录态、其他 Adapter、历史报告或 Python 网站探索agent数据。后续失败与新版本记录均保留。
+- 从实际用量页重新 start/evidence，观察成功额度 GET，检查网站公开 JS、页面调用及 LimitBoard。发现命名 Cookie 直接作为 Authorization（无 Bearer），且需要组织/项目上下文。仅有 Authorization 的业务成功响应并不包含目标窗口，不能据此通过。
+- 新流程先生成并验证显式 `prepare-context`，通过现有 storage_get 缓存准确组织/项目键，仅返回状态；再增量生成 `EXTENSION_API get-quota`。后台查询只用 cookies_get、cacheOnly storage_get 和禁止页面 fallback 的 backend_fetch；一个调用一个 GET，无页面注入/读取，无失败重放。缺准备明确报错，切换账号/组织/项目须重新准备，缓存不自动跟随页面变化。
+- 5h/week 映射按实际 type/unit/number 唯一匹配。已用百分比取服务端值，剩余计算；可选重置时间缺失为 null。口径为已准备组织/项目下当前成员。曾与页面响应在内存逐字段核对一致，没有把额度或账号值写入源码、fixture、知识或公开文档。
+
+### 最终实站结果
+
+- 准备工具真实预览 1 case 通过；增量后台四组 cases（默认 all、5h、week、显式 all）通过。按准确文件、schema、执行方式、权限审阅并本地安装，未增加根 adapters 或公开 profile 范围。
+- 任务自建页由 WebCLI 关闭；原用户页的 browser.close 仅解绑，window.close 被 Chrome 拒绝，因此用浏览器工具关闭已获授权的准确原页。工具仅承担关闭动作，探索/生成/验证/安装/查询均通过 WebCLI。WebCLI tabs 确认 GLM 标签数为 0。
+- 在关闭全部 GLM 页后，用新 scoped repair 保留原后台代码、鉴权、准备命令与权限，四组真实后台 cases **4/4 通过、0 跳过**。审阅安装为 **bigmodel.cn@1.0.2**，摘要 **4d066a979d9223e1260c1a9c9381ade5d2d4c0fe66ecb48b7400328b079de525**；知识已保存，摘要匹配且未过期。
+- 零页面时，源码 5h、全局 week、打包 all、全局重复 5h **4 次普通调用通过**；重启本任务 Bridge 后，全局 5h、打包 week、源码 all、全局重复 5h 又 **4 次通过**。前后 GLM 标签为 0、新标签为 0。后四次 trace 仅有预期的 cookies_get/storage_get/backend_fetch，无 main_world_eval/browser_fetch/导航。原浏览器登录态保持，未重启 Chrome。
+- 非法 period=month 实测在凭据 helper/HTTP 前拒绝。最终静态包校验 **6 文件、4 JS、3 命令、0 错误、0 警告**。本次离线公开占位 fixture **11 项通过**，不替代真实无页验收。
+- 本机汇总目录 `/tmp/weworker-glm-rebuild-VIcRcz/`：`no-page-summary.json`、`no-page-restart-summary.json`、`ordinary-summary.json`、`restart-summary.json`、`get-quota.test.mjs`。本报告和汇总不保存真实额度。浏览器探索 session 已解绑；工作区 Bridge 保持可供普通查询使用，未来停止/重启前须核对现场归属。
+
+### 通用修复与回归
+
+- 纯用户包卸载后，旧逻辑错误选择不存在的 builtin，生成被目录诊断阻塞。现在只有实际 builtin 才恢复，否则保存 disabled 标记；无候选的 disabled 不视为目录错误，但 host 调用/目录继续将其视为 managed，阻止旧 legacy 命令/别名复活。新增卸载→重新 generate 与重新安装测试。
+- 生成 Adapter Skill 去掉笼统自动开页表述，要求按命令 execution/guidance 判断；探索 Skill 补齐组织项目口径、先准备后增量后台、task-local 页面 helper、普通查询 cacheOnly 与上下文切换重新准备。开源/内部共享同一通用架构，尚未对内部仓库执行同步。
+- 聚焦 **6 文件/61 项**通过；最终 WebCLI **130 文件/1465 项**通过，日志为该临时目录 `webcli-tests.log`。源码/打包 CLI 的隔离 loopback 导出、安装、卸载、零请求拒绝旧命令、重新安装各 **4 项**通过，系统临时根 `webcli-export-acceptance-D5HY1J/report.json`、`webcli-export-acceptance-MPGNYN/report.json`。
+- 最终 CLI/Bridge 构建成功；公开 profile 校验及 33 个 host-managed 包生成通过。存在既有 wecli-columns、wecli-migrated-commands.json、wecli-column-aliases.json 缺失提示，不冒称无 warning。随包 Skill 真实读取/字节一致/六格式/非法输入 **4 项**通过 `webcli-skills-acceptance-v0athl/report.json`；npm pack dry-run **636 文件**，本次所需资源包含。比较 **47 个**源码/扩展构建/随包 Skill 对应文件字节一致；**7 个**改动脚本语法和 git diff --check 通过。构建与摘要见该临时目录 `build-*.log`、`package-summary.json`。
+- 最终包与 13 个改动仓库文件共 **19 文件**凭据/JWT/私网字面量模式检查零命中；**31 个**本轮任务/草稿/该站知识文件结构检查未见真实额度数值、Authorization 或组织项目值。作者 cases 不把真实百分比/重置值写成 equals。仅为明确范围检查，不代表整机审计；浏览器实际 Cookie/缓存不在扫描或清理范围。摘要 `privacy-summary.json`、`artifact-privacy-summary.json`。
+- 本轮没有修改扩展执行代码，因此不重复此前 Chromium 114 项全量；沿用其边界证据，本轮用真实 GLM 与必要核心/打包回归验证变更。Python 网站探索agent、CI/CD、发布、schema、.env、依赖和密钥均未改，没有 Git 回滚。
+
+### 保留失败与纠正
+
+- 卸载修复初稿直接删 selection，导致 legacy suppression 回归；改为 disabled 后仍有别名路径失败，补 host 识别 disabled 后 1465 项全部通过。两个中间失败不能记为已通过。
+- 初次准备草稿使用安装态 runtime，页面 task-local 预览返回 RUNTIME_EXCEPTION；改用现有 chrome.runtime helper 消息通道。用户重载扩展后原任务 SESSION_EXPIRED，重新 start，不绕过身份守卫。
+- 初次 service stop 读取陈旧 PID，随后 start 端口冲突；重新确认原工作区进程路径后，按授权停止并重启。之后两次 restart 只操作本任务启动的 Bridge，未终止未知进程。
+- cases 时间 regex 缺末尾锚定被拒绝，改完整锚定；scoped repair 的 snake_case 名称被拒绝，改既有 kebab-case。收尾 draft-read 错传 path、adapter validate 错把名称当目录，分别用 file 和实际包目录纠正后成功。隐私检查首次按错误知识目录定位而未运行，按实际 exploration/knowledge 路径后完成 31 文件检查。输入/路径错误不算产品通过或缺陷修复。
+
+### 暂停与剩余事项
+
+本次 GLM 删除重建闭环完成，可演示本机自然语言调用及使用匹配开发版从零生成。当前全局 npm 1.0.4 普通 call 已验，但不支持新探索/profile 入口；活动前仍需准备匹配的本分支 CLI/Bridge/扩展/Skill 分发方式。尚未验证新机器、浏览器冷启动、其他账号/套餐、真实登录过期恢复、全新独立 Agent 会话及长期稳定性。未主动破坏用户登录态来验失效；离线/loopback 401 不能冒充真实账号恢复。
+
+内部仓库同步及其 Adapter 元数据/后台普通调用逐包验收仍待做，不能由共架构单测代替。全面对齐剩余范围仍为前述完整清单：W01–04、B01 frame、B02–04、A01–02、U01/U02 余项、U03 完整行为映射、U04/U05 实现、U06 行为核对/统一诊断导出、E01–04；不缩减、不静默关闭。整体目标继续 **paused，未完成**。仅保存本地检查点，以最新 Git 日志为准；未推送、未建 PR、未创建新对话或子 Agent。

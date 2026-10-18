@@ -60,6 +60,24 @@ try {
   assert.deepEqual(requests, ['/items?tag=builtin', '/items?tag=edited', '/items?tag=builtin']);
   assert.equal(await fs.readFile(path.join(builtin, 'http/commands/read.js'), 'utf8'), module('builtin'));
   pass('existing/managed/misnamed destinations and invalid format fail before effects; original and edited bytes remain intact');
+  const userOnly = path.join(root, 'example-rebuild');
+  await fs.mkdir(path.join(userOnly, 'http/commands'), { recursive: true });
+  await fs.writeFile(path.join(userOnly, 'manifest.json'), JSON.stringify({ ...manifest, name: 'example-rebuild' }));
+  await fs.writeFile(path.join(userOnly, 'http/commands/read.js'), module('rebuilt'));
+  const installUser = () => exec(process.execPath, [entry, 'adapter', 'install', '--directory', userOnly], { env });
+  await installUser();
+  assert.equal((await run(['call', 'example-rebuild.read'])).tag, 'rebuilt');
+  await exec(process.execPath, [entry, 'adapter', 'remove', 'example-rebuild'], { env });
+  const removed = await run(['adapter', 'status', 'example-rebuild']);
+  assert.equal(removed.ok, true);
+  assert.equal(removed.items[0].active, null);
+  assert.deepEqual(removed.diagnostics, []);
+  const beforeRemovedCall = requests.length;
+  await assert.rejects(run(['call', 'example-rebuild.read']));
+  assert.equal(requests.length, beforeRemovedCall);
+  await installUser();
+  assert.equal((await run(['call', 'example-rebuild.read'])).tag, 'rebuilt');
+  pass('user-only removal leaves no invalid builtin selection; removed calls fail without HTTP and a fresh install runs normally');
   await fs.writeFile(path.join(root, 'report.json'), JSON.stringify({ passed: true, bundled, checks, requests }, null, 2));
 } catch (error) { await fs.writeFile(path.join(root, 'failure.json'), JSON.stringify({ message: error.message, stack: error.stack })); throw error; }
 finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }

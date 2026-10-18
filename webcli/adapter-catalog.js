@@ -172,7 +172,7 @@ export function buildAdapterCatalog(options = {}) {
   }
   const selected = [];
   for (const [name, selection] of Object.entries(state.selections)) {
-    if (!byName.has(name)) diagnostics.push({ name, source: selection?.source, code: 'ADAPTER_NOT_SELECTED' });
+    if (!byName.has(name) && selection?.source !== 'disabled') diagnostics.push({ name, source: selection?.source, code: 'ADAPTER_NOT_SELECTED' });
   }
   for (const [name, choices] of byName) {
     if (blockedNames.has(name)) continue;

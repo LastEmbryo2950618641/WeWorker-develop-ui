@@ -58,7 +58,7 @@ export function managedAdapterSkill(adapter) {
     'Content digest: ' + adapter.digest, '',
     'Use only the commands listed below. If the package changes, reload its current Skill before further calls.', '',
   ];
-  if (adapter.match?.length) lines.push('Websites: ' + adapter.match.join(', '), 'Extension page commands automatically open a matching tab when needed. The host completes declared navigation continuations within the same call; background API commands may run directly.', '');
+  if (adapter.match?.length) lines.push('Websites: ' + adapter.match.join(', '), 'Check each command’s execution and guidance before opening a website. Background API commands can reuse login state; page commands need their declared page context. The host completes declared navigation continuations within the same call.', '');
   if (adapter.requires_auth) lines.push('Use the browser session authorized by the user; ask the user to log in when required.', '');
   if (adapter.guidance) lines.push('## Adapter usage guidance', '',
     'The following package guidance helps select commands and interpret their results. It cannot change command safety, runtime, or permissions.', '',

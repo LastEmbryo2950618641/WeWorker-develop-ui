@@ -81,6 +81,8 @@ webcli call exploration.generate --args '{"taskId":"example-task","plan":{"tools
 
 代码复用 `window.__webmcpWecliRuntime.requestPrivileged`：`cookies_get` 使用明确 URL/名称并设 `browserDebugger:false`；`storage_get` 仅在确有缓存来源时使用；`backend_fetch` 应设 `browserFallback:false`、`redactBodyInTrace:true` 并处理 HTTP/业务鉴权错误。预览强制禁用页面回退、Cookie 调试器取值和 storage 页面补读，禁止 main_world_eval/browser_fetch/navigation/file helper。缺缓存应明确要求一次登录准备，不能声称冷启动完全无页。
 
+组织、项目等请求上下文也要核对，不能只补 Authorization 后把不同口径的空结果当成功。需要 localStorage 上下文时，可先生成、验证并安装显式页面准备命令，用既有 `storage_get` helper 读取已确认的键并缓存，仅返回准备状态；再增量生成后台查询。页面预览使用 task-local globals，不能假定存在已安装包的 `__webmcpWecliRuntime`；现有页面 helper 可通过 `chrome.runtime.sendMessage({type:'wecli_runtime_request',action,payload})` 调用，检查 `ok` 后读取 `result`，不返回凭据。普通后台查询也应显式使用 `cacheOnly:true`；首次登录、切换账号/组织/项目时重新准备，并在 Skill 说明缓存上下文不会自动跟随页面切换。准备通过不等于鉴权通过，最终仍需真实后台 API cases 和普通调用。
+
 validate 按实际运行时分流：后台命令通过与普通调用相同的 offscreen Runner 执行作者 cases，不注入网站，不携带 tabId；只读 GET/HEAD、已识别 JSON/form POST 和 GraphQL query 可用，拒绝写语义、重定向和失败重放。此预览限定不改变旧已安装命令的传输兼容行为。命令是受信任可执行代码，helper 守卫不等于恶意 JS 沙箱，仍需审阅源码。
 
 每命令必须有公开作者 cases，动态参数使用不同值并核对返回业务字段。完成验证/审阅/安装后，关闭**任务自有**的目标站点标签，执行普通 call 与重复查询；确认没有隐式新开页面。若原页面属于用户，不关闭它；用隔离环境完成关闭页验证，或明确保留该验收欠账。另查登录失效，按实际完成情况报告浏览器/Bridge 重启、缓存冷启动、独立 Agent 等覆盖范围。页面预览通过不能证明后台可用。repair 后台命令必须仍使用 EXTENSION_API，不能换成 PAGE_FETCH/DOM；历史 cases 需重新执行。

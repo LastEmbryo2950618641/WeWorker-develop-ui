@@ -64,8 +64,8 @@ describe('effective Adapter CLI views and generated Skills', () => {
     expect(output).toContain('Input JSON Schema:');
     expect(output).toContain('webcli call demo.list --key=value');
     expect(output).not.toContain("--args '<JSON object>'");
-    expect(output).toContain('automatically open a matching tab');
-    expect(output).not.toContain('Page commands require a matching website tab');
+    expect(output).toContain('Check each command’s execution and guidance before opening a website');
+    expect(output).toContain('Background API commands can reuse login state');
     expect(output).toContain('"required": [');
     expect(output).not.toContain(root);
     expect(success(['demo', 'list', 'help'])).toContain('--count=<integer>');
