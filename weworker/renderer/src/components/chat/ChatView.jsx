@@ -6,7 +6,7 @@ import MessageList from './MessageList.jsx'
 import ChatBottomDock from './ChatBottomDock.jsx'
 import WelcomeScreen from '../welcome/WelcomeScreen.jsx'
 import HealthCheckPanel from './HealthCheckPanel.jsx'
-import { setContextCompactionLifecycleHandler, streamChat, submitUserChoice } from '../../api/backend.js'
+import { requestChatWarmup, setContextCompactionLifecycleHandler, streamChat, submitUserChoice } from '../../api/backend.js'
 import { backendFetch } from '../../api/http.js'
 import { displayToolName } from '../../utils/tool-name.js'
 import { formatDuration } from '../../utils/format-duration.js'
@@ -79,6 +79,12 @@ export default function ChatView({ workId }) {
     setInputText(nextText)
     setAttachments([])
   }, [fillSeq, fillText, streaming])
+
+  // Pre-start on opening a work; later input changes can retry after expiry.
+  useEffect(() => {
+    if (!workId || streaming || String(inputText || '').trim().startsWith('!')) return
+    void requestChatWarmup(workId)
+  }, [inputText, workId, streaming])
 
   const handleZcfRoleChange = async (roleId) => {
     try {

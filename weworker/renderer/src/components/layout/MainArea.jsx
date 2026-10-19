@@ -1,4 +1,5 @@
 import React from 'react'
+import { requestChatWarmup } from '../../api/backend.js'
 import { useWorksStore } from '../../store/works.js'
 import { useScheduledTasksStore } from '../../store/scheduled-tasks.js'
 import ChatView from '../chat/ChatView.jsx'
@@ -49,6 +50,12 @@ export default function MainArea({ onOpenSettings }) {
       setInputText(fillText)
     }
   }, [activeTaskId, activeWorkId, fillSeq, fillText])
+
+  React.useEffect(() => {
+    if (activeWorkId || activeTaskId || toolPackageOpen || explorationOpen || websiteOpen) return
+    if (String(inputText || '').trim().startsWith('!')) return
+    void requestChatWarmup()
+  }, [activeWorkId, activeTaskId, toolPackageOpen, explorationOpen, websiteOpen, inputText, zcfDefaultRole, zcfDefaultMode])
 
   const handleSendFromWelcome = async (text, files = []) => {
     setInputText('')

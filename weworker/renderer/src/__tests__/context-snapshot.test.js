@@ -5,6 +5,12 @@ import { formatContextLimitInput, parseContextLimitInput } from '../utils/contex
 import { useWorksStore } from '../store/works.js'
 
 describe('context snapshot display helpers', () => {
+  it('calibrates occupancy from the last model call rather than summed tool-loop input', () => {
+    const workId = 'context-usage-fixture'
+    useWorksStore.getState().setContextSnapshot(workId, createEmptyContextSnapshot(1000))
+    useWorksStore.getState().setContextUsage(workId, { total_input_tokens: 900, context_input_tokens: 300 })
+    assert.equal(useWorksStore.getState().contextSnapshots[workId].actual_input_tokens, 300)
+  })
   it('provides a resident empty snapshot before a task has context usage', () => {
     const snapshot = normalizeContextSnapshot(createEmptyContextSnapshot(68000))
 

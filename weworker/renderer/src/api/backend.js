@@ -51,6 +51,25 @@ export async function compactConversation(workId) {
   }
 }
 
+const warmupRequests = new Map()
+
+export async function requestChatWarmup(workId) {
+  const key = workId || 'welcome'
+  if (Date.now() - (warmupRequests.get(key) || 0) < 30_000) return
+  warmupRequests.set(key, Date.now())
+  try {
+    const response = await backendFetch(workId ? `/works/${workId}/warmup` : '/chat/warmup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+    if (!response.ok) warmupRequests.delete(key)
+  } catch {
+    warmupRequests.delete(key)
+    // Warm-up is opportunistic; a normal send still works without it.
+  }
+}
+
 export async function streamChat(workId, message, onEvent, signal, attachments = [], maxChatAttachments = 60, modelMessage = message, retryCompaction = false) {
   console.log(`[frontend] streamChat called, workId=${workId}, signal.aborted=${signal?.aborted}`)
   let res
