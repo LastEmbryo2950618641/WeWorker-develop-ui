@@ -69,8 +69,14 @@ export function assertAdapterNavigationUrl(manifest, value, resume = true) {
   try { url = new URL(value); } catch { throw new Error('Invalid Adapter navigation URL.'); }
   const hosts = [...(manifest.match || []), ...(resume ? [] : (manifest.runtime_allowed_hosts || []))];
   const allowed = hosts.some(host => url.hostname === host || (host.startsWith('*.') && url.hostname.endsWith(host.slice(1))));
-  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || !allowed) {
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) {
     throw new Error('Adapter navigation host is not allowed.');
+  }
+  if (!allowed) {
+    // Report only the origin: redirect queries, paths and fragments may contain
+    // credentials or user data. This is diagnostic context, not permission to run.
+    throw new Error(`Adapter navigation host is not allowed. 当前或目标页面域名：${url.origin}。`
+      + '该域名未获当前 Adapter 授权，已停止执行。若浏览器已跳转至登录或安全验证页，请在连接扩展的同一浏览器中人工完成处理，返回原业务页面后重试；若仍被拒绝，请提供此错误及 trace ID。');
   }
   return url.href;
 }
