@@ -1422,6 +1422,10 @@ export async function* streamChat(
   let turnMessages: AsyncIterable<SDKMessage>
   let closeTurn: () => void
   if (canReuseSession) {
+    const fingerprintEnv: NodeJS.ProcessEnv = { ...envWithWebcli }
+    // query() writes this into process.env on its first call and supplies the
+    // same installed version to every child. It is not a configuration change.
+    delete fingerprintEnv.CLAUDE_AGENT_SDK_VERSION
     const fingerprint = createHash('sha256').update(JSON.stringify({
       model: settings.model,
       baseUrl: settings.base_url,
@@ -1431,7 +1435,7 @@ export async function* streamChat(
       systemPrompt,
       memoryEnabled,
       filesystemSettings,
-      env: envWithWebcli,
+      env: fingerprintEnv,
       skillFiles: fingerprintSkillFiles(skillRoots),
       skillIndex,
       adapters: getDesktopAdapterCatalog().effective.map(entry => [entry.name, entry.digest]),

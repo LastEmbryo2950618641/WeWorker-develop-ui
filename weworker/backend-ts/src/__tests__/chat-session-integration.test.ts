@@ -276,6 +276,20 @@ describe('desktop chat session reuse', () => {
 })
 
 describe('chat session pre-start', () => {
+  it('reuses the first warm CLI after the SDK adds its version to the parent environment', async () => {
+    vi.stubEnv('CLAUDE_AGENT_SDK_VERSION', undefined)
+    const sessions = installFakeCli()
+    const queryImplementation = mocks.query.getMockImplementation()!
+    mocks.query.mockImplementation((request: Request) => {
+      vi.stubEnv('CLAUDE_AGENT_SDK_VERSION', 'fixture-sdk-version')
+      return queryImplementation(request)
+    })
+    await collect([], { warmupOnly: true, workId: undefined })
+    await collect([message('u1', 'first question')])
+    expect(sessions).toHaveLength(1)
+    expect(sessions[0].received).toEqual(['first question'])
+  })
+
   it('reuses warmup with dynamic memory without duplicating it in the system prompt', async () => {
     const sessions = installFakeCli()
     await collect([], { warmupOnly: true, memoryEnabled: true })
