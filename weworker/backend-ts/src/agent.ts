@@ -1,6 +1,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk'
 import type {
   SDKMessage,
+  SDKUserMessage,
   McpServerConfig,
   SettingSource,
   HookCallback,
@@ -11,6 +12,7 @@ import type {
 import path from 'node:path'
 import os from 'node:os'
 import fs from 'node:fs'
+import { createHash } from 'node:crypto'
 import { execSync } from 'node:child_process'
 import type { Settings } from './config.js'
 import { getConfigDirectory, getOpenBrowserAllowedOrigins, getSiteEnabled, getUserDirectory, getUserDirectoryBlacklist } from './config.js'
@@ -19,7 +21,22 @@ import type { ChannelPermissionMode } from './channels/channel-permissions.js'
 import type { Message } from './works-store.js'
 import { buildMcpServer as _buildMcpServer, getMcpToolDefinitionSummary } from './tools.js'
 import { parseAllAdapters } from './adapter-parser.js'
-import { refreshDesktopAdapterSkills } from '../../../webcli/adapter-desktop.js'
+import { refreshDesktopAdapterSkillsIfStale, getDesktopAdapterCatalog } from './adapter-catalog-cache.js'
+import {
+  ChatSession,
+  PromptQueue,
+  disposeChatSession,
+  findReusableChatSession,
+  hasChatSession,
+  registerChatSession,
+  registerSpareChatSession,
+  hasSpareChatSession,
+  isChatSessionBusy,
+  fingerprintSkillFiles,
+  canPoolChatSession,
+  type ChatHistoryEntry,
+  type ChatTurnBindings,
+} from './chat-session.js'
 import { buildAgentFilesystemSettings, createUnifiedToolGuard } from './user-directory-access.js'
 import { createLogger } from './logger.js'
 import { resolveWebcliDir } from './webcli-path.js'
@@ -170,6 +187,21 @@ export function buildDisallowedTools(
     'CronCreate',
     'CronDelete',
     'AskUserQuestion',
+    // Hide definitions as well as denying execution in createWeWorkerToolPolicy.
+    // These SDK tools are not supported by WeWorker, even in full mode.
+    'EnterWorktree',
+    'ExitWorktree',
+    'ListAgents',
+    'ReportFindings',
+    'ScheduleWakeup',
+    'SendMessage',
+    'TaskCreate',
+    'TaskGet',
+    'TaskList',
+    'TaskStop',
+    'TaskUpdate',
+    'WebSearch',
+    'Workflow',
     alternateCommandTool,
   ]
   const restrictedBuiltInTools = [
@@ -181,7 +213,6 @@ export function buildDisallowedTools(
     'Write',
     'NotebookEdit',
     'TodoWrite',
-    'WebSearch',
   ]
   if (channelPermissionMode === 'qa_only' || restrictBuiltInTools) {
     return [...baseDisallowed, nativeCommandTool, ...restrictedBuiltInTools]
@@ -229,6 +260,8 @@ export interface UsageEvent {
   cache_read_input_tokens: number
   cache_creation_input_tokens: number
   total_input_tokens: number
+  /** Last model request input; aggregate usage can include repeated tool-loop input. */
+  context_input_tokens?: number
   cache_hit_rate: number
   total_cost_usd?: number
   duration_ms?: number
@@ -324,15 +357,15 @@ ${blacklistEntries.map((entry) => `- ${formatBlacklistEntry(entry)}`).join('\n')
     : ''
 
   const adapterExecutionEnabled = channelPermissionMode === 'full'
-  const webcliInvokeDesc = `Claude Code 内置 ${nativeCommandTool} 执行 \`webcli call <完整工具名> --参数名=参数值\``
-  const openBrowserDesc = `使用 Claude Code 内置 ${nativeCommandTool} 执行 \`webcli call open_browser --url=<url>\``
-  const webcliStep2 = `2. 使用 Claude Code 内置 ${nativeCommandTool} 执行 \`webcli call <完整工具名> --参数名=参数值\``
-  const openBrowserRule = `用 Claude Code 内置 ${nativeCommandTool} 执行 \`webcli call open_browser --url=...\``
+  const webcliInvokeDesc = `优先调用内置 \`webcli_call\` 工具（tool_name=完整工具名，args=参数对象）；如果该工具不可用，再由 Claude Code 内置 ${nativeCommandTool} 执行 \`webcli call <完整工具名> --参数名=参数值\``
+  const openBrowserDesc = `调用内置 \`webcli_call\` 工具（tool_name=open_browser，args={url:<url>}）；如果不可用，再使用 Claude Code 内置 ${nativeCommandTool} 执行 \`webcli call open_browser --url=<url>\``
+  const webcliStep2 = `2. 优先调用内置 \`webcli_call\` 工具（tool_name=完整工具名，args=参数对象）；不可用时使用 Claude Code 内置 ${nativeCommandTool} 执行 \`webcli call <完整工具名> --参数名=参数值\``
+  const openBrowserRule = `调用内置 \`webcli_call\` 工具（tool_name=open_browser，args={url:...}）；不可用时再用 Claude Code 内置 ${nativeCommandTool} 执行 \`webcli call open_browser --url=...\``
   const bashCapabilityNotice = channelPermissionMode === 'full'
     ? `
 ## Skill、Adapter 与 ${nativeCommandTool}
 
-优先按已激活的标准 Skill 指令执行。执行 Extension Adapter 或 Toolkit Adapter 时，统一使用 Claude Code 内置 ${nativeCommandTool} 运行 \`webcli call\`，不得使用 \`weworker_powershell\`。
+优先按已激活的标准 Skill 指令执行。执行 Extension Adapter 或 Toolkit Adapter 时，优先使用内置 \`webcli_call\`；不可用时才使用 Claude Code 内置 ${nativeCommandTool} 运行 \`webcli call\`，不得使用 \`weworker_powershell\`。
 Claude Code 内置 ${nativeCommandTool} 已开放，也可执行构建、测试、git、npm 和其他本地命令。
 内置 ${nativeCommandTool} 不受 WeWorker 用户目录白名单、黑名单、绝对路径或命令类型限制。
 WebCLI 会按 Adapter 类型分别选择 Chrome 扩展 Bridge 或内嵌 Toolkit Runtime；不要直接调用 Adapter 脚本路径。
@@ -413,11 +446,11 @@ ${authSites.join('\n')}
       : 'WeWorker Shell 命令（含 cat、type、python 等）与内置文件工具同样受用户目录边界约束，越界请求会被系统拦截。',
     blacklist_notice: blacklistNotice,
     local_command_execution_rule: channelPermissionMode === 'full'
-      ? `执行 Extension Adapter 或 Toolkit Adapter 时必须使用 Claude Code 内置 ${nativeCommandTool} 运行 \`webcli call\`，不得使用 \`weworker_powershell\`；其他本地命令、构建、测试、git 或 npm 也可以使用内置 ${nativeCommandTool}。`
+      ? `执行 Extension Adapter 或 Toolkit Adapter 时必须优先调用内置 \`webcli_call\`；不可用时才使用 Claude Code 内置 ${nativeCommandTool} 运行 \`webcli call\`，不得使用 \`weworker_powershell\`；其他本地命令、构建、测试、git 或 npm 也可以使用内置 ${nativeCommandTool}。`
       : '当需要执行本地命令、Shell 命令、构建、测试、git、npm 或查看命令输出时，必须调用 `weworker_powershell` 工具，不要调用 Claude Code 内置 Bash 或 PowerShell。',
     default_shell: defaultShell,
     adapter_shell_rule: adapterExecutionEnabled
-      ? '网站操作仍按 webcli 规则执行；不要为了调用网站工具而改用 `weworker_powershell`。'
+      ? '网站操作优先调用内置 `webcli_call`，兼容场景使用 webcli call；不要为了调用网站工具而改用 `weworker_powershell`。'
       : '当前权限模式不能执行 Adapter；严禁用 `weworker_powershell` 调用 webcli。',
     windows_encryption_rules: windowsEncryptionRules,
     assistant_status_prefix: ASSISTANT_STATUS_PREFIX,
@@ -426,6 +459,10 @@ ${authSites.join('\n')}
   return composeSystemPromptWithZcf(`${base}\n\n${opts?.memoryProtocol ?? ''}`.trim(), opts?.zcfRole, opts?.zcfMode, opts?.zcfCustomRoles ?? [])
 }
 function findClaudeExecutable(): string | undefined {
+  const override = process.env.WEWORKER_CLAUDE_CODE_PATH
+  if (override && fs.existsSync(override)) return override
+  // Windows uses the SDK bundled CLI; Unix shell discovery cannot work here.
+  if (process.platform === 'win32') return undefined
   try {
     const result = execSync('which claude', {
       shell: process.env.SHELL || '/bin/zsh',
@@ -718,6 +755,8 @@ function messagePromptText(message: Message): string {
 }
 
 // Convert stored messages to a single prompt string for the Agent SDK
+export const HISTORY_REPLAY_HEADER = '[以下是之前的对话历史，仅供参考]'
+
 export function buildPromptString(messages: Message[]): string {
   if (messages.length === 0) return ''
 
@@ -735,7 +774,7 @@ export function buildPromptString(messages: Message[]): string {
   }).filter(Boolean).join('\n\n')
 
   if (!historyText) return lastText
-  return `[浠ヤ笅鏄箣鍓嶇殑瀵硅瘽鍘嗗彶锛屼粎渚涘弬鑰僝\n${historyText}\n\n[褰撳墠鐢ㄦ埛娑堟伅]\n${lastText}`
+  return `${HISTORY_REPLAY_HEADER}\n${historyText}\n\n[当前用户消息]\n${lastText}`
 }
 
 // Strip any base64 image markdown that Claude may emit in its text response
@@ -962,20 +1001,46 @@ export async function* streamChat(
     previousTaskFailed?: boolean;
     forceCompaction?: boolean;
     compactionOnly?: boolean;
+    /** Keep the desktop chat CLI alive so later turns avoid a cold start. */
+    reuseSession?: boolean;
+    /** Canonical stored messages, before per-send UI prompt expansion. */
+    sessionHistory?: Message[];
+    /** Start the reusable CLI without sending a user message yet. */
+    warmupOnly?: boolean;
   } = {},
 ): AsyncGenerator<SSEEvent> {
   const streamStartTime = Date.now()
   const elapsedSinceStreamStart = () => ((Date.now() - streamStartTime) / 1000).toFixed(2)
+  const preparationStartTime = streamStartTime
   // Claude Code discovers user Skills when each query starts. If a website was
   // just scaffolded, wait for its hot-install to finish before starting query.
   await waitForAdapterRuntimeReload()
   log.info(`stage adapter_reload_ready elapsed=${elapsedSinceStreamStart()}s`)
   const enabledAdapterIds = opts.enabledAdapterIds
   const channelPermissionMode = opts.channelPermissionMode ?? 'full'
+  const sessionMode = opts.reuseSession === true
+    && (!!opts.workId || opts.warmupOnly === true)
+    && !(opts.workId && isChatSessionBusy(opts.workId))
+    && opts.streaming !== false
+    && channelPermissionMode === 'full'
+    && !opts.channelAskUserHandler
+    && !opts.systemPromptOverride
+    && !opts.mcpServerOverride
+    && !opts.restrictBuiltInTools
+    && !opts.forceCompaction
+    && !opts.compactionOnly
+  const turnBindings: ChatTurnBindings = {
+    workIdRef: { current: opts.workId ?? null },
+    signalRef: { current: abortController?.signal ?? null },
+    onAskUser: opts.onAskUser ?? null,
+    memory: { userPromptInjections: 0, postToolBatchInjections: 0 },
+  }
+  let activeBindings: ChatTurnBindings = turnBindings
 
   const mcpServer = _buildMcpServer({
     channelPermissionMode,
     workId: opts.workId ?? null,
+    abortSignal: abortController?.signal,
     askUserSSECallback: opts.onAskUser ?? null,
     channelAskUserHandler: opts.channelAskUserHandler ?? null,
   })
@@ -1058,12 +1123,12 @@ export async function* streamChat(
     path.join(queryEnv.CLAUDE_CONFIG_DIR!, 'skills'),
     path.join(getUserDirectory(), '.claude', 'skills'),
   ]
-  if (skillRoots.length) refreshDesktopAdapterSkills(skillRoots[0])
+  if (skillRoots.length) refreshDesktopAdapterSkillsIfStale(skillRoots[0])
   log.info(`stage skills_refreshed elapsed=${elapsedSinceStreamStart()}s`)
-  const loadedSkills = buildLoadedSkillContext(messages, skillRoots)
+  const loadedSkills = opts.warmupOnly ? '' : buildLoadedSkillContext(messages, skillRoots)
   const skillContextCollector = createSkillContextCollector(skillRoots)
   log.info('skill_context_replay', { present: !!loadedSkills, chars: loadedSkills.length, elapsed: `${elapsedSinceStreamStart()}s` })
-  const storedCompactedConversation = takeStoredCompactedConversation(opts.workId, messages.length)
+  const storedCompactedConversation = opts.warmupOnly ? undefined : takeStoredCompactedConversation(opts.workId, messages.length)
   const latestMessage = messages[messages.length - 1]
   const promptRaw = storedCompactedConversation
     ? storedCompactedConversation.includesCurrent || !latestMessage
@@ -1077,7 +1142,7 @@ export async function* streamChat(
   const identityPrompt = channelPermissionMode === 'qa_only'
     ? '你是 WeWorker 问答助手。'
     : '你是 WeWorker，一个通过 Adapter 操作网页的 AI 助手。'
-  const longTermMemory = memoryEnabled
+  const longTermMemory = memoryEnabled && !opts.warmupOnly
     ? recallLongTermMemory({
       query: memoryQuery,
       scope: opts.memoryScope ?? { user: 'local' },
@@ -1100,6 +1165,9 @@ export async function* streamChat(
     memoryProtocol,
   })
   const nativeCommandTool = process.platform === 'win32' ? 'PowerShell' : 'Bash'
+  const skillIndex = channelPermissionMode === 'qa_only' || opts.restrictBuiltInTools
+    ? ''
+    : buildEnabledSkillIndex(path.join(queryEnv.CLAUDE_CONFIG_DIR || '', 'skills'))
   const buildAssembly = (conversationPrompt: string, compaction?: ConversationCompactionSnapshot) => buildContextAssembly({
     systemPrompt,
     identityPrompt,
@@ -1108,7 +1176,7 @@ export async function* streamChat(
       `Claude Code 原生 ${nativeCommandTool}`,
       'Read', 'Glob', 'Grep', 'Edit', 'Write', 'NotebookEdit', 'Skill', 'TodoWrite',
     ].join('\n'),
-    skillIndex: channelPermissionMode === 'qa_only' || opts.restrictBuiltInTools ? '' : buildEnabledSkillIndex(path.join(queryEnv.CLAUDE_CONFIG_DIR || '', 'skills')),
+    skillIndex,
     loadedSkills,
     mcpDynamicTools: opts.mcpServerOverride ? '' : getMcpToolDefinitionSummary(channelPermissionMode),
     subagentDefinitions: '',
@@ -1147,7 +1215,7 @@ export async function* streamChat(
   let compactionEventEmitted = false
   let compactionCompleted = false
 
-  if ((compactionPlan.shouldCompact || opts.forceCompaction) && messages.length > 1) {
+  if (!opts.warmupOnly && (compactionPlan.shouldCompact || opts.forceCompaction) && messages.length > 1) {
     const historyMessages = messages.slice(0, -1)
     const currentMessage = messages[messages.length - 1]
     const currentTokens = estimateContextTokens(messagePromptText(currentMessage))
@@ -1268,13 +1336,11 @@ export async function* streamChat(
     return
   }
   const turnContextCollector = createTurnContextCollector(contextAssembly.snapshot)
-  let memoryUserPromptInjectionCount = 0
-  let memoryPostToolBatchInjectionCount = 0
   const memoryUserPromptSubmitHook: HookCallback = async (): Promise<HookJSONOutput> => {
-    memoryUserPromptInjectionCount += 1
+    activeBindings.memory.userPromptInjections += 1
     log.info('memory_reminder_injected', {
       source: 'user_prompt_submit',
-      sequence: memoryUserPromptInjectionCount,
+      sequence: activeBindings.memory.userPromptInjections,
       present: true,
     })
     return {
@@ -1286,10 +1352,10 @@ export async function* streamChat(
     }
   }
   const memoryPostToolBatchHook: HookCallback = async (): Promise<HookJSONOutput> => {
-    memoryPostToolBatchInjectionCount += 1
+    activeBindings.memory.postToolBatchInjections += 1
     log.info('memory_reminder_injected', {
       source: 'post_tool_batch',
-      sequence: memoryPostToolBatchInjectionCount,
+      sequence: activeBindings.memory.postToolBatchInjections,
       present: true,
     })
     return {
@@ -1309,18 +1375,22 @@ export async function* streamChat(
     system_prompt_chars: contextAssembly.sdk.system_prompt.length,
   })
   log.info(`stage query_creating elapsed=${elapsedSinceStreamStart()}s`)
-  const queryHandle = query({
-    prompt: contextAssembly.sdk.prompt,
+  const buildQueryParams = (promptInput: string | PromptQueue, target: {
+    systemPrompt: string
+    abortController?: AbortController
+    mcpServer?: McpServerConfig
+  }) => ({
+    prompt: promptInput,
     options: {
-      abortController,
+      abortController: target.abortController ?? abortController,
       model: settings.model,
-      systemPrompt: contextAssembly.sdk.system_prompt,
-      mcpServers: { weworker: activeMcpServer },
+      systemPrompt: target.systemPrompt,
+      mcpServers: { weworker: target.mcpServer ?? activeMcpServer },
       disallowedTools,
       canUseTool,
       settings: filesystemSettings,
       // bypassPermissions skips canUseTool; blacklist enforcement relies on canUseTool + tool handlers.
-      permissionMode: 'default',
+      permissionMode: 'default' as const,
       includePartialMessages,
       cwd: agentCwd,
       settingSources,
@@ -1334,6 +1404,123 @@ export async function* streamChat(
     },
   })
 
+  const canReuseSession = sessionMode && canPoolChatSession(opts.workId)
+  if (opts.warmupOnly && !canReuseSession) {
+    yield { type: 'done' }
+    return
+  }
+
+  const history: ChatHistoryEntry[] = (opts.sessionHistory ?? messages).map((message) => ({
+    id: message.id,
+    role: message.role,
+    digest: createHash('sha256').update(JSON.stringify(message.content)).digest('hex'),
+  }))
+  const fullFirstPrompt = longTermMemory.recalled
+    ? `[相关长期记忆]\n${longTermMemory.recalled}\n\n${contextAssembly.sdk.prompt}`
+    : contextAssembly.sdk.prompt
+  let session: ChatSession | undefined
+  let turnMessages: AsyncIterable<SDKMessage>
+  let closeTurn: () => void
+  if (canReuseSession) {
+    const fingerprintEnv: NodeJS.ProcessEnv = { ...envWithWebcli }
+    // query() writes this into process.env on its first call and supplies the
+    // same installed version to every child. It is not a configuration change.
+    delete fingerprintEnv.CLAUDE_AGENT_SDK_VERSION
+    const fingerprint = createHash('sha256').update(JSON.stringify({
+      model: settings.model,
+      baseUrl: settings.base_url,
+      apiKey: createHash('sha256').update(settings.api_key || '').digest('hex'),
+      provider: settings.active_provider,
+      authType: settings.custom_auth_type,
+      systemPrompt,
+      memoryEnabled,
+      filesystemSettings,
+      env: fingerprintEnv,
+      skillFiles: fingerprintSkillFiles(skillRoots),
+      skillIndex,
+      adapters: getDesktopAdapterCatalog().effective.map(entry => [entry.name, entry.digest]),
+      disallowedTools,
+      settingSources,
+      cwd: agentCwd,
+      configDir: queryEnv.CLAUDE_CONFIG_DIR,
+      executable: claudeSetup.pathToClaudeCodeExecutable ?? null,
+    })).digest('hex')
+
+    const startSession = () => {
+      const sessionAbort = new AbortController()
+      const queue = new PromptQueue()
+      const bindings = turnBindings
+      const sessionMcp = _buildMcpServer({
+        channelPermissionMode,
+        workIdRef: bindings.workIdRef,
+        abortSignalRef: bindings.signalRef,
+        askUserSSECallback: (event) => bindings.onAskUser?.(event),
+        channelAskUserHandler: null,
+      })
+      return new ChatSession({
+        workId: opts.workId ?? null,
+        fingerprint,
+        bindings,
+        queue,
+        query: query(buildQueryParams(queue, {
+          systemPrompt,
+          abortController: sessionAbort,
+          mcpServer: sessionMcp,
+        }) as Parameters<typeof query>[0]),
+        onClose: () => sessionAbort.abort(),
+      })
+    }
+
+    if (opts.warmupOnly) {
+      if (!(opts.workId ? hasChatSession(opts.workId) : hasSpareChatSession())) {
+        const warm = startSession()
+        if (opts.workId) registerChatSession(warm)
+        else registerSpareChatSession(warm)
+        try {
+          await warm.ready()
+          log.info('chat_session_prewarmed')
+        } catch (error) {
+          warm.close('initialization_failed')
+          throw error
+        }
+      }
+      yield { type: 'done' }
+      return
+    }
+
+    const workId = opts.workId!
+    if (compactionCompleted || storedCompactedConversation) disposeChatSession(workId, 'compaction')
+    const reusable = findReusableChatSession(workId, fingerprint, history)
+    let firstPrompt = fullFirstPrompt
+    if (reusable) {
+      session = reusable
+      reusable.bindings.onAskUser = turnBindings.onAskUser
+      reusable.bindings.memory = turnBindings.memory
+      if (reusable.bindings.signalRef) reusable.bindings.signalRef.current = abortController?.signal ?? null
+      activeBindings = reusable.bindings
+      if (!reusable.fresh) firstPrompt = `${longTermMemory.recalled ? `[相关长期记忆]\n${longTermMemory.recalled}\n\n` : ''}${messagePromptText(messages[messages.length - 1])}`
+      log.info('chat_session_reused', { work_id: createHash('sha256').update(workId).digest('hex').slice(0, 12) })
+    } else {
+      session = startSession()
+      registerChatSession(session)
+      log.info('chat_session_started', { work_id: createHash('sha256').update(workId).digest('hex').slice(0, 12) })
+    }
+    const activeSession = session
+    const userTurn: SDKUserMessage = {
+      type: 'user',
+      message: { role: 'user', content: firstPrompt },
+      parent_tool_use_id: null,
+    }
+    turnMessages = activeSession.runTurn(userTurn)
+    closeTurn = () => disposeChatSession(opts.workId!, 'aborted', activeSession)
+  } else {
+    const queryHandle = query(buildQueryParams(contextAssembly.sdk.prompt, {
+      systemPrompt: contextAssembly.sdk.system_prompt,
+    }) as Parameters<typeof query>[0])
+    turnMessages = queryHandle
+    closeTurn = () => queryHandle.close()
+  }
+
   // When the abort signal fires, forcefully close the query to kill the
   // underlying Claude CLI subprocess. Without this, the child process
   // keeps running (and operating on websites) even after the HTTP
@@ -1343,29 +1530,31 @@ export async function* streamChat(
     log.info(` onAbort called 鈥?queryRunning=${queryRunning}`)
     if (!queryRunning) return // query already finished, nothing to kill
     log.info(' abort signal received, closing query handle')
-    queryHandle.close()
+    closeTurn()
   }
   if (abortController) {
     if (abortController.signal.aborted) {
       log.info(' abortController already aborted before query started')
-      queryHandle.close()
+      closeTurn()
       return
     }
     abortController.signal.addEventListener('abort', onAbort, { once: true })
   }
 
+  let completed = false
+  let turnFailed = false
+  let latestModelInputTokens: number | undefined
   try {
     log.info(' starting for-await over queryHandle')
     let firstEventReceived = false
-    let completed = false
     let assistantResponseCount = 0
     let memoryParseCount = 0
     let sdkUserEventCount = 0
     let sdkUserReminderObservedCount = 0
-    for await (const msg of queryHandle) {
+    for await (const msg of turnMessages) {
       if (!firstEventReceived) {
         firstEventReceived = true
-        log.info(` first event received 鈥?elapsed=${((Date.now() - queryStartTime) / 1000).toFixed(2)}s`)
+        log.info(` first event received 鈥?elapsed=${((Date.now() - queryStartTime) / 1000).toFixed(2)}s prepare=${((queryStartTime - preparationStartTime) / 1000).toFixed(2)}s`)
       }
       if (msg.type === 'user') {
         sdkUserEventCount += 1
@@ -1377,13 +1566,22 @@ export async function* streamChat(
           present: reminderObserved,
         })
       }
-      if (msg.type === 'assistant') assistantResponseCount += 1
+      if (msg.type === 'assistant') {
+        assistantResponseCount += 1
+        // Result usage adds every model call (including repeated tool-loop input).
+        // Context occupancy is the latest individual request, not that sum.
+        const usage = (msg as { message?: { usage?: Parameters<typeof computeUsageMetrics>[0] } }).message?.usage
+        if (usage && !msg.parent_tool_use_id) latestModelInputTokens = computeUsageMetrics(usage).total_input_tokens
+      }
       for (const skillContext of skillContextCollector.observe(msg)) {
         turnContextCollector.observe({ type: 'skill_context', id: skillContext.tool_use_id, content: skillContext.text })
         log.info('skill_context_captured', { chars: skillContext.text.length })
         yield { type: 'skill_context', skillContext }
       }
       for (const event of mapSdkMessage(msg, includePartialMessages, textBlockBuf)) {
+        if (event.type === 'usage' && event.usage && latestModelInputTokens !== undefined) {
+          event.usage = { ...event.usage, context_input_tokens: latestModelInputTokens }
+        }
         if (event.type === 'memory_parse') memoryParseCount += 1
         if (
           event.type === 'text_delta'
@@ -1395,18 +1593,26 @@ export async function* streamChat(
         }
         if (event.type === 'done') {
           completed = true
+        } else if (event.type === 'error') {
+          turnFailed = true
+          yield event
         } else {
           yield event
         }
       }
+    }
+    if (completed && !turnFailed && !abortController?.signal.aborted && session) {
+      session.complete(history)
+    } else if (session) {
+      closeTurn()
     }
     if (completed) {
       for (const event of turnContextCollector.finish()) yield event
     }
     log.info(` for-await loop completed normally 鈥?total=${((Date.now() - queryStartTime) / 1000).toFixed(2)}s`)
     log.info('memory_context_check', {
-      user_prompt_injections: memoryUserPromptInjectionCount,
-      post_tool_batch_injections: memoryPostToolBatchInjectionCount,
+      user_prompt_injections: activeBindings.memory.userPromptInjections,
+      post_tool_batch_injections: activeBindings.memory.postToolBatchInjections,
       assistant_responses: assistantResponseCount,
       memory_parse_events: memoryParseCount,
       sdk_user_events: sdkUserEventCount,
@@ -1423,6 +1629,7 @@ export async function* streamChat(
   } finally {
     log.info(' finally block 鈥?setting queryRunning=false')
     queryRunning = false
+    if (!session || !completed || turnFailed || abortController?.signal.aborted) closeTurn()
     if (abortController) {
       abortController.signal.removeEventListener('abort', onAbort)
     }

@@ -1,5 +1,15 @@
 # WeWorker Roadmap
 
+- 2026-10-19（性能修复 PR 整理）：基于上游 develop `326d8583` 迁入对话 Bridge 直连、准备阶段缓存、Claude 预热复用及上下文统计修复，保留上游新增耗时诊断。PR 分支 Backend 587 项通过／5 项跳过，真实 CLI 本地模拟服务专项 1 项通过；Renderer 专项 16 项通过，全量 171 项通过／1 项快速生成测试失败，同一失败已用上游原始源码独立复现。WebCLI 聚焦 24 项、Backend 类型检查、Renderer/Backend/WebCLI 构建通过；WebCLI 首轮与构建并发时缺准备资源，构建完成后顺序重跑通过。本次只整理性能改动，未迁移其他分支 UI；PR 分支未重跑真实模型桌面端或安装包验收，前述实机样本来自整理前 develop。
+
+- 2026-10-19（预热实机复测）：修复 SDK 首次调用写入版本环境变量导致预热指纹不匹配的问题，新增回归先复现失败再验证修复；相关 33 项测试和类型检查通过。重启 develop 桌面端后，用简短测试消息调用当前配置模型，日志确认欢迎页预热进程被首轮接管、下一轮继续复用，两轮完整响应约 2.79s / 1.06s，CLI 首事件分别约 0.18s / 0.16s。该结果是本机两轮样本，不代表长任务或所有模型的响应上限。
+
+- 2026-10-19：**Claude 对话预热、进程复用与上下文去重**。进入欢迎页或对话时提前初始化 Claude CLI，不发送模型请求；同一对话后续轮只追加新消息，模型、权限、Skill 或历史变化时重建，取消、失败和空闲时回收。修复 Windows 无效的 Unix CLI 查找。当前上下文按最后一次主模型请求输入量校准，累计用量保留用于成本统计；Skill 正文不再同时计入工具结果和技能分类。仅调整 develop 性能逻辑，未修改界面布局。验证：Backend 577 项通过／5 项跳过，Renderer 169 项通过，类型检查、前端构建与 JS 语法检查通过；真实 Claude CLI 对本地模拟模型服务的专项测试通过，确认预热零模型请求及连续两轮复用同一进程。真实模型的端到端响应耗时仍待复测。
+
+- 2026-10-19：**减少对话准备阶段重复计算与原生工具输入体积**。Backend 复用 Adapter 目录快照（注册表、包文件状态变化才重建），复用 Skill 校验与索引读取，并让内容未变化的托管 Skill 不再每轮写盘；Claude SDK 隐藏当前 WeWorker 不支持的 13 个原生工具定义，减少模型首轮输入。新增准备阶段耗时日志。验证：Backend 类型检查、Backend 聚焦 21 项、WebCLI Adapter 聚焦 23 项通过。实测基线一轮 `turn start→调用模型` 约 1.72s、CLI 首事件约 4.43s、模型 API 约 4.48s；本次修复针对前一段重复准备开销，模型端延迟仍需真实请求复测。
+
+- 2026-10-19：**降低网站工具调用冷启动**。新增 Backend MCP 工具 `webcli_call`，复用现有 WebCLI Bridge 的 `call_tool` 协议，正常对话中的 Adapter 调用不再为每次请求启动新的 Node CLI 进程；保留 `webcli call` 作为兼容回退。支持 Bridge 错误、超时和回合取消，未改变 Adapter 权限与写操作确认。验证：Backend 直连协议、错误传播和系统提示测试 27 项通过，Backend 类型检查通过；尚未做真实 Chrome 扩展联机延迟对照。
+
 - 2026-10-19：补齐 #91 的读端遗漏：Electron `adapter-environment.js` 不再要求内置 Adapter `.profile.json` 包含已移除的 `legacy` 字段，与 `webcli/paths.js`、`adapter-catalog.js` 及写端 `builtin-adapter-build.js` 保持一致，并新增缺省 `legacy` 元数据的聚焦用例（7/7 通过）。同步 `webcli/package-lock.json` 版本到 1.0.4 与 backend-ts lockfile 的 peer 标记；`streamChat` 增加 Adapter 重载、Skill 刷新、上下文组装与 query 创建阶段耗时、上下文分类 token 估算及 prompt 字符数诊断日志（不记录 prompt 正文）。backend `tsc --noEmit` 通过；未在真实打包应用或真实会话中验证日志输出。
 
 - 2026-10-17（PR #91 分支同步）：将含 #106 修复的最新 develop 合入 `chore/remove-legacy-extension-adapters`（无冲突），check-public-config 台账 fixture 随 legacy 目录移除精简（去掉 `extension/adapters/index.json` 桩）。worktree 聚焦复验：真实仓库校验通过、scripts 测试 4 项、webcli 两文件 37 项（即 #106 所修用例）、扩展 tool-route 与 wecli-runtime-helper 33 项全部通过。

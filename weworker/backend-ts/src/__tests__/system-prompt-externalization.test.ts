@@ -117,15 +117,15 @@ describe('System Prompt - complete output contract before externalization', () =
       你通过 webcli 命令行工具调用 Extension Adapter 与 Toolkit Adapter，能够在网页上执行操作。
       优先使用当前上下文已有的 Skill 说明和工具参数；相关说明缺失、不完整或已失效时，再激活对应 Skill。不要仅因为用户发起了新一轮对话就重复加载。
       如果上下文已提供当前版本的完整说明，而其中没有某项能力或字段，应按未提供处理；不要为寻找同一缺失信息重复读取同一版本的说明。
-      所有网站工具通过Claude Code 内置 PowerShell 执行 \`webcli call <完整工具名> --参数名=参数值\`调用。
+      所有网站工具通过优先调用内置 \`webcli_call\` 工具（tool_name=完整工具名，args=参数对象）；如果该工具不可用，再由 Claude Code 内置 PowerShell 执行 \`webcli call <完整工具名> --参数名=参数值\`调用。
       对于 Skill 中同时标记为 \`Execution: type=api, runtime=background\` 和 \`Execution: mode=direct\` 的工具，它们是无需 DOM 的 API 工具，必须直接调用，不需要先打开对应网站。旧 Skill 如果只标记了 \`Execution: mode=direct\`，也按同样规则处理。
-      对于页面/DOM 工具，调用前需要确保对应网站已在 Chrome 中打开。如果未打开，请先使用 Claude Code 内置 PowerShell 执行 \`webcli call open_browser --url=<url>\`打开该网站。
+      对于页面/DOM 工具，调用前需要确保对应网站已在 Chrome 中打开。如果未打开，请先调用内置 \`webcli_call\` 工具（tool_name=open_browser，args={url:<url>}）；如果不可用，再使用 Claude Code 内置 PowerShell 执行 \`webcli call open_browser --url=<url>\`打开该网站。
 
       ## 使用 webcli call 的规则
 
       当你需要操作某个网站时，按以下步骤进行：
       1. 查阅当前上下文中该网站的 Skill 工具列表和参数说明；缺失、不完整或已失效时再加载。
-      2. 使用 Claude Code 内置 PowerShell 执行 \`webcli call <完整工具名> --参数名=参数值\`
+      2. 优先调用内置 \`webcli_call\` 工具（tool_name=完整工具名，args=参数对象）；不可用时使用 Claude Code 内置 PowerShell 执行 \`webcli call <完整工具名> --参数名=参数值\`
       3. 使用完整工具名称，例如 \`jd.com.search_products\`。
       4. 参数直接使用 \`--key=value\`；数组和对象可使用 JSON 字面量，字段必须匹配 Skill 文档中的参数定义。
 
@@ -133,7 +133,7 @@ describe('System Prompt - complete output contract before externalization', () =
 
       ## Skill、Adapter 与 PowerShell
 
-      优先按已激活的标准 Skill 指令执行。执行 Extension Adapter 或 Toolkit Adapter 时，统一使用 Claude Code 内置 PowerShell 运行 \`webcli call\`，不得使用 \`weworker_powershell\`。
+      优先按已激活的标准 Skill 指令执行。执行 Extension Adapter 或 Toolkit Adapter 时，优先使用内置 \`webcli_call\`；不可用时才使用 Claude Code 内置 PowerShell 运行 \`webcli call\`，不得使用 \`weworker_powershell\`。
       Claude Code 内置 PowerShell 已开放，也可执行构建、测试、git、npm 和其他本地命令。
       内置 PowerShell 不受 WeWorker 用户目录白名单、黑名单、绝对路径或命令类型限制。
       WebCLI 会按 Adapter 类型分别选择 Chrome 扩展 Bridge 或内嵌 Toolkit Runtime；不要直接调用 Adapter 脚本路径。
@@ -152,7 +152,7 @@ describe('System Prompt - complete output contract before externalization', () =
 
       只有页面/DOM 工具需要先打开网站。\`type=api, runtime=background\` + \`mode=direct\` 的 API 工具不要预先打开网站或检测登录；如果这类工具返回需要登录或需要页面上下文，再打开 Skill 文档中的 Homepage URL。
 
-      用 Claude Code 内置 PowerShell 执行 \`webcli call open_browser --url=...\` 打开一个受支持的网站后，必须等待至少 5 秒再执行任何后续页面/DOM 操作。
+      调用内置 \`webcli_call\` 工具（tool_name=open_browser，args={url:...}）；不可用时再用 Claude Code 内置 PowerShell 执行 \`webcli call open_browser --url=...\` 打开一个受支持的网站后，必须等待至少 5 秒再执行任何后续页面/DOM 操作。
       原因：网站 adapter 需要时间注入并注册工具，过早调用会导致工具不存在而报错。
 
       URL 必须使用 Skill 文档中的 Homepage URL，不要自行猜测协议。
@@ -182,12 +182,12 @@ describe('System Prompt - complete output contract before externalization', () =
 
       ## 本地命令执行规则
 
-      执行 Extension Adapter 或 Toolkit Adapter 时必须使用 Claude Code 内置 PowerShell 运行 \`webcli call\`，不得使用 \`weworker_powershell\`；其他本地命令、构建、测试、git 或 npm 也可以使用内置 PowerShell。
+      执行 Extension Adapter 或 Toolkit Adapter 时必须优先调用内置 \`webcli_call\`；不可用时才使用 Claude Code 内置 PowerShell 运行 \`webcli call\`，不得使用 \`weworker_powershell\`；其他本地命令、构建、测试、git 或 npm 也可以使用内置 PowerShell。
       \`weworker_powershell\` 在当前平台默认使用 \`shell: "powershell"\`。
       \`xcopy\`、\`copy\`、\`dir\`、\`del\`、\`mklink\` 等 Windows 原生命令，或命令中包含 \`C:\\...\` 这类 Windows 路径时，应使用 \`shell: "powershell"\`，必要时设置 \`outputEncoding: "gbk"\` 读取中文输出，避免 bash 误解释反斜杠和 \`/E\` 等参数。
       \`weworker_powershell\` 默认已在用户目录执行，通常无需先 cd 到用户目录。
       \`weworker_powershell\` 的实时 stdout/stderr 会显示在 WeWorker 终端面板中，用户可以看到执行过程。
-      网站操作仍按 webcli 规则执行；不要为了调用网站工具而改用 \`weworker_powershell\`。
+      网站操作优先调用内置 \`webcli_call\`，兼容场景使用 webcli call；不要为了调用网站工具而改用 \`weworker_powershell\`。
 
       ## 引导用户执行命令
 

@@ -95,7 +95,7 @@ describe('context providers', () => {
     collector.observe({ type: 'tool_call_start', id: 'tool-1', name: 'Read', args: {} })
     collector.observe({ type: 'tool_call_start', id: 'tool-1', name: 'Read', args: { path: 'a.txt' } })
     collector.observe({ type: 'tool_call_result', id: 'tool-1', result: '完成' })
-    collector.observe({ type: 'usage', usage: { total_input_tokens: 256 } })
+    collector.observe({ type: 'usage', usage: { total_input_tokens: 9999, context_input_tokens: 256 } })
 
     const events = collector.finish()
 
@@ -122,5 +122,22 @@ describe('context providers', () => {
     expect(end.context.estimated_total_tokens).toBe(start.estimated_total_tokens)
     expect(done.type).toBe('done')
     expect(JSON.stringify(start)).toBe(startJson)
+  })
+
+  it('counts a captured skill body once even when it also arrives as a tool result', () => {
+    const start = assembleContext({
+      runtime: createRuntimeContext({ systemPrompt: 'rules', identityPrompt: '' }),
+      work: createWorkContext({ conversation: 'fixture question' }),
+      longTerm: createLongTermMemoryContext(),
+      sdkSystemPrompt: 'rules', sdkPrompt: 'fixture question',
+    }).snapshot
+    const skillOnly = createTurnContextCollector(start)
+    const withToolResult = createTurnContextCollector(start)
+    const content = 'fixture skill instructions '.repeat(30)
+    skillOnly.observe({ type: 'skill_context', id: 'skill-1', content })
+    withToolResult.observe({ type: 'tool_call_start', id: 'skill-1', name: 'Skill' })
+    withToolResult.observe({ type: 'tool_call_result', id: 'skill-1', result: content })
+    withToolResult.observe({ type: 'skill_context', id: 'skill-1', content })
+    expect(withToolResult.finish()[0].context).toEqual(skillOnly.finish()[0].context)
   })
 })

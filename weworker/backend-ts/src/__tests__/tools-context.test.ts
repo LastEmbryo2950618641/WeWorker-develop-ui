@@ -21,6 +21,19 @@ vi.mock('../webcli-runner.js', () => ({
 }))
 
 describe('MCP tool context', () => {
+  it('reads the adopted work and current turn cancellation when a prewarmed tool runs', async () => {
+    const { buildMcpServer } = await import('../tools.js')
+    const workIdRef: { current: string | null } = { current: null }
+    const abortSignalRef: { current: AbortSignal | null } = { current: null }
+    const server = buildMcpServer({ workIdRef, abortSignalRef })
+    const tools = server.instance as unknown as { _registeredTools: Record<string, { handler(input: { command: string }): Promise<unknown> }> }
+    workIdRef.current = 'adopted-work'
+    const abort = new AbortController()
+    abortSignalRef.current = abort.signal
+    await tools._registeredTools.weworker_powershell.handler({ command: 'echo adopted' })
+    expect(runWeWorkerPowerShell.mock.calls.at(-1)?.[0]).toMatchObject({ workId: 'adopted-work', signal: abort.signal })
+    runWeWorkerPowerShell.mockClear()
+  })
   it('keeps shell tool work context scoped to each MCP server instance', async () => {
     const { buildMcpServer } = await import('../tools.js')
     const firstAbort = new AbortController()

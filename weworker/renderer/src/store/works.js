@@ -286,7 +286,7 @@ export const useWorksStore = create((set, get) => ({
   },
 
   setContextUsage: (workId, usage) => {
-    const actualInputTokens = Number(usage?.total_input_tokens)
+    const actualInputTokens = Number(usage?.context_input_tokens ?? usage?.total_input_tokens)
     if (!workId || !Number.isFinite(actualInputTokens)) return
     set((s) => {
       const current = s.contextSnapshots[workId]

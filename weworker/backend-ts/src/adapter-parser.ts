@@ -11,6 +11,7 @@ import { createLogger } from './logger.js'
 import type { RegistryScenarioDef } from './site-scenarios.js'
 import type { PromptVarDisplayMap } from './prompt-var-display.js'
 import { mergePromptVarDisplay } from './prompt-var-display.js'
+import { clearDesktopAdapterCatalogCache, getDesktopAdapterCatalog } from './adapter-catalog-cache.js'
 
 const log = createLogger('adapter-parser')
 
@@ -444,7 +445,7 @@ function parseLegacyAdapters(): Map<string, ParsedAdapter> {
 
 /** Managed metadata is refreshed on every read; the compatibility cache cannot override it. */
 export function parseAllAdapters(): Map<string, ParsedAdapter> {
-  const inventory = describeDesktopAdapters()
+  const inventory = describeDesktopAdapters({ catalog: getDesktopAdapterCatalog() })
   const result = new Map(parseLegacyAdapters())
   for (const manifest of inventory.adapters) {
     result.set(manifest.id, {
@@ -470,6 +471,7 @@ export function parseAllAdapters(): Map<string, ParsedAdapter> {
 /** Clear the cache (useful for testing or hot-reload) */
 export function clearAdapterCache(): void {
   _cache = null
+  clearDesktopAdapterCatalogCache()
 }
 
 export function getRegistryDefaultIcon(): string {

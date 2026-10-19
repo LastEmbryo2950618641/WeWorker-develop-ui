@@ -19,14 +19,14 @@ function readOwned(content) {
 }
 
 /** Historical model context must match both its file and the current package. */
-export function createManagedAdapterSkillValidator() {
+export function createManagedAdapterSkillValidator(options = {}) {
   let snapshot;
   return (content, directoryName = '') => {
     const marked = content.includes(marker);
     const reservedName = directoryName.startsWith('webcli-') ? directoryName.slice(7) : null;
     if (!marked && !reservedName) return true;
     try {
-      snapshot ||= managedAdapterViews();
+      snapshot ||= managedAdapterViews(options);
       if (!marked) return !snapshot.managedNames.has(reservedName);
       const record = readOwned(content);
       if (!record || record.status !== 'active' || (reservedName && record.name !== reservedName)) return false;
@@ -43,11 +43,13 @@ function writeOwned(target, body, record) {
   mkdirSync(root, { recursive: true });
   const disabled = assertManagedFile(root, 'SKILL.md.disabled');
   const file = existsSync(disabled) ? disabled : assertManagedFile(root, 'SKILL.md');
-  if (existsSync(file)) {
-    const previous = readOwned(readFileSync(file, 'utf8'));
-    if (!previous || previous.name !== record.name || previous.profile !== record.profile) return false;
-  }
   const content = body + marker + JSON.stringify({ ...record, schemaVersion: 1, contentDigest: hash(body) }) + ' -->\n';
+  if (existsSync(file)) {
+    const existing = readFileSync(file, 'utf8');
+    const previous = readOwned(existing);
+    if (!previous || previous.name !== record.name || previous.profile !== record.profile) return false;
+    if (existing === content) return true;
+  }
   const temporary = assertManagedFile(root, 'SKILL.' + randomUUID() + '.tmp');
   const fd = openSync(temporary, 'wx', 0o600);
   try { writeFileSync(fd, content); fsyncSync(fd); } finally { closeSync(fd); }

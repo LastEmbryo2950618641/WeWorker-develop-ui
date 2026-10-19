@@ -24,6 +24,7 @@ import { checkFileEncryptionCached } from './encryption-check-cache.js'
 import { createLogger } from './logger.js'
 import { runWeWorkerPowerShell } from './powershell-runner.js'
 import { invokesWebcli } from './agent-tool-policy.js'
+import { callWebcliTool } from './webcli-call.js'
 
 const log = createLogger('tools')
 
@@ -215,6 +216,8 @@ interface McpServerContext {
   platform?: NodeJS.Platform
   channelPermissionMode?: ChannelPermissionMode
   workId?: string | null
+  workIdRef?: { current: string | null }
+  abortSignalRef?: { current: AbortSignal | null }
   abortSignal?: AbortSignal | null
   askUserSSECallback?: AskUserSSECallback | null
   channelAskUserHandler?: ChannelAskUserHandler | null
@@ -233,6 +236,7 @@ export function getMcpToolDefinitionSummary(mode: ChannelPermissionMode = 'full'
     'send_file_to_user',
     'send_image_to_user',
   ]
+  if (mode === 'full') names.unshift('webcli_call')
   if (process.platform === 'win32') names.push('check_file_encryption', 'decrypt_file')
   return names.join('\n')
 }
@@ -264,8 +268,8 @@ function _findDecryptExe(): string | null {
 // ── MCP Server (weworker-specific tools only) ─────────────────────────────────
 
 export function buildMcpServer(opts?: McpServerContext) {
-  const workId = opts?.workId ?? null
-  const abortSignal = opts?.abortSignal ?? null
+  const getWorkId = () => opts?.workIdRef ? opts.workIdRef.current : opts?.workId ?? null
+  const getAbortSignal = () => opts?.abortSignalRef ? opts.abortSignalRef.current : opts?.abortSignal ?? null
   const askUserSSECallback = opts?.askUserSSECallback ?? null
   const channelAskUserHandler = opts?.channelAskUserHandler ?? null
   const channelPermissionMode = opts?.channelPermissionMode ?? 'full'
@@ -280,7 +284,27 @@ export function buildMcpServer(opts?: McpServerContext) {
     })
   }
 
+  const webcliCallTool = channelPermissionMode === 'full'
+    ? tool(
+      'webcli_call',
+      '直接通过已运行的 WebCLI Bridge 调用 Extension Adapter 或 Toolkit Adapter。优先使用本工具，避免为每次网站操作启动新的 webcli CLI 进程。tool_name 使用完整 Adapter 工具名，例如 jd.com.search_products；需要确认的写操作在 args 中传入 __confirmed: true。',
+      {
+        tool_name: z.string().min(1).describe('完整 Adapter 工具名，例如 example.com.search'),
+        args: z.record(z.string(), z.unknown()).optional().describe('Adapter 参数对象；写操作确认时可包含 __confirmed: true'),
+      },
+      async ({ tool_name, args }) => {
+        try {
+          const result = await callWebcliTool(tool_name, args ?? {}, { signal: getAbortSignal() })
+          return toolText(result)
+        } catch (e) {
+          return toolText({ error: e instanceof Error ? e.message : String(e) })
+        }
+      },
+    )
+    : null
+
   const systemTools = [
+    ...(webcliCallTool ? [webcliCallTool] : []),
     tool(
       'webcli_result',
       `读取 webcli 工具落盘的大结果（large_output 指针）并按需投影成精简文本，避免大模型直接读取超大 JSON。当 webcli 工具返回 type="large_output" 的指针时，用本工具查具体内容。缓存有 ${Math.round(WEBCLI_RESULT_CACHE_TTL_MS / 60000)} 分钟有效期，过期会提示重新调用原查询刷新。`,
@@ -296,7 +320,7 @@ export function buildMcpServer(opts?: McpServerContext) {
       },
       async ({ file, mode, fields, keyword, index, page, pageSize, includeRaw }) => {
         try {
-          let resolved = file ? assertPathInsideUserDirectory(file, 'file') : getLatestCacheFile(workId)
+          let resolved = file ? assertPathInsideUserDirectory(file, 'file') : getLatestCacheFile(getWorkId())
           if (!resolved) {
             return {
               content: [{
@@ -364,8 +388,8 @@ export function buildMcpServer(opts?: McpServerContext) {
             shell,
             outputEncoding,
             source: 'ai',
-            workId,
-            signal: abortSignal,
+            workId: getWorkId(),
+            signal: getAbortSignal(),
           })
           return {
             content: [{
@@ -403,6 +427,7 @@ export function buildMcpServer(opts?: McpServerContext) {
         })).describe('可选项列表（2-6个）'),
       },
       async ({ question, options }) => {
+        const workId = getWorkId()
         if (!workId) {
           return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'No active work context' }) }] }
         }
@@ -558,7 +583,7 @@ export function buildMcpServer(opts?: McpServerContext) {
             const exePath = _findDecryptExe()
             if (!exePath) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: '未找到 sd_decrypt.exe' }) }] }
             const execFileAsync = promisify(execFile)
-            const { text } = await checkFileEncryptionCached(workId, resolved, mtimeMs, async () => {
+            const { text } = await checkFileEncryptionCached(getWorkId(), resolved, mtimeMs, async () => {
               const { stdout } = await execFileAsync(exePath, ['--check', '--json', resolved], { timeout: 15000 })
               return stdout.trim()
             })

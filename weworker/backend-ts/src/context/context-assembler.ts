@@ -164,7 +164,7 @@ export interface TurnContextEvent {
   name?: string
   args?: unknown
   result?: string
-  usage?: { total_input_tokens?: number }
+  usage?: { total_input_tokens?: number; context_input_tokens?: number }
 }
 
 export function createTurnContextCollector(requestSnapshot: ContextSnapshot) {
@@ -186,7 +186,7 @@ export function createTurnContextCollector(requestSnapshot: ContextSnapshot) {
         const existing = toolCalls.get(event.id) ?? { name: 'tool' }
         toolCalls.set(event.id, { ...existing, result: event.result })
       } else if (event.type === 'usage') {
-        const inputTokens = Number(event.usage?.total_input_tokens)
+        const inputTokens = Number(event.usage?.context_input_tokens ?? event.usage?.total_input_tokens)
         if (Number.isFinite(inputTokens)) actualInputTokens = Math.max(0, inputTokens)
       }
     },
@@ -194,7 +194,10 @@ export function createTurnContextCollector(requestSnapshot: ContextSnapshot) {
       { type: 'context_snapshot'; context: ContextSnapshot },
       { type: 'done' },
     ] {
-      const toolText = [...toolCalls.values()]
+      // A Skill result is already assigned to skills, not also conversation.
+      const toolText = [...toolCalls.entries()]
+        .filter(([id]) => !skillTexts.has(id))
+        .map(([, tool]) => tool)
         .map((tool) => `\n[Tool] ${tool.name}${tool.result ? `\n${tool.result}` : ''}`)
         .join('')
       const skillTokens = [...skillTexts.values()].reduce((sum, text) => sum + estimateContextTokens(text), 0)

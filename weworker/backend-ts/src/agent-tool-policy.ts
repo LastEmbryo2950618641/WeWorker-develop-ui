@@ -77,6 +77,7 @@ export const WEWORKER_ALLOWED_TOOLS = [
   'Skill',
   ...WEWORKER_ALLOWED_NATIVE_FILE_TOOLS,
   'mcp__weworker__ask_user',
+  'mcp__weworker__webcli_call',
   'mcp__weworker__weworker_powershell',
   'mcp__weworker__create_scheduled_task',
   'mcp__weworker__list_scheduled_tasks',

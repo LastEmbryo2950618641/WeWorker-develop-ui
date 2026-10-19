@@ -86,6 +86,7 @@ import { getSiteMemory, listSiteMemories, saveSiteMemoryFromActionCapture, saveS
 import * as store from './works-store.js'
 import { tryBackendProfileQueryRoute } from './profile-query-route.js'
 import { buildConfiguredModelEnv, generateAssistantStatusLine, streamChat } from './agent.js'
+import { disposeChatSession, disposeIdleChatSession, hasChatSession, hasSpareChatSession } from './chat-session.js'
 import { ensureRuntimeSkillsDir } from './runtime-skills-dir.js'
 import { renderPrompt } from './prompt-loader.js'
 import {
@@ -1850,6 +1851,7 @@ app.patch('/works/:id', (req, res) => {
 
 app.delete('/works/:id', (req, res) => {
   store.deleteWork(req.params.id)
+  disposeChatSession(req.params.id, 'work_deleted')
   res.json({ ok: true })
 })
 
@@ -2417,6 +2419,7 @@ app.post('/works/:id/compact', async (req, res) => {
     const result = await streamConversationCompaction(workId, work.messages, settings, (event) => {
       events.push(event)
     })
+    if (result.status === 'completed') disposeIdleChatSession(workId, 'manual_compaction')
     res.json({ ok: true, ...result, events })
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
@@ -2426,6 +2429,50 @@ app.post('/works/:id/compact', async (req, res) => {
   }
 })
 
+// Start the chat CLI while the user is typing. A single in-flight warm-up per
+// work avoids spawning duplicate Claude processes when input changes rapidly.
+const chatWarmupsInFlight = new Map<string, Promise<void>>()
+
+app.post(['/chat/warmup', '/works/:id/warmup'], (req, res) => {
+  const workId = req.params.id
+  const work = workId ? store.getWork(workId) : undefined
+  if (workId && !work) {
+    res.status(404).json({ detail: 'Work not found' })
+    return
+  }
+  const warmupKey = workId || 'welcome'
+  if (chatWarmupsInFlight.has(warmupKey)) {
+    res.json({ status: 'starting' })
+    return
+  }
+  if (workId ? hasChatSession(workId) : hasSpareChatSession()) {
+    res.json({ status: 'ready' })
+    return
+  }
+
+  const settings = getSettings()
+  const zcfPrefs = resolveZcfPrefs(work ?? { zcf_role: settings.zcf_default_role, zcf_mode: settings.zcf_default_mode }, settings)
+  const warmup = (async () => {
+    try {
+      for await (const event of streamChat([], settings, undefined, {
+        workId,
+        zcfRole: zcfPrefs.zcfRole,
+        zcfMode: zcfPrefs.zcfMode,
+        reuseSession: true,
+        warmupOnly: true,
+      })) {
+        if (event.type === 'error') chatLog.warn('chat warm-up failed', event.content)
+      }
+    } catch (error) {
+      chatLog.warn('chat warm-up failed', error instanceof Error ? error.message : String(error))
+    } finally {
+      if (workId && !store.getWork(workId)) disposeChatSession(workId, 'work_deleted')
+      chatWarmupsInFlight.delete(warmupKey)
+    }
+  })()
+  chatWarmupsInFlight.set(warmupKey, warmup)
+  res.json({ status: 'starting' })
+})
 
 app.post('/works/:id/chat', async (req, res) => {
   const workId = req.params.id
@@ -2501,6 +2548,7 @@ app.post('/works/:id/chat', async (req, res) => {
           : msg
       ))
   const settings = getSettings()
+  const pendingWarmup = chatWarmupsInFlight.get(workId) ?? chatWarmupsInFlight.get('welcome')
   const zcfPrefs = resolveZcfPrefs(work, settings)
 
   // SSE headers
@@ -2525,6 +2573,11 @@ app.post('/works/:id/chat', async (req, res) => {
     }
   }
   res.on('close', onClose)
+  if (pendingWarmup) await pendingWarmup.catch(() => undefined)
+  if (res.destroyed || !store.getWork(workId)) {
+    res.end()
+    return
+  }
 
   // Accumulate assistant content for persistence
   const assistantContent: store.ContentBlock[] = []
@@ -2618,12 +2671,14 @@ app.post('/works/:id/chat', async (req, res) => {
       toolCalls: [],
     }).scope as { user: string }
     for await (const ev of streamChat(modelMessages, settings, abortController, {
+      sessionHistory: workWithMessages.messages,
       enabledAdapterIds,
       workId,
       zcfRole: zcfPrefs.zcfRole,
       zcfMode: zcfPrefs.zcfMode,
       memoryScope: initialMemoryScope,
       onAskUser: (event) => send(event),
+      reuseSession: true,
     })) {
       if (ev.type === 'skill_context' && ev.skillContext) {
         assistantContent.push(ev.skillContext)
