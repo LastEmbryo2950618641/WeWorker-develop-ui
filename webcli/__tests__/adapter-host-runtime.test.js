@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import vm from 'node:vm';
-import { createHostAdapterRuntime, navigateAdapterTab } from '../../extension/background/host-adapter-runtime.js';
+import { createHostAdapterRuntime, navigateAdapterTab, assertAdapterNavigationUrl } from '../../extension/background/host-adapter-runtime.js';
 import { buildV2Bootstrap } from '../../extension/background/v2-loader.js';
 
 const manifest = (digest) => ({ name: 'demo', _hostSnapshot: { profile: 'public', digest } });
@@ -197,5 +197,38 @@ describe('host-owned page navigation', () => {
     api.tabs.get = async () => { throw new Error('tab closed'); };
     await expect(navigateAdapterTab(api, 7, 'https://example.com/', pkg, true, 1000)).rejects.toThrow('tab closed');
     expect(removed).toBe(2);
+  });
+});
+
+
+describe('navigation rejection diagnostics', () => {
+  const pkg = { name: 'example.com', match: ['example.com'], commands: [{ id: 'read', safety: 'read' }] };
+  const blocked = 'https://verify.example.org/private-path?r=placeholder-token#placeholder-secret';
+  it('reports only the blocked origin and actionable recovery instructions', () => {
+    let error;
+    try { assertAdapterNavigationUrl(pkg, blocked); } catch (value) { error = value; }
+    expect(error.message).toContain('https://verify.example.org');
+    expect(error.message).toContain('安全验证');
+    expect(error.message).toContain('返回原业务页面后重试');
+    for (const secret of ['private-path', 'placeholder-token', 'placeholder-secret']) expect(error.message).not.toContain(secret);
+    expect(() => assertAdapterNavigationUrl(pkg, 'https://placeholder-user:placeholder-password@verify.example.org/')).toThrow(/^Adapter navigation host is not allowed\.$/);
+  });
+  it.each(['initial', 'continuation'])('stops %s redirects without executing on the blocked page and recovers on retry', async phase => {
+    let url = phase === 'initial' ? blocked : 'https://example.com/';
+    let injections = 0, calls = 0;
+    const runtime = createHostAdapterRuntime({
+      bundle: async () => [], prepare: async () => {}, clear: async () => {},
+      inject: async () => { injections++; },
+      ready: async () => assertAdapterNavigationUrl(pkg, url),
+      navigate: async () => { url = blocked; return url; },
+    });
+    await expect(runtime.execute(1, pkg, url, () => {
+      calls++;
+      return { __webcli_navigation: { version: 1, url: 'https://example.com/detail', resume: true } };
+    }, { id: 'read' })).rejects.toThrow('https://verify.example.org');
+    expect(injections).toBe(phase === 'initial' ? 0 : 1);
+    expect(calls).toBe(phase === 'initial' ? 0 : 1);
+    url = 'https://example.com/detail';
+    expect(await runtime.execute(1, pkg, url, () => 'recovered', { id: 'read' })).toBe('recovered');
   });
 });
