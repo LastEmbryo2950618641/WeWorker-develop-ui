@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-19：**减少对话准备阶段重复计算与原生工具输入体积**。Backend 复用 Adapter 目录快照（注册表、包文件状态变化才重建），复用 Skill 校验与索引读取，并让内容未变化的托管 Skill 不再每轮写盘；Claude SDK 隐藏当前 WeWorker 不支持的 13 个原生工具定义，减少模型首轮输入。新增准备阶段耗时日志。验证：Backend 类型检查、Backend 聚焦 21 项、WebCLI Adapter 聚焦 23 项通过。实测基线一轮 `turn start→调用模型` 约 1.72s、CLI 首事件约 4.43s、模型 API 约 4.48s；本次修复针对前一段重复准备开销，模型端延迟仍需真实请求复测。
+
 - 2026-10-19：**降低网站工具调用冷启动**。新增 Backend MCP 工具 `webcli_call`，复用现有 WebCLI Bridge 的 `call_tool` 协议，正常对话中的 Adapter 调用不再为每次请求启动新的 Node CLI 进程；保留 `webcli call` 作为兼容回退。支持 Bridge 错误、超时和回合取消，未改变 Adapter 权限与写操作确认。验证：Backend 直连协议、错误传播和系统提示测试 27 项通过，Backend 类型检查通过；尚未做真实 Chrome 扩展联机延迟对照。
 
 - 2026-10-19：补齐 #91 的读端遗漏：Electron `adapter-environment.js` 不再要求内置 Adapter `.profile.json` 包含已移除的 `legacy` 字段，与 `webcli/paths.js`、`adapter-catalog.js` 及写端 `builtin-adapter-build.js` 保持一致，并新增缺省 `legacy` 元数据的聚焦用例（7/7 通过）。同步 `webcli/package-lock.json` 版本到 1.0.4 与 backend-ts lockfile 的 peer 标记；`streamChat` 增加 Adapter 重载、Skill 刷新、上下文组装与 query 创建阶段耗时、上下文分类 token 估算及 prompt 字符数诊断日志（不记录 prompt 正文）。backend `tsc --noEmit` 通过；未在真实打包应用或真实会话中验证日志输出。

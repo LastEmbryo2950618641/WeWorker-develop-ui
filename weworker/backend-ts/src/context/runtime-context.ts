@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { createManagedAdapterSkillValidator } from '../../../../webcli/adapter-desktop.js'
+import { createCachedManagedAdapterSkillValidator } from '../adapter-catalog-cache.js'
 import type { RuntimeContext } from './context-types.js'
 
 export interface RuntimeContextInput {
@@ -38,7 +38,7 @@ export function createRuntimeContext(input: RuntimeContextInput): RuntimeContext
   }
 }
 
-function readSkillIndexEntry(skillFile: string, fallbackName: string, validate: ReturnType<typeof createManagedAdapterSkillValidator>): string {
+function readSkillIndexEntry(skillFile: string, fallbackName: string, validate: ReturnType<typeof createCachedManagedAdapterSkillValidator>): string {
   try {
     const source = fs.readFileSync(skillFile, 'utf8')
     if (!validate(source, fallbackName)) return ''
@@ -53,7 +53,7 @@ function readSkillIndexEntry(skillFile: string, fallbackName: string, validate: 
 }
 
 export function buildEnabledSkillIndex(skillsDir: string): string {
-  const validate = createManagedAdapterSkillValidator()
+  const validate = createCachedManagedAdapterSkillValidator()
   try {
     return fs.readdirSync(skillsDir, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())

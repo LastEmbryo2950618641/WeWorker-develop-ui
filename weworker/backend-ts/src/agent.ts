@@ -19,7 +19,7 @@ import type { ChannelPermissionMode } from './channels/channel-permissions.js'
 import type { Message } from './works-store.js'
 import { buildMcpServer as _buildMcpServer, getMcpToolDefinitionSummary } from './tools.js'
 import { parseAllAdapters } from './adapter-parser.js'
-import { refreshDesktopAdapterSkills } from '../../../webcli/adapter-desktop.js'
+import { refreshDesktopAdapterSkillsIfStale } from './adapter-catalog-cache.js'
 import { buildAgentFilesystemSettings, createUnifiedToolGuard } from './user-directory-access.js'
 import { createLogger } from './logger.js'
 import { resolveWebcliDir } from './webcli-path.js'
@@ -170,6 +170,21 @@ export function buildDisallowedTools(
     'CronCreate',
     'CronDelete',
     'AskUserQuestion',
+    // Hide definitions as well as denying execution in createWeWorkerToolPolicy.
+    // These SDK tools are not supported by WeWorker, even in full mode.
+    'EnterWorktree',
+    'ExitWorktree',
+    'ListAgents',
+    'ReportFindings',
+    'ScheduleWakeup',
+    'SendMessage',
+    'TaskCreate',
+    'TaskGet',
+    'TaskList',
+    'TaskStop',
+    'TaskUpdate',
+    'WebSearch',
+    'Workflow',
     alternateCommandTool,
   ]
   const restrictedBuiltInTools = [
@@ -181,7 +196,6 @@ export function buildDisallowedTools(
     'Write',
     'NotebookEdit',
     'TodoWrite',
-    'WebSearch',
   ]
   if (channelPermissionMode === 'qa_only' || restrictBuiltInTools) {
     return [...baseDisallowed, nativeCommandTool, ...restrictedBuiltInTools]
@@ -966,6 +980,7 @@ export async function* streamChat(
 ): AsyncGenerator<SSEEvent> {
   const streamStartTime = Date.now()
   const elapsedSinceStreamStart = () => ((Date.now() - streamStartTime) / 1000).toFixed(2)
+  const preparationStartTime = streamStartTime
   // Claude Code discovers user Skills when each query starts. If a website was
   // just scaffolded, wait for its hot-install to finish before starting query.
   await waitForAdapterRuntimeReload()
@@ -1058,7 +1073,7 @@ export async function* streamChat(
     path.join(queryEnv.CLAUDE_CONFIG_DIR!, 'skills'),
     path.join(getUserDirectory(), '.claude', 'skills'),
   ]
-  if (skillRoots.length) refreshDesktopAdapterSkills(skillRoots[0])
+  if (skillRoots.length) refreshDesktopAdapterSkillsIfStale(skillRoots[0])
   log.info(`stage skills_refreshed elapsed=${elapsedSinceStreamStart()}s`)
   const loadedSkills = buildLoadedSkillContext(messages, skillRoots)
   const skillContextCollector = createSkillContextCollector(skillRoots)
@@ -1365,7 +1380,7 @@ export async function* streamChat(
     for await (const msg of queryHandle) {
       if (!firstEventReceived) {
         firstEventReceived = true
-        log.info(` first event received 鈥?elapsed=${((Date.now() - queryStartTime) / 1000).toFixed(2)}s`)
+        log.info(` first event received 鈥?elapsed=${((Date.now() - queryStartTime) / 1000).toFixed(2)}s prepare=${((queryStartTime - preparationStartTime) / 1000).toFixed(2)}s`)
       }
       if (msg.type === 'user') {
         sdkUserEventCount += 1
