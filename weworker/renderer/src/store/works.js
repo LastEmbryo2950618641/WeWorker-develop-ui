@@ -20,6 +20,17 @@ export const useWorksStore = create((set, get) => ({
   works: [],
   activeWorkId: null,
   messages: {}, // workId -> Message[]
+  drafts: {}, // Unsent text and attachments survive switching between works.
+  updateDraft: (workId, patch) => set((s) => {
+    const previous = s.drafts[workId] ?? { text: '', attachments: [] }
+    const changes = typeof patch === 'function' ? patch(previous) : patch
+    return { drafts: { ...s.drafts, [workId]: { ...previous, ...changes } } }
+  }),
+  clearDraft: (workId) => set((s) => {
+    const drafts = { ...s.drafts }
+    delete drafts[workId]
+    return { drafts }
+  }),
   contextSnapshots: {}, // workId -> latest local context composition
   contextTokenAnchors: {}, // workId -> provider total and calibrated non-conversation baseline
   contextCompactionStatuses: {}, // workId -> compacting/completed/skipped/failed
@@ -126,16 +137,19 @@ export const useWorksStore = create((set, get) => ({
       set((s) => {
         const works = s.works.filter((w) => w.id !== id)
         const messages = { ...s.messages }
+        const drafts = { ...s.drafts }
         const contextSnapshots = { ...s.contextSnapshots }
         const contextTokenAnchors = { ...s.contextTokenAnchors }
         const contextCompactionStatuses = { ...s.contextCompactionStatuses }
         delete messages[id]
+        delete drafts[id]
         delete contextSnapshots[id]
         delete contextTokenAnchors[id]
         delete contextCompactionStatuses[id]
         return {
           works,
           messages,
+          drafts,
           contextSnapshots,
           contextTokenAnchors,
           contextCompactionStatuses,

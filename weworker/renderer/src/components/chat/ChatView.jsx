@@ -19,6 +19,8 @@ import { applyTerminalEventToMessages } from '../../utils/terminal-chat-output.j
 import { buildTodoWriteContextPrompt, buildTodoWriteState } from '../../utils/todowrite-state.js'
 import { cleanUserChoiceText, normalizeUserChoiceOptions } from '../../utils/user-choice.js'
 
+const EMPTY_DRAFT_ATTACHMENTS = []
+
 export default function ChatView({ workId }) {
   const messages = useWorksStore((s) => s.messages[workId] ?? [])
   const contextSnapshot = useWorksStore((s) => s.contextSnapshots[workId] ?? null)
@@ -32,8 +34,15 @@ export default function ChatView({ workId }) {
   const streaming = useWorksStore((s) => s.streamingWorkIds.has(workId))
   const [error, setError] = useState(null)
   const handleSendRef = useRef(null)
-  const [inputText, setInputText] = useState('')
-  const [attachments, setAttachments] = useState([])
+  const inputText = useWorksStore((s) => s.drafts[workId]?.text ?? '')
+  const attachments = useWorksStore((s) => s.drafts[workId]?.attachments ?? EMPTY_DRAFT_ATTACHMENTS)
+  const updateDraft = useWorksStore((s) => s.updateDraft)
+  const setInputText = (value) => updateDraft(workId, (draft) => ({
+    text: typeof value === 'function' ? value(draft.text) : value,
+  }))
+  const setAttachments = (value) => updateDraft(workId, (draft) => ({
+    attachments: typeof value === 'function' ? value(draft.attachments) : value,
+  }))
   const fillSeq = useChatInputFillStore((s) => s.seq)
   const fillText = useChatInputFillStore((s) => s.text)
   const handledFillSeqRef = useRef(fillSeq)
@@ -138,8 +147,7 @@ export default function ChatView({ workId }) {
       return
     }
     setError(null)
-    setInputText('')
-    setAttachments([])
+    useWorksStore.getState().clearDraft(workId)
     setSlowWarning(false)
     gotFirstEventRef.current = false
     useWorksStore.getState().clearMemoryStatus(workId)
@@ -390,8 +398,7 @@ export default function ChatView({ workId }) {
     const trimmed = String(command || '').trim()
     if (!trimmed || streaming || useWorksStore.getState().contextCompactionStatuses[workId] === 'compacting') return
     setError(null)
-    setInputText('')
-    setAttachments([])
+    useWorksStore.getState().clearDraft(workId)
     setSlowWarning(false)
     gotFirstEventRef.current = false
 

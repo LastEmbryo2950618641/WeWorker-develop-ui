@@ -2529,7 +2529,9 @@ app.post('/works/:id/chat', async (req, res) => {
   const isFirstMessage = !work.title
   const titleSource = message?.trim() || importedAttachments.map((block) => block.type === 'file_attachment' ? block.name : '').filter(Boolean).join(', ')
   if (isFirstMessage && retryCompaction !== true) {
-    store.updateTitle(workId, generateTitle(titleSource))
+    const title = generateTitle(titleSource)
+    store.updateTitle(workId, title)
+    broadcastSSE({ type: 'title_update', title, workId })
   }
 
   const workWithMessages = store.getWorkWithMessages(workId)!
@@ -2587,6 +2589,7 @@ app.post('/works/:id/chat', async (req, res) => {
   const memoryCandidates: MemoryUpdateCandidate[] = []
 
   const send = (event: object) => {
+    if (res.writableEnded || res.destroyed) return
     res.write(`data: ${JSON.stringify(event)}\n\n`)
   }
 
@@ -2610,6 +2613,7 @@ app.post('/works/:id/chat', async (req, res) => {
       if (llmTitle) {
         store.updateTitle(workId, llmTitle)
         send({ type: 'title_update', title: llmTitle, workId })
+        broadcastSSE({ type: 'title_update', title: llmTitle, workId })
         broadcastSSE({ type: 'works_changed', workId })
       }
     })

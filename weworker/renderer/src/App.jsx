@@ -107,6 +107,14 @@ export default function App() {
     const handleEvent = (data) => {
       try {
         const parsed = JSON.parse(data)
+        if (parsed.type === 'works_changed') {
+          void useWorksStore.getState().loadWorks().catch(() => {})
+          return
+        }
+        if (parsed.type === 'title_update' && parsed.workId) {
+          useWorksStore.getState().updateTitleLocal(parsed.workId, parsed.title)
+          return
+        }
         if (parsed.type === 'terminal_event') {
           useTerminalStore.getState().handleTerminalEvent(parsed)
           useWorksStore.getState().handleTerminalEvent(parsed)
