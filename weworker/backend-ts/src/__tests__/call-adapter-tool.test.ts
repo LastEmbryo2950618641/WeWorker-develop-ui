@@ -59,14 +59,14 @@ describe('Adapter command boundary', () => {
     expect(mocks.registeredTools.has('webcli_call')).toBe(false)
   })
 
-  it('does not register the removed webcli_call MCP in full mode', async () => {
+  it('registers the in-process webcli_call MCP only in full mode', async () => {
     const { buildMcpServer } = await import('../tools.js')
 
     buildMcpServer({ channelPermissionMode: 'full' })
 
-    expect(mocks.registeredTools.has('webcli_call')).toBe(false)
+    expect(mocks.registeredTools.has('webcli_call')).toBe(true)
     expect(mocks.registeredTools.has('call_adapter_tool')).toBe(false)
-    expect(mocks.toolDescriptions.get('weworker_powershell')).toContain(`webcli must use Claude Code native ${nativeShell}`)
+    expect(mocks.toolDescriptions.get('webcli_call')).toContain('避免为每次网站操作启动新的 webcli CLI 进程')
   })
 
   it('rejects webcli through WeWorker Shell in full mode', async () => {

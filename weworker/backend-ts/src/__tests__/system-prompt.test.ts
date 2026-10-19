@@ -465,7 +465,7 @@ describe('System Prompt - channel permission modes', () => {
     expect(prompt).not.toMatch(/璇峰嬁灏濊瘯鎵撳紑娴忚鍣ㄦ垨鎿嶄綔缃戠珯/)
   })
 
-  it('full prompt runs both Adapter types through the native shell and webcli', async () => {
+  it('full prompt exposes the in-process WebCLI tool with a native shell fallback', async () => {
     const jdAdapter = makeAdapter()
     mockAdapterMap.set(jdAdapter.id, jdAdapter)
     enabledSites.add(jdAdapter.id)
@@ -473,7 +473,7 @@ describe('System Prompt - channel permission modes', () => {
     const { buildSystemPrompt } = await import('../agent.js')
     const prompt = buildSystemPrompt()
 
-    expect(prompt).not.toContain('webcli_call')
+    expect(prompt).toContain('webcli_call')
     const nativeShell = process.platform === 'win32' ? 'PowerShell' : 'Bash'
     expect(prompt).toContain(`Claude Code 内置 ${nativeShell} 已开放`)
     expect(prompt).toContain('不受 WeWorker 用户目录白名单、黑名单、绝对路径或命令类型限制')
@@ -481,7 +481,8 @@ describe('System Prompt - channel permission modes', () => {
     expect(prompt).toContain('Extension Adapter 或 Toolkit Adapter')
     expect(prompt).toContain('Chrome 扩展 Bridge 或内嵌 Toolkit Runtime')
     expect(prompt).toContain('WeWorker Shell')
-    expect(prompt).toContain(`必须使用 Claude Code 内置 ${nativeShell}`)
+    expect(prompt).toContain('必须优先调用内置 `webcli_call`')
+    expect(prompt).toContain(`不可用时才使用 Claude Code 内置 ${nativeShell}`)
     expect(prompt).toContain('不得使用 `weworker_powershell`')
     expect(prompt).not.toContain(`不要调用 Claude Code 内置 ${nativeShell}`)
   })
@@ -491,7 +492,8 @@ describe('System Prompt - channel permission modes', () => {
     const prompt = buildSystemPrompt({ channelPermissionMode: 'full', platform: 'win32' })
 
     expect(prompt).toContain('Claude Code 内置 PowerShell 已开放')
-    expect(prompt).toContain('必须使用 Claude Code 内置 PowerShell')
+    expect(prompt).toContain('必须优先调用内置 `webcli_call`')
+    expect(prompt).toContain('不可用时才使用 Claude Code 内置 PowerShell')
     expect(prompt).toContain('当前平台默认 Shell（powershell）')
     expect(prompt).not.toContain('Claude Code 内置 Bash 已开放')
   })

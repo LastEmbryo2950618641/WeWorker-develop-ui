@@ -24,6 +24,7 @@ import { checkFileEncryptionCached } from './encryption-check-cache.js'
 import { createLogger } from './logger.js'
 import { runWeWorkerPowerShell } from './powershell-runner.js'
 import { invokesWebcli } from './agent-tool-policy.js'
+import { callWebcliTool } from './webcli-call.js'
 
 const log = createLogger('tools')
 
@@ -233,6 +234,7 @@ export function getMcpToolDefinitionSummary(mode: ChannelPermissionMode = 'full'
     'send_file_to_user',
     'send_image_to_user',
   ]
+  if (mode === 'full') names.unshift('webcli_call')
   if (process.platform === 'win32') names.push('check_file_encryption', 'decrypt_file')
   return names.join('\n')
 }
@@ -280,7 +282,27 @@ export function buildMcpServer(opts?: McpServerContext) {
     })
   }
 
+  const webcliCallTool = channelPermissionMode === 'full'
+    ? tool(
+      'webcli_call',
+      '直接通过已运行的 WebCLI Bridge 调用 Extension Adapter 或 Toolkit Adapter。优先使用本工具，避免为每次网站操作启动新的 webcli CLI 进程。tool_name 使用完整 Adapter 工具名，例如 jd.com.search_products；需要确认的写操作在 args 中传入 __confirmed: true。',
+      {
+        tool_name: z.string().min(1).describe('完整 Adapter 工具名，例如 example.com.search'),
+        args: z.record(z.string(), z.unknown()).optional().describe('Adapter 参数对象；写操作确认时可包含 __confirmed: true'),
+      },
+      async ({ tool_name, args }) => {
+        try {
+          const result = await callWebcliTool(tool_name, args ?? {}, { signal: abortSignal })
+          return toolText(result)
+        } catch (e) {
+          return toolText({ error: e instanceof Error ? e.message : String(e) })
+        }
+      },
+    )
+    : null
+
   const systemTools = [
+    ...(webcliCallTool ? [webcliCallTool] : []),
     tool(
       'webcli_result',
       `读取 webcli 工具落盘的大结果（large_output 指针）并按需投影成精简文本，避免大模型直接读取超大 JSON。当 webcli 工具返回 type="large_output" 的指针时，用本工具查具体内容。缓存有 ${Math.round(WEBCLI_RESULT_CACHE_TTL_MS / 60000)} 分钟有效期，过期会提示重新调用原查询刷新。`,

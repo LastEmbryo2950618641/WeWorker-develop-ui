@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-19：**降低网站工具调用冷启动**。新增 Backend MCP 工具 `webcli_call`，复用现有 WebCLI Bridge 的 `call_tool` 协议，正常对话中的 Adapter 调用不再为每次请求启动新的 Node CLI 进程；保留 `webcli call` 作为兼容回退。支持 Bridge 错误、超时和回合取消，未改变 Adapter 权限与写操作确认。验证：Backend 直连协议、错误传播和系统提示测试 27 项通过，Backend 类型检查通过；尚未做真实 Chrome 扩展联机延迟对照。
+
 - 2026-10-19：补齐 #91 的读端遗漏：Electron `adapter-environment.js` 不再要求内置 Adapter `.profile.json` 包含已移除的 `legacy` 字段，与 `webcli/paths.js`、`adapter-catalog.js` 及写端 `builtin-adapter-build.js` 保持一致，并新增缺省 `legacy` 元数据的聚焦用例（7/7 通过）。同步 `webcli/package-lock.json` 版本到 1.0.4 与 backend-ts lockfile 的 peer 标记；`streamChat` 增加 Adapter 重载、Skill 刷新、上下文组装与 query 创建阶段耗时、上下文分类 token 估算及 prompt 字符数诊断日志（不记录 prompt 正文）。backend `tsc --noEmit` 通过；未在真实打包应用或真实会话中验证日志输出。
 
 - 2026-10-17（PR #91 分支同步）：将含 #106 修复的最新 develop 合入 `chore/remove-legacy-extension-adapters`（无冲突），check-public-config 台账 fixture 随 legacy 目录移除精简（去掉 `extension/adapters/index.json` 桩）。worktree 聚焦复验：真实仓库校验通过、scripts 测试 4 项、webcli 两文件 37 项（即 #106 所修用例）、扩展 tool-route 与 wecli-runtime-helper 33 项全部通过。

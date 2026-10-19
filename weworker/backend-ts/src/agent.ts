@@ -324,15 +324,15 @@ ${blacklistEntries.map((entry) => `- ${formatBlacklistEntry(entry)}`).join('\n')
     : ''
 
   const adapterExecutionEnabled = channelPermissionMode === 'full'
-  const webcliInvokeDesc = `Claude Code 内置 ${nativeCommandTool} 执行 \`webcli call <完整工具名> --参数名=参数值\``
-  const openBrowserDesc = `使用 Claude Code 内置 ${nativeCommandTool} 执行 \`webcli call open_browser --url=<url>\``
-  const webcliStep2 = `2. 使用 Claude Code 内置 ${nativeCommandTool} 执行 \`webcli call <完整工具名> --参数名=参数值\``
-  const openBrowserRule = `用 Claude Code 内置 ${nativeCommandTool} 执行 \`webcli call open_browser --url=...\``
+  const webcliInvokeDesc = `优先调用内置 \`webcli_call\` 工具（tool_name=完整工具名，args=参数对象）；如果该工具不可用，再由 Claude Code 内置 ${nativeCommandTool} 执行 \`webcli call <完整工具名> --参数名=参数值\``
+  const openBrowserDesc = `调用内置 \`webcli_call\` 工具（tool_name=open_browser，args={url:<url>}）；如果不可用，再使用 Claude Code 内置 ${nativeCommandTool} 执行 \`webcli call open_browser --url=<url>\``
+  const webcliStep2 = `2. 优先调用内置 \`webcli_call\` 工具（tool_name=完整工具名，args=参数对象）；不可用时使用 Claude Code 内置 ${nativeCommandTool} 执行 \`webcli call <完整工具名> --参数名=参数值\``
+  const openBrowserRule = `调用内置 \`webcli_call\` 工具（tool_name=open_browser，args={url:...}）；不可用时再用 Claude Code 内置 ${nativeCommandTool} 执行 \`webcli call open_browser --url=...\``
   const bashCapabilityNotice = channelPermissionMode === 'full'
     ? `
 ## Skill、Adapter 与 ${nativeCommandTool}
 
-优先按已激活的标准 Skill 指令执行。执行 Extension Adapter 或 Toolkit Adapter 时，统一使用 Claude Code 内置 ${nativeCommandTool} 运行 \`webcli call\`，不得使用 \`weworker_powershell\`。
+优先按已激活的标准 Skill 指令执行。执行 Extension Adapter 或 Toolkit Adapter 时，优先使用内置 \`webcli_call\`；不可用时才使用 Claude Code 内置 ${nativeCommandTool} 运行 \`webcli call\`，不得使用 \`weworker_powershell\`。
 Claude Code 内置 ${nativeCommandTool} 已开放，也可执行构建、测试、git、npm 和其他本地命令。
 内置 ${nativeCommandTool} 不受 WeWorker 用户目录白名单、黑名单、绝对路径或命令类型限制。
 WebCLI 会按 Adapter 类型分别选择 Chrome 扩展 Bridge 或内嵌 Toolkit Runtime；不要直接调用 Adapter 脚本路径。
@@ -413,11 +413,11 @@ ${authSites.join('\n')}
       : 'WeWorker Shell 命令（含 cat、type、python 等）与内置文件工具同样受用户目录边界约束，越界请求会被系统拦截。',
     blacklist_notice: blacklistNotice,
     local_command_execution_rule: channelPermissionMode === 'full'
-      ? `执行 Extension Adapter 或 Toolkit Adapter 时必须使用 Claude Code 内置 ${nativeCommandTool} 运行 \`webcli call\`，不得使用 \`weworker_powershell\`；其他本地命令、构建、测试、git 或 npm 也可以使用内置 ${nativeCommandTool}。`
+      ? `执行 Extension Adapter 或 Toolkit Adapter 时必须优先调用内置 \`webcli_call\`；不可用时才使用 Claude Code 内置 ${nativeCommandTool} 运行 \`webcli call\`，不得使用 \`weworker_powershell\`；其他本地命令、构建、测试、git 或 npm 也可以使用内置 ${nativeCommandTool}。`
       : '当需要执行本地命令、Shell 命令、构建、测试、git、npm 或查看命令输出时，必须调用 `weworker_powershell` 工具，不要调用 Claude Code 内置 Bash 或 PowerShell。',
     default_shell: defaultShell,
     adapter_shell_rule: adapterExecutionEnabled
-      ? '网站操作仍按 webcli 规则执行；不要为了调用网站工具而改用 `weworker_powershell`。'
+      ? '网站操作优先调用内置 `webcli_call`，兼容场景使用 webcli call；不要为了调用网站工具而改用 `weworker_powershell`。'
       : '当前权限模式不能执行 Adapter；严禁用 `weworker_powershell` 调用 webcli。',
     windows_encryption_rules: windowsEncryptionRules,
     assistant_status_prefix: ASSISTANT_STATUS_PREFIX,
