@@ -45,6 +45,12 @@ export function resolveWebwrightModelConfig(settings: Settings) {
   }
 }
 
+// Activating a preset provider returns the exploration agent to that provider's preset webwright config.
+export function explorationResetPatch(provider: string): Partial<Pick<Settings, 'exploration_base_url' | 'exploration_model' | 'exploration_api_key' | 'exploration_use_main_key'>> {
+  if (provider === 'custom') return {}
+  return { exploration_base_url: '', exploration_model: '', exploration_api_key: '', exploration_use_main_key: true }
+}
+
 export function suggestExplorationBaseUrl(settings: Settings): { url: string; generated: boolean } {
   const saved = settings.exploration_base_url || (settings.active_provider === 'custom' ? settings.openai_base_url_custom : '')
   if (saved) return { url: normalizeLlmBaseUrl(saved), generated: false }
