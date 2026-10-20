@@ -58,7 +58,7 @@ import { listProviderModels, probeMainConnection, probeProviderProtocol, type Pr
 import { registerExplorationModelRoutes } from './exploration-model-settings.js'
 import { buildAnthropicAuthHeaders, isAnthropicAuthType } from './anthropic-auth.js'
 import { parseContextLimit } from './context-window.js'
-import { isAuthorizedModelConfigRequest, resolveWebwrightModelConfig } from './webwright-model-config.js'
+import { explorationResetPatch, isAuthorizedModelConfigRequest, resolveWebwrightModelConfig } from './webwright-model-config.js'
 import { assertAllowedWeixinBaseUrl, buildAllowedWeixinBaseUrls } from './channel-egress.js'
 import { normalizeOwnerPermissionLevel, validateOwnerUserId } from './channels/channel-permissions.js'
 import { clearAdapterCache, getRegistryDefaultIcon, getRegistryIconById, parseAllAdapters } from './adapter-parser.js'
@@ -624,6 +624,8 @@ app.post('/settings/provider/activate', (req, res) => {
     model,
     context_limit: contextLimit,
     base_url: baseUrl,
+    // Stale independent exploration settings must not outlive the provider they were configured for.
+    ...explorationResetPatch(provider),
   }
   res.json(buildSettingsResponse(updateSettings(updates)))
 })
