@@ -147,7 +147,7 @@ export async function runStats(argv) {
 
   const endpoint = process.env.WEBCLI_METRICS_ENDPOINT;
   if (!endpoint) {
-    console.error("Error: webcli stats 需要设置 WEBCLI_METRICS_ENDPOINT（服务端地址）");
+    console.error("Error: webcli stats 仅查询远程服务，不提供本地统计。请设置 WEBCLI_METRICS_ENDPOINT（统计服务地址）；鉴权服务还需 WEBCLI_METRICS_TOKEN。");
     process.exit(1);
   }
 

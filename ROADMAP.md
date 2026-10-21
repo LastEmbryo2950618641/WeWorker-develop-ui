@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-21（A03/A04/A06/A08 修复）：WebCLI 打包注入自身版本，统一远程统计帮助与配置提示，`adapter install --file` 支持 v2 `.adapt` 并复用统一安装门禁，knowledge 帮助明确旧式包边界与 skill 迁移。GitHub 1.0.1 详情采用只读宿主导航续执行，修复列表/详情往返、绝对链接选择、空结果成功与 max_comments=0；404、登录、未就绪明确失败。相关 WebCLI 222 项及脚本/扩展 17 项通过，public 33 包与 WebCLI 构建、配置/语法/差异检查通过；正式 bundle/Windows 包装器版本、隔离归档安装及真实 Chrome 列表到详情读取通过。真实页面验证为 CDP handler + 宿主运行时，未覆盖完整桌面 Extension/Bridge 链路、截图原 trace、完整安装包或 macOS；保留既有列映射资产缺失提示。详见 `docs/webcli-a03-a04-a06-a08-fixes.md`。通过修复分支提交 PR 至 develop；未合并或发布。
+
 - 2026-10-21（A01/A02/A05/A07 迁入 develop）：基于远端 `3b0780d` 迁入携程 32 MiB 响应捕获/错误分类/IATA 提示、Wikipedia 官方 Action API 随机导语及相关回归与验收记录；保留 develop 已有 B 站导航、豆瓣搜索修复和安全验证指引，不合入 dev-1.1.0 其他功能。WebCLI 179 项、Wikipedia 专项 23 项、扩展/构建 profile 54 项共 256 项测试通过；WebCLI/public 33 包构建、配置与产物逐字节一致性校验通过。既有 api-adapter-packaging 测试仍失败于未改动的旧源码断言，详见验收文档；本分支未重跑完整桌面实机或安装包。
 
 - 2026-10-21（A01/A02/A05/A07 修复复验）：保留本机 B 站自定义包全部工具并补齐 www 导航主机；修复豆瓣搜索将函数字符串当函数调用。携程约 14.3 MB 单程响应超过旧 8 MiB 缓存导致正文丢失，捕获改为单体 32 MiB/Chrome 总缓存 64 MiB，区分正文不可读、空响应、截断与 JSON 错误，补齐 IATA 参数示例。Wikipedia random 改用官方 Action API，保留后台调用。实测 B 站搜索/详情/评论、豆瓣六项、京东搜索/商品打开、携程酒店/单程/往返、51job 搜索/热门、36氪热榜通过；Wikipedia 经现有代理后台普通调用及关闭任务自有业务页后的调用通过。243 项聚焦测试、配置/语法/差异检查及 WebCLI/33 包构建通过。51job 旧通道错误未复现；Wikipedia 直连超时，进程代理不持久化；未构建安装包或做跨平台长期验收。见 `docs/adapter-a01-a02-a05-a07-verification.md`。

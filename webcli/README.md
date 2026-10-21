@@ -99,12 +99,12 @@ webcli service status              查看服务状态
 webcli call <tool_name> [--key=value]   调用适配器工具
 
 # 调用频次统计
-webcli stats                            各 domain 调用频次（本地）
+webcli stats                            远程统计，需配置 WEBCLI_METRICS_ENDPOINT
 webcli stats --by tool                  按具体工具聚合
 webcli stats --since 7d                 近 7 天（d/h/m，默认 30d）
 webcli stats --kind adapter             只看 adapter（或 builtin）
 webcli stats --top 10 --json            top N / JSON 输出
-webcli stats --remote                   查询服务端全团队汇总
+webcli stats --remote                   与默认远程查询相同（兼容参数）
 
 # 适配器查询
 webcli adapter list [--json]            列出已安装适配器
@@ -113,8 +113,10 @@ webcli adapter skill <id>               输出适配器的 SKILL.md
 webcli adapter skill <id> --generated   输出适配器的 SKILL.generated.md
 webcli adapter skill <id> --regenerate  重新生成 skill（生成式 adapter 默认写 SKILL.generated.md）
 webcli adapter skill <id> --regenerate --overwrite  覆盖写入 SKILL.md
-webcli adapter knowledge <id>           输出适配器的 WEBCLI_KNOWLEDGE.md
-webcli adapter knowledge <id> --json    输出适配器的 WEBCLI_KNOWLEDGE.json
+webcli adapter install --directory <dir> 安装 v2 目录
+webcli adapter install --file <包.adapt>  安装 v2 归档（旧式 .js 仍兼容）
+webcli adapter knowledge <id>           仅旧式包：WEBCLI_KNOWLEDGE.md；v2 改用 adapter skill
+webcli adapter knowledge <id> --json    仅旧式包：WEBCLI_KNOWLEDGE.json
 
 # Skill 安装
 webcli install --skills [id]            安装 skill 到 ~/.claude/skills/
@@ -190,23 +192,25 @@ Skill 发布只包含 `skills/webcli/SKILL.md`。Extension、运行时和 Adapte
 
 ## 调用频次统计
 
-每次工具调用都在 Bridge（`bridge.js` 的 `callTool`）收口处记一条元数据到 `~/.webcli/metrics.jsonl`（只记 `tool`/`domain`/`kind`/`ok`/`ms`/`traceID`/`err`，**绝不记 `args` 与 `result`**）。
+`webcli stats` 统一查询配置的远程统计服务，不读取本地历史文件，也不提供离线统计。`--remote` 仅为兼容参数，与默认行为相同。查询必须设置 `WEBCLI_METRICS_ENDPOINT`；服务需要鉴权时还须设置 `WEBCLI_METRICS_TOKEN`。
 
-- 本地查询：`webcli stats`（离线可用）
+- 查询示例：`webcli stats --by tool --since 7d --json`
 - 关闭埋点：`WEBCLI_METRICS=off`
 
 ### 回调上报到服务端（可选）
 
-配置以下三项（齐备才上报）后，`webcli service` daemon 会每 60s 把本地新增记录批量上报到服务端，供 `webcli stats --remote` 查询全团队汇总：
+上报与查询分别控制。设置 `WEBCLI_METRICS_UPLOAD=on` 和 endpoint 后，Bridge 对工具调用元数据即时异步上报，不落盘、不阻塞工具执行，失败静默丢弃；不包含调用参数和返回内容。关闭上报不妨碍查询已配置的服务：
 
 | 环境变量 | 说明 |
 |---|---|
 | `WEBCLI_METRICS_UPLOAD=on` | 启用上报（默认关） |
-| `WEBCLI_METRICS_ENDPOINT` | 服务端地址，如 `https://metrics.internal/v1/metrics/batch` |
+| `WEBCLI_METRICS_ENDPOINT` | 服务端地址，如 `https://metrics.example.com/v1/metrics/batch`；查询会转换为 `/v1/stats` |
 | `WEBCLI_METRICS_TOKEN` | Bearer 鉴权 token |
 | `WEBCLI_METRICS_USER` | 可选，团队账号；不设则只带匿名 clientId |
 
 服务端部署见 [`../metrics-server/README.md`](../metrics-server/README.md)。
+
+v2 包以 manifest 和 guidance 派生 `adapter skill <id>`，没有旧式 `WEBCLI_KNOWLEDGE` 文件。`adapter knowledge`（包括 `--json`）仅用于旧式包，不能把它的 JSON 当作 v2 Skill。v2 归档从 `adapter install --file <包.adapt>` 或 `adapterhub install <包.adapt>` 安装；解包目录使用 `--directory`。权限扩大、来源切换及降级仍须显式批准。
 
 ## 相关文档
 
