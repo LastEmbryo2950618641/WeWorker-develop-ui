@@ -69,11 +69,12 @@ Adapters:
   adapter skill <id> --generated           输出 SKILL.generated.md 内容
   adapter skill <id> --regenerate          重新生成 skill（生成式 adapter 默认写 SKILL.generated.md）
   adapter skill <id> --regenerate --overwrite 覆盖写入 SKILL.md
-  adapter knowledge <id>                   输出 WEBCLI_KNOWLEDGE.md 内容
-  adapter knowledge <id> --json            输出 WEBCLI_KNOWLEDGE.json 内容
+  adapter knowledge <id>                   仅旧式 Adapter：输出 WEBCLI_KNOWLEDGE.md；v2 使用 adapter skill <id>
+  adapter knowledge <id> --json            仅旧式 Adapter：输出 WEBCLI_KNOWLEDGE.json
   adapter skills-path                      输出 adapters 目录路径
   adapter install --url <url> [--reload]   从 URL 安装（仅 https）
-  adapter install --file <path> [--reload] 从本地文件安装
+  adapter install --directory <dir>       安装解包后的 v2 目录
+  adapter install --file <path.adapt>      安装 v2 归档（旧式 .js 仍兼容）
   adapter remove  <id>  [--reload]         移除 adapter
 
 AdapterHub:
@@ -114,13 +115,13 @@ Tools:
                                   查看某站点的全部工具（-f json 结构化输出）
 
 Stats:
-  stats                          各 domain 调用频次（本地），按次数倒序
+  stats                          远程统计，需配置 WEBCLI_METRICS_ENDPOINT；按 domain 调用次数倒序
   stats --by tool                按具体工具聚合
   stats --since 7d               近 7 天（支持 d/h/m，默认 30d）
   stats --kind adapter           只看 adapter（或 builtin）
   stats --top 10                 只展示 top N
   stats --json                   JSON 输出
-  stats --remote                 查询服务端全团队汇总（需配置 WEBCLI_METRICS_ENDPOINT）
+  stats --remote                 与默认查询相同的远程统计（兼容参数）
 
 Skills:
   install --skills [adapter-id]          安装 skill 到 ~/.claude/skills/
@@ -200,6 +201,10 @@ Agent tip: use 'webcli call <tool> --key=value ...' to invoke a tool.
 }
 
 async function printVersion() {
+  if (typeof __WEBCLI_VERSION__ !== "undefined") {
+    console.log(`webcli ${__WEBCLI_VERSION__}`);
+    return;
+  }
   try {
     const pkgPath = join(__dirname, "package.json");
     const pkg = JSON.parse(await readFile(pkgPath, "utf8"));

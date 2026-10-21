@@ -79,10 +79,10 @@ export async function adapterHelpJson() {
     commands: [
       { name: "list", usage: "webcli adapter list [--json]", description: "列出已安装 adapter" },
       { name: "info <id>", usage: "webcli adapter info <id>", description: "查看 adapter 的工具列表" },
-      { name: "install", usage: "webcli adapter install <id> | --url <url> | --file <path>", description: "安装 adapter（Hub/URL/本地文件）" },
+      { name: "install", usage: "webcli adapter install --directory <dir> | --file <package.adapt>", description: "安装 v2 目录或归档；旧式 .js / --url 保留兼容" },
       { name: "remove <id>", usage: "webcli adapter remove <id>", description: "移除 adapter" },
       { name: "skill <id>", usage: "webcli adapter skill <id> [--generated|--regenerate]", description: "输出/重新生成 SKILL.md" },
-      { name: "knowledge <id>", usage: "webcli adapter knowledge <id> [--json]", description: "输出 WEBCLI_KNOWLEDGE" },
+      { name: "knowledge <id>", usage: "webcli adapter knowledge <id> [--json]", description: "仅旧式 Adapter：输出 WEBCLI_KNOWLEDGE；v2 使用 webcli adapter skill <id>" },
       { name: "skills-path", usage: "webcli adapter skills-path", description: "输出 adapters 目录路径" },
       { name: "refresh", usage: "webcli adapter refresh", description: "强制刷新 Hub registry 缓存" },
     ],
@@ -216,7 +216,7 @@ Commands:
   webcli adapter develop <dir>               Register a development package
   webcli adapter use <id> <source>           Select builtin/user/development/disabled
   webcli adapter install --url <url>         Install from URL (https only)
-  webcli adapter install --file <path>       Install from local file
+  webcli adapter install --file <path.adapt> Install a validated v2 archive (legacy .js also supported)
   webcli adapter list                        List installed adapters
   webcli adapter list --json                 List adapters with tools (JSON)
   webcli adapter info <id>                   Show adapter tools
@@ -225,8 +225,8 @@ Commands:
   webcli adapter skill <id> --regenerate     Regenerate skill (generated adapters write SKILL.generated.md)
   webcli adapter skill <id> --regenerate --overwrite
                                              Regenerate and overwrite SKILL.md
-  webcli adapter knowledge <id>              Print WEBCLI_KNOWLEDGE.md content
-  webcli adapter knowledge <id> --json       Print WEBCLI_KNOWLEDGE.json content
+  webcli adapter knowledge <id>              Legacy only: print WEBCLI_KNOWLEDGE.md; v2: use adapter skill <id>
+  webcli adapter knowledge <id> --json       Legacy only: print WEBCLI_KNOWLEDGE.json
   webcli adapter skills-path                 Print adapters directory path
   webcli adapter remove <id>                 Remove adapter
   webcli adapter refresh                     Force-refresh Hub registry cache
@@ -247,6 +247,8 @@ Agent tip: use 'webcli adapter <id> -help' to inspect one site.
            use 'webcli adapter <id> -help -f json' for structured tools.
 
 Examples:
+  webcli adapter install --file ./my-adapter.adapt
+  webcli adapter install --directory ./my-adapter
   webcli adapter install --file ~/projects/my-adapter.js --name my.site.com
   webcli adapter install --url https://cdn.example.com/oa.js --name company.oa --reload
   webcli adapter list --json

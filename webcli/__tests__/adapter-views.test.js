@@ -10,6 +10,7 @@ import { managedAdapterView, managedAdapterViews, managedAdapterSkill } from '..
 import { syncManagedAdapterSkills } from '../adapter-skill-sync.js';
 import { describeAdapterCatalog } from '../adapter-host.js';
 import { WebSocketBridge } from '../bridge.js';
+import { zipSync } from 'fflate';
 
 const cli = fileURLToPath(new URL('../index.js', import.meta.url));
 let root, target;
@@ -49,6 +50,20 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllEnvs(); rmSync(root, { recursive: true, force: true }); });
 
 describe('effective Adapter CLI views and generated Skills', () => {
+  it('installs v2 archives through --file without legacy filename inference and keeps permission checks', () => {
+    const archive = join(root, 'package.adapt');
+    const archiveFiles = version => Object.fromEntries([...files(version, version === '1.0.0' ? 'list' : 'changed')].map(([name, value]) => [name, Buffer.from(value)]));
+    writeFileSync(archive, zipSync(archiveFiles('1.0.0')));
+    expect(JSON.parse(success(['adapter', 'install', '--file', archive, '--json']))).toMatchObject({ name: 'demo', version: '1.0.0', active: true });
+    writeFileSync(archive, zipSync(archiveFiles('1.1.0')));
+    expect(run(['adapter', 'install', '--file', archive, '--json']).status).toBe(1);
+    expect(managedAdapterView('demo').version).toBe('1.0.0');
+    success(['adapter', 'install', '--file', archive, '--allow-permission-change', '--json']);
+    expect(managedAdapterView('demo').version).toBe('1.1.0');
+    writeFileSync(archive, 'invalid archive');
+    expect(run(['adapter', 'install', '--file', archive]).status).toBe(1);
+    expect(managedAdapterView('demo').version).toBe('1.1.0');
+  });
   it('uses the same version, digest and tools in list, info, help and Skill without changing the package', () => {
     const installed = install();
     const listing = JSON.parse(success(['adapter', 'list', '--json'])).filter((entry) => entry.id === 'demo');
@@ -182,7 +197,12 @@ describe('effective Adapter CLI views and generated Skills', () => {
     const legacy = join(root, 'legacy.js'); writeFileSync(legacy, 'fixture');
     expect(run(['adapter', 'install', '--file', legacy, '--name', 'demo']).status).toBe(1);
     expect(managedAdapterView('demo').version).toBe('1.1.0');
-    expect(run(['adapter', 'knowledge', 'demo']).status).toBe(1);
+    const knowledge = run(['adapter', 'knowledge', 'demo']);
+    expect(knowledge.status).toBe(1);
+    expect(knowledge.stderr).toContain('Use webcli adapter skill demo');
+    expect(success(['adapter', '--help'])).toContain('Legacy only');
+    const help = JSON.parse(success(['adapter', '--help', '-f', 'json']));
+    expect(help.commands.find(command => command.name === 'knowledge <id>').description).toContain('仅旧式');
   });
 
   it('updates manually disabled generated Skills without enabling them', () => {
