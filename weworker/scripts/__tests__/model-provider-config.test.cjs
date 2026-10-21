@@ -250,3 +250,50 @@ test('Vite serves model metadata without encrypted credentials in development', 
     assert.equal(source.providers.filter(p => p.encryptedApiKey).some(p => transformed.code.includes(p.encryptedApiKey)), false);
   } finally { await server.close(); }
 });
+
+test('running Vite refreshes fixed-provider flags when the referenced JSON changes', async t => {
+  const { createRequire } = require('node:module');
+  const { pathToFileURL } = require('node:url');
+  const vm = require('node:vm');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'weworker-vite-model-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const renderer = path.join(directory, 'renderer');
+  fs.mkdirSync(renderer);
+  fs.mkdirSync(path.join(directory, 'scripts'));
+  for (const filename of ['model-provider-config.cjs', 'build-profile-overlay.cjs', 'build-profile-validator.cjs']) {
+    fs.copyFileSync(path.join(root, 'scripts', filename), path.join(directory, 'scripts', filename));
+  }
+  fs.copyFileSync(path.join(root, 'renderer/vite.config.js'), path.join(renderer, 'vite.config.mjs'));
+  fs.symlinkSync(fs.realpathSync(path.join(root, 'renderer/node_modules')), path.join(directory, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
+  fs.writeFileSync(path.join(directory, 'build-profile.json'), JSON.stringify({ adapters: [], modelProviders: './model.json' }));
+  const config = { defaultProvider: 'anthropic', providers: source.providers.filter(p => p.id === 'anthropic').map(p => ({
+    ...p, weworker: { ...p.weworker, baseUrl: 'https://example.com' },
+    webwright: { ...p.webwright, baseUrl: 'https://example.org' },
+  })) };
+  const configPath = path.join(directory, 'model.json');
+  fs.writeFileSync(configPath, JSON.stringify(config));
+  const rendererRequire = createRequire(path.join(root, 'renderer/package.json'));
+  const { createServer } = await import(pathToFileURL(rendererRequire.resolve('vite')).href);
+  const server = await createServer({ root: renderer, configFile: path.join(renderer, 'vite.config.mjs'),
+    logLevel: 'silent', server: { host: '127.0.0.1', port: 0 } });
+  try {
+    await server.listen();
+    const metadata = async () => {
+      const port = server.httpServer.address().port;
+      const response = await fetch(`http://127.0.0.1:${port}/@vite/env`);
+      const context = vm.createContext({});
+      vm.runInContext(await response.text(), context);
+      return context.__BUILD_PROVIDERS__;
+    };
+    assert.equal((await metadata())[0].fixed, true);
+    config.providers[0].fixed = false;
+    fs.writeFileSync(configPath, JSON.stringify(config));
+    const deadline = Date.now() + 8000;
+    while (JSON.parse(server.config.define.__BUILD_PROVIDERS__)[0].fixed && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    await server._restartPromise;
+    while (!server.httpServer.listening && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal((await metadata())[0].fixed, false, 'development metadata must follow JSON edits without manually restarting Vite');
+  } finally { await server.close(); }
+});

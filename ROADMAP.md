@@ -2,6 +2,8 @@
 
 - 2026-10-21（内部构建通用能力）：构建 profile 支持直接识别完整 `public/internal` 配置，统一 Electron、Renderer 与 electron-builder 从 deployment 配置读取官网、下载和更新地址，并补齐 profile、Provider 与 deployment 聚焦测试。通过隔离 staging 与内部资产完成 Windows x64 标准安装包和内部官网验证：构建脚本 50/50、网站探索agent 集成 23/23、内部组装 3/3 通过，安装包为 internal profile 且包含 31 个内部 Adapter；公共基准仓库未产生构建文件。macOS arm64/x64 留待 GitHub Runner 验证，尚未推送验证分支或运行线上工作流。
 
+- 2026-10-21：排查 JSON 迁移后固定供应商可删除、对话预选缺失的反馈，确认旧开发进程仍注入缺少行为标记的数据；重载正确工作区后，实际 Electron 设置页 6 项预置均禁止删除，对话下拉显示全部预置，未填 Key 的行内供应商正常打开配置弹窗。补齐 Vite 对构建 Profile 及引用模型 JSON 的配置依赖，修改后自动重载注入标记，避免继续使用旧值。验证：真实临时 Vite 服务先复现修改 `fixed` 后仍返回旧值，修复后 HTTP 元数据自动更新；脚本 15 项、Backend 配置 15 项、Renderer 模型选择 23 项测试、Renderer 生产构建和 JS 语法检查通过。未验证：完整安装包；本轮未修改供应商网关、凭据或模型锁定规则。
+
 - 2026-10-21：按确认将两项部署网关直接补入 `weworker/model.json`，并将内置托管模型的既有 API Key 密文迁入 `encryptedApiKey`；后端从 JSON 解密，不再回退代码中的旧密钥和加密网关。行内供应商仍使用用户 Key 和动态模型目录。前端构建注入与开发 JSON 模块剔除密文，Backend 供应商元数据不携带密文；构建裁剪供应商时同步裁剪凭据与源 JSON 回退内容。验证：脚本 28 项、Backend 100 项、Renderer 45 项测试、Backend 类型检查、Renderer 构建、配置冒烟及语法检查通过；实测 Vite 开发响应与前端产物无密文。未验证：真实模型请求、完整 Electron 交互与安装包。
 
 - 2026-10-21：按要求将统一模型配置文件重命名为 `weworker/model.json`，同步前后端导入、构建 Profile、测试及文档引用。验证：相关脚本 25 项和 Renderer 45 项测试、Backend 类型检查、Renderer 生产构建、配置冒烟校验与语法检查通过；源码无旧文件名引用。

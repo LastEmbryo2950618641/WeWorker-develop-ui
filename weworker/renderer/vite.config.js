@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import fs from 'node:fs'
+import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
 
@@ -20,6 +21,15 @@ export default defineConfig(({ command }) => {
     plugins: [{
       name: 'model-public-metadata',
       enforce: 'pre',
+      configResolved(config) {
+        // These files are read through CommonJS/fs, outside Vite's import graph.
+        // Treat them as config dependencies so edits rebuild injected flags too.
+        const profilePath = fileURLToPath(new URL('../build-profile.json', import.meta.url))
+        const profile = JSON.parse(fs.readFileSync(profilePath, 'utf8'))
+        const dependencies = [profilePath]
+        if (profile.modelProviders) dependencies.push(path.resolve(path.dirname(profilePath), profile.modelProviders))
+        config.configFileDependencies.push(...dependencies.map(file => file.replaceAll('\\', '/')))
+      },
       load(id) {
         const modelPath = fileURLToPath(new URL('../model.json', import.meta.url))
         if (id.split('?')[0].replaceAll('\\', '/') !== modelPath.replaceAll('\\', '/')) return null
