@@ -177,13 +177,13 @@ function bundleBackend(options = {}) {
   fs.writeFileSync(
     path.join(outDir, '.profile.json'),
     JSON.stringify({
-      profile: profileEntry ? (process.env.WEWORKER_BUILD_PROFILE || 'custom') : 'public',
+      profile: process.env.WEWORKER_BUILD_PROFILE || currentBuildDefines.profile || (profileEntry ? 'custom' : 'public'),
       entry: profileEntry ? path.basename(profileEntry) : null,
     }, null, 2) + '\n',
     'utf-8',
   )
 
-  console.log(`Backend-TS bundle created: ${outFile} (profile=${profileEntry ? path.basename(profileEntry) : 'public'})`)
+  console.log(`Backend-TS bundle created: ${outFile} (profile=${currentBuildDefines.profile || 'public'})`)
 }
 
 module.exports = { bundleBackend, createEsbuildDefines, loadBuildPrompts }

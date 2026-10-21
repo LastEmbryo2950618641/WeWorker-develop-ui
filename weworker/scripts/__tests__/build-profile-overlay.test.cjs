@@ -75,6 +75,13 @@ test('build options use public by default and resolve an explicit overlay', () =
   });
 });
 
-test('non-public profiles require an overlay', () => {
-  assert.throws(() => parseBuildOptions(['--profile', 'internal'], {}, process.cwd()), /requires --overlay/);
+test('a complete internal profile needs no overlay and mismatches fail closed', () => {
+  assert.deepEqual(parseBuildOptions([], {}, process.cwd(), 'internal'), {
+    profileName: 'internal',
+    overlayPath: null,
+  });
+  assert.throws(
+    () => parseBuildOptions(['--profile', 'internal'], {}, process.cwd(), 'public'),
+    /does not match build-profile\.json/,
+  );
 });

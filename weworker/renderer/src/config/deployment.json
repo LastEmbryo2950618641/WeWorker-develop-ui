@@ -1,4 +1,16 @@
 {
   "officialUrl": "http://weworker.example.com",
-  "downloadUrl": "http://weworker.example.com/downloads/"
+  "downloadUrl": "http://weworker.example.com/downloads/",
+  "updateSources": [
+    {
+      "id": "official",
+      "label": "官网",
+      "url": "http://weworker.example.com/downloads/"
+    },
+    {
+      "id": "github",
+      "label": "GitHub latest",
+      "url": "https://github.com/WeWorker/WeWorker/releases/download/latest/"
+    }
+  ]
 }

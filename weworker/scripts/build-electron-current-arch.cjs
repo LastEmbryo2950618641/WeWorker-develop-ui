@@ -1,5 +1,6 @@
 const { spawnSync } = require('child_process')
 const path = require('path')
+const { loadDeploymentConfig } = require('./deployment-config.cjs')
 
 function buildElectronArgs(target, platform = process.platform, arch = process.arch) {
   if (target === '--mac') {
@@ -31,7 +32,13 @@ function buildElectronCommand(
 function main(argv = process.argv.slice(2)) {
   if (argv.length !== 1) throw new Error('Usage: node scripts/build-electron-current-arch.cjs --mac|--win')
   const { executable, args } = buildElectronCommand(argv[0])
-  const result = spawnSync(executable, args, { cwd: path.resolve(__dirname, '..'), stdio: 'inherit', shell: false })
+  const deployment = loadDeploymentConfig()
+  const result = spawnSync(executable, args, {
+    cwd: path.resolve(__dirname, '..'),
+    stdio: 'inherit',
+    shell: false,
+    env: { ...process.env, WEWORKER_PUBLISH_URL: deployment.downloadUrl },
+  })
   if (result.error) throw result.error
   if (result.status !== 0) throw new Error(`electron-builder exited with code ${result.status}`)
 }

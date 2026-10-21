@@ -44,11 +44,11 @@ import { getAnthropicUrlHint, getOpenAiUrlHint } from '../../utils/provider-url.
 import { showConfirm } from '../../store/dialog.js'
 import { BROWSER_MODE_OPTIONS, describeBrowserMode } from '../../utils/dedicated-browser.js'
 import SiteLoginSettings from '../site-login/SiteLoginSettings.jsx'
+import deployment from '../../config/deployment.json'
 
 const API = 'http://127.0.0.1:8765'
-const OFFICIAL_URL = 'http://weworker.weoa.com'
-const DOWNLOAD_URL = 'http://weworker.weoa.com/downloads/'
-const GITHUB_UPDATE_URL = 'https://github.com/WeWorker/WeWorker/releases/download/latest/'
+const OFFICIAL_URL = deployment.officialUrl
+const DOWNLOAD_URL = deployment.downloadUrl
 
 const EXACT_PATH_PLACEHOLDER = '例如 folder-b/foo/.env 或 .env'
 const REGEX_PATH_PLACEHOLDER = '例如 ^folder-b/.*\\.env$'
@@ -371,10 +371,11 @@ function AboutTab({ appVersion, commitHash }) {
   const updateMetadataFile = updateState?.platform === 'darwin' ? 'latest-mac.yml' : 'latest.yml'
   const updateSources = Array.isArray(updateState?.updateSources) && updateState.updateSources.length > 0
     ? updateState.updateSources
-    : [
-        { id: 'official', label: '官网', metadataUrl: `${DOWNLOAD_URL}${updateMetadataFile}` },
-        { id: 'github', label: 'GitHub latest', metadataUrl: `${GITHUB_UPDATE_URL}${updateMetadataFile}` },
-      ]
+    : deployment.updateSources.map((source) => ({
+        id: source.id,
+        label: source.label,
+        metadataUrl: `${source.url}${updateMetadataFile}`,
+      }))
   const activeUpdateSourceId = updateState?.activeUpdateSource?.id || ''
   const checkIntervalValue = Number(updateSettings.checkIntervalHours || 1)
   const canCheck = status !== 'checking' && status !== 'downloading'

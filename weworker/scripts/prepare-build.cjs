@@ -4,7 +4,7 @@
  * prepare-build.cjs — 构建预处理脚本
  *
  * 职责：
- * 1. 读取并校验公开 build profile，可选叠加仓库外部 overlay
+ * 1. 读取并校验完整 build profile，可选叠加仓库外部 legacy overlay
  * 2. 从各 adapter 的 manifest.json 筛选 adapter，输出完整 extension-dist
  * 3. 将 providers/defaultProvider 写入 build/.build-defines.json
  *
@@ -62,8 +62,8 @@ async function main() {
   let profile;
   let overlay = {};
   try {
-    options = parseBuildOptions(process.argv.slice(2));
     const baseProfile = loadBuildProfile(PROFILE_PATH);
+    options = parseBuildOptions(process.argv.slice(2), process.env, process.cwd(), baseProfile.profile);
     if (options.overlayPath) overlay = readJson(options.overlayPath, 'build overlay');
     profile = mergeConfiguredProfile(baseProfile, overlay);
   } catch (err) {
@@ -135,6 +135,11 @@ async function main() {
     providers: profile.providers,
     defaultProvider: profile.defaultProvider,
     commitHash: (() => {
+      const lockedCommit = String(process.env.WEWORKER_BUILD_COMMIT || '').trim();
+      if (lockedCommit) {
+        if (!/^[0-9a-f]{7,40}$/i.test(lockedCommit)) throw new Error('WEWORKER_BUILD_COMMIT must be a Git SHA');
+        return lockedCommit.slice(0, 12);
+      }
       try {
         return require('child_process').execSync('git rev-parse --short HEAD', { encoding: 'utf-8' }).trim();
       } catch { return 'unknown'; }

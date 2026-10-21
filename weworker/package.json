@@ -48,7 +48,9 @@
     "afterPack": "scripts/after-pack.cjs",
     "files": [
       "electron/**",
-      "renderer/dist/**"
+      "renderer/dist/**",
+      "renderer/src/config/deployment.json",
+      "scripts/deployment-config.cjs"
     ],
     "extraResources": [
       {
@@ -56,6 +58,7 @@
         "to": "backend-ts",
         "filter": [
           "server.cjs",
+          ".profile.json",
           "query-routes.json",
           "router-config/**",
           "api-exploration-skills/**",
@@ -173,7 +176,7 @@
     "publish": [
       {
         "provider": "generic",
-        "url": "https://example.com/downloads/"
+        "url": "${env.WEWORKER_PUBLISH_URL}"
       }
     ]
   }

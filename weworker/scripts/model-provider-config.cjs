@@ -39,11 +39,12 @@ function loadBuildDefines({ root = ROOT, development = false } = {}) {
   const definesPath = path.join(root, 'build/.build-defines.json');
   let prepared = {};
   if (!development && fs.existsSync(definesPath)) prepared = readJson(definesPath, 'build definitions');
-  if (prepared.profile && prepared.profile !== 'public' && !prepared.providerOverlay) {
+  const sourceProfile = base.profile || 'public';
+  if (prepared.profile && prepared.profile !== sourceProfile && !prepared.providerOverlay) {
     throw new Error('Legacy custom build definitions: rerun prepare-build with the original overlay');
   }
   const effective = mergeConfiguredProfile(base, prepared.providerOverlay || {});
-  return { ...prepared, providers: effective.providers, defaultProvider: effective.defaultProvider };
+  return { ...prepared, profile: prepared.profile || sourceProfile, providers: effective.providers, defaultProvider: effective.defaultProvider };
 }
 
 function publicProviders(providers) {

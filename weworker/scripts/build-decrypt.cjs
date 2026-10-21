@@ -23,7 +23,7 @@ if (process.platform !== 'win32') {
 
 try {
   if (!fs.existsSync(venvPython)) {
-    run('uv', ['venv', venvRoot])
+    run('uv', ['venv', '--python', '3.12', venvRoot])
   }
   run('uv', [
     'pip', 'install', '--python', venvPython, '--link-mode', 'copy',

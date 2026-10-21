@@ -1,4 +1,5 @@
 {
+  "profile": "public",
   "adapters": [
     "ctrip.com",
     "bilibili.com",

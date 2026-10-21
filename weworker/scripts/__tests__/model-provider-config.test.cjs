@@ -12,7 +12,7 @@ const source = JSON.parse(fs.readFileSync(path.join(root, 'model.json'), 'utf8')
 function fixture(t, prepared) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'weworker-provider-config-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
-  fs.writeFileSync(path.join(directory, 'build-profile.json'), JSON.stringify({ adapters: [], modelProviders: './model.json' }));
+  fs.writeFileSync(path.join(directory, 'build-profile.json'), JSON.stringify({ profile: 'public', adapters: [], modelProviders: './model.json' }));
   const save = config => fs.writeFileSync(path.join(directory, 'model.json'), JSON.stringify(config));
   save(source);
   if (prepared) {
@@ -30,10 +30,30 @@ function compiled(entry, profile) {
   return module.exports;
 }
 
-test('build profile obtains provider metadata and the default from the referenced JSON', () => {
+test('build profile obtains provider metadata and applies only declared internal differences', () => {
   const effective = loadBuildProfile();
-  assert.deepEqual(effective.providers, source.providers);
-  assert.equal(effective.defaultProvider, source.defaultProvider);
+  if (effective.profile === 'public') {
+    assert.deepEqual(effective.providers, source.providers);
+    assert.equal(effective.defaultProvider, source.defaultProvider);
+    return;
+  }
+
+  assert.equal(effective.profile, 'internal');
+  assert.deepEqual(effective.providers.map(provider => provider.id), source.providers.map(provider => provider.id));
+  assert.ok(effective.providers.some(provider => provider.id === 'bank_coding'));
+  for (const provider of effective.providers) {
+    const publicProvider = source.providers.find(candidate => candidate.id === provider.id);
+    if (provider.id === 'builtin') {
+      const { name: internalName, ...internalProvider } = provider;
+      const { name: publicName, ...publicProviderWithoutName } = publicProvider;
+      assert.notEqual(internalName, publicName);
+      assert.deepEqual(internalProvider, publicProviderWithoutName);
+    } else {
+      assert.deepEqual(provider, publicProvider);
+    }
+  }
+  const declared = JSON.parse(fs.readFileSync(path.join(root, 'build-profile.json'), 'utf8'));
+  assert.equal(effective.defaultProvider, declared.defaultProvider);
 });
 
 test('JSON changes replace stale public definitions in development and production', t => {
@@ -115,6 +135,14 @@ test('legacy nonpublic build definitions require the original overlay preparatio
   const workspace = fixture(t, { profile: 'fixture', providers: source.providers });
   assert.throws(() => loadBuildDefines(workspace), /rerun prepare-build/);
   assert.deepEqual(loadBuildDefines({ ...workspace, development: true }).providers, source.providers);
+});
+
+test('complete internal profiles load prepared definitions without an overlay', t => {
+  const workspace = fixture(t, { profile: 'internal' });
+  const profilePath = path.join(workspace.root, 'build-profile.json');
+  fs.writeFileSync(profilePath, JSON.stringify({ profile: 'internal', adapters: [], modelProviders: './model.json' }));
+  assert.equal(loadBuildDefines(workspace).profile, 'internal');
+  assert.equal(loadBuildDefines(workspace).defaultProvider, source.defaultProvider);
 });
 
 test('runtime presets use JSON gateways and auth while custom settings retain user endpoints', () => {

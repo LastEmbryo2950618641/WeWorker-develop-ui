@@ -126,8 +126,8 @@ function readJson(filePath, label) {
   }
 }
 
-function parseBuildOptions(argv, env = process.env, cwd = process.cwd()) {
-  let profileName = env.WEWORKER_BUILD_PROFILE || 'public';
+function parseBuildOptions(argv, env = process.env, cwd = process.cwd(), declaredProfile = 'public') {
+  let profileName = env.WEWORKER_BUILD_PROFILE || declaredProfile || 'public';
   let overlayPath = env.WEWORKER_BUILD_OVERLAY || '';
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -141,8 +141,8 @@ function parseBuildOptions(argv, env = process.env, cwd = process.cwd()) {
   if (!/^[a-z0-9][a-z0-9_-]*$/i.test(profileName)) {
     throw new Error(`Invalid profile name: ${profileName}`);
   }
-  if (profileName !== 'public' && !overlayPath) {
-    throw new Error(`Profile "${profileName}" requires --overlay or WEWORKER_BUILD_OVERLAY`);
+  if (!overlayPath && declaredProfile && profileName !== declaredProfile) {
+    throw new Error(`Profile "${profileName}" does not match build-profile.json profile "${declaredProfile}"`);
   }
 
   return {

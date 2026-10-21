@@ -2,20 +2,14 @@ import { app } from 'electron'
 import fs from 'fs'
 import path from 'path'
 import updater from 'electron-updater'
+import { createRequire } from 'node:module'
+
+const require = createRequire(import.meta.url)
+const { loadDeploymentConfig } = require('../scripts/deployment-config.cjs')
+const deployment = loadDeploymentConfig()
 
 const SUPPORTED_PLATFORMS = new Set(['win32', 'darwin'])
-const UPDATE_SOURCES = [
-  {
-    id: 'official',
-    label: '官网',
-    url: 'http://weworker.example.com/downloads/',
-  },
-  {
-    id: 'github',
-    label: 'GitHub latest',
-    url: 'https://github.com/WeWorker/WeWorker/releases/download/latest/',
-  },
-]
+const UPDATE_SOURCES = deployment.updateSources
 const DEFAULT_UPDATE_SETTINGS = {
   autoCheckEnabled: true,
   checkIntervalHours: 1,

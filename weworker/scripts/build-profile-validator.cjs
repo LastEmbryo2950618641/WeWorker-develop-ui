@@ -19,6 +19,10 @@ function validateBuildProfile(obj) {
 
   const errors = [];
 
+  if (!['public', 'internal'].includes(obj.profile)) {
+    errors.push('"profile" must be "public" or "internal"');
+  }
+
   // 校验 adapters 字段
   if (!Object.prototype.hasOwnProperty.call(obj, 'adapters')) {
     errors.push('Missing required field: "adapters"');
