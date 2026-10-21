@@ -30,30 +30,10 @@ function compiled(entry, profile) {
   return module.exports;
 }
 
-test('build profile obtains provider metadata and applies only declared internal differences', () => {
+test('build profile obtains provider metadata and the default from the referenced JSON', () => {
   const effective = loadBuildProfile();
-  if (effective.profile === 'public') {
-    assert.deepEqual(effective.providers, source.providers);
-    assert.equal(effective.defaultProvider, source.defaultProvider);
-    return;
-  }
-
-  assert.equal(effective.profile, 'internal');
-  assert.deepEqual(effective.providers.map(provider => provider.id), source.providers.map(provider => provider.id));
-  assert.ok(effective.providers.some(provider => provider.id === 'bank_coding'));
-  for (const provider of effective.providers) {
-    const publicProvider = source.providers.find(candidate => candidate.id === provider.id);
-    if (provider.id === 'builtin') {
-      const { name: internalName, ...internalProvider } = provider;
-      const { name: publicName, ...publicProviderWithoutName } = publicProvider;
-      assert.notEqual(internalName, publicName);
-      assert.deepEqual(internalProvider, publicProviderWithoutName);
-    } else {
-      assert.deepEqual(provider, publicProvider);
-    }
-  }
-  const declared = JSON.parse(fs.readFileSync(path.join(root, 'build-profile.json'), 'utf8'));
-  assert.equal(effective.defaultProvider, declared.defaultProvider);
+  assert.deepEqual(effective.providers, source.providers);
+  assert.equal(effective.defaultProvider, source.defaultProvider);
 });
 
 test('JSON changes replace stale public definitions in development and production', t => {
@@ -265,7 +245,7 @@ test('running Vite refreshes fixed-provider flags when the referenced JSON chang
   }
   fs.copyFileSync(path.join(root, 'renderer/vite.config.js'), path.join(renderer, 'vite.config.mjs'));
   fs.symlinkSync(fs.realpathSync(path.join(root, 'renderer/node_modules')), path.join(directory, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
-  fs.writeFileSync(path.join(directory, 'build-profile.json'), JSON.stringify({ adapters: [], modelProviders: './model.json' }));
+  fs.writeFileSync(path.join(directory, 'build-profile.json'), JSON.stringify({ profile: 'public', adapters: [], modelProviders: './model.json' }));
   const config = { defaultProvider: 'anthropic', providers: source.providers.filter(p => p.id === 'anthropic').map(p => ({
     ...p, weworker: { ...p.weworker, baseUrl: 'https://example.com' },
     webwright: { ...p.webwright, baseUrl: 'https://example.org' },
