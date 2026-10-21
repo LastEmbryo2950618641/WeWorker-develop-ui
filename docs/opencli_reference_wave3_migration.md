@@ -17,7 +17,7 @@
 |---|---|
 | wikipedia.org.search | query必填，limit=10（1..50），lang=en；snippet最多120字符并标记截断；仅真实搜索列表投影 |
 | wikipedia.org.summary | title必填，导语最多300字符，extract_length/extract_truncated和content_scope=lead_summary；缺description为null |
-| wikipedia.org.random | 随机条目导语，不是全文；允许最多两次同语言、同域的summary端点重定向，其余重定向拒绝；此重定向路径仅fixture验证 |
+| wikipedia.org.random | 随机条目导语，不是全文；使用官方 Action API 的 generator=random 在指定语言条目命名空间选取非重定向条目并读取导语；HTTP 跳转仍拒绝。2026-10-21 后台普通调用及关闭任务自有业务页后的调用通过（需可达网络） |
 | wikipedia.org.trending | 请求昨日UTC的featured feed中mostread列表；feed_date是请求日期，mostread_date是上游数据日期，不假设相同；缺views为null，真实0保留 |
 | wikipedia.org.page | title/lang，paragraphs=0默认返回API纯文本extract；N>0明确限制段落，返回total_paragraphs和extract_truncated；不是完整网页/媒体导出 |
 | github.com.repos | since=daily/weekly/monthly、language=''、limit=25（1..25）；仅主区域Box-row仓库卡，校验周期文案；stars/forks累计值、starsSince周期新增值 |

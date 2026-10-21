@@ -36,6 +36,17 @@ function setup(site, { url, payload = {}, bodyText = '', one = {}, all = {}, pri
   return { pkg, handlers, context, requests, calls, run: (id,args={}) => handlers.get(site+'.'+id)(args) };
 }
 
+describe('Douban search page extraction', () => {
+  it.each([['book','book'], ['movie','tvshow'], ['music','music']])('extracts %s cards with a callable type classifier', async (type, expectedType) => {
+    const title = { textContent: 'Example title', getAttribute: name => name === 'href' ? 'https://movie.douban.com/subject/123/' : null };
+    const card = { querySelector: selector => selector.startsWith('.title-text') ? title : null };
+    const url = `https://search.douban.com/${type}/subject_search?search_text=Example${type === 'book' ? '&cat=1001' : ''}`;
+    const s = setup('douban.com', { url, one: { '.item-root .title-text, .item-root .title a': title }, all: { '.item-root, .result-list .result-item': [card] } });
+    s.context.__DATA__ = { items: [{ id: '123', labels: ['剧集'] }] };
+    expect(await s.run('search', { type, keyword: 'Example', limit: '1' })).toMatchObject([{ id: '123', type: expectedType, title: 'Example title' }]);
+  });
+});
+
 describe('OpenCLI batch v2 contracts', () => {
   it.each(sites)('%s preserves inventoried source arguments, defaults and write classification',site=>{
     const {pkg}=setup(site);

@@ -55,7 +55,7 @@
 | `train` | `from/to/date/limit=20`（1–50）；滚动后截取 | DOM；read | 已迁移；深链接、验证码、滚动和卡片解析有 fixture | 真实选择器和懒加载 |
 | `bus` | `from/to/date/limit=20`（1–50）；滚动后截取 | DOM；read | 已迁移；保留携程 `param` 深链接形状和字段解析 | 真实选择器和验证码 |
 | `ferry` | `from/to/date/limit=20`（1–50）；滚动后截取 | DOM；read | 已迁移；船名、港口、时间、票价和状态有 fixture | 真实选择器和验证码 |
-| `flight` | `from/to/date/limit=20`（1–50）；合并批次至上游 `finished=true`，再排序截取 | 网络响应 + DOM 就绪；read | 已迁移；8 MiB/20 条受限捕获、同域/声明域过滤、脱敏日志、截断/状态/JSON/恢复测试 | 真实 `batchSearch` 响应体大小、批次数和风控 |
+| `flight` | `from/to/date/limit=20`（1–50）；合并批次至上游 `finished=true`，再排序截取 | 网络响应 + DOM 就绪；read | 已迁移；32 MiB/20 条受限捕获、同域/声明域过滤、脱敏日志、截断/状态/JSON/恢复测试 | 真实 `batchSearch` 响应体大小、批次数和风控 |
 | `flight-round` | `from/to/depart/return/limit`；返回 outbound/return 双程与 1 成人往返组合价 | 网络响应；read | 0.3.2 替换失效 DOM 卡片；校验两程路由/日期，实际一次返回 3 组报价 | 客户端自然语言复验、境外与跨日路线 |
 | `attraction` | `city/limit=20`（1–50）；当前城市景点链接去重截取 | DOM；read | 已迁移；城市范围、评分和万级点评数有 fixture | 真实城市页和重定向行为 |
 | `cruise` | `port/limit=20`（1–50）；先解析港口代码，可能两次导航 | DOM；read | 已迁移；港口索引、二次导航和线路卡片有 fixture | 真实港口索引及空结果文案 |
@@ -73,7 +73,7 @@
 - 2026-09-24：用户实测发现 `search` 被要求先打开携程页面，而 `open_browser` 白名单只读旧 Extension 清单，未包含根 v2 包。现将 `search` 与 `hotel-suggest` 声明为后台 API 命令，通过受限 `backend_fetch` 调用固定 URL，禁浏览器回退及跨站重定向，查询和响应体不写入 trace；`whoami` 改为后台 Cookie 检查；`open_browser` 对仍需页面的命令同时读取有效 v2 包域名。WebCLI 相关 5 文件 69 项、扩展路由 17 项及包校验通过；两种联想查询经同一 Node 请求路径匿名只读实测各返回 HTTP 200/15 条。未在最新客户端与扩展中复验完整 `webcli call`，其余页面命令仍待真实站点验收。
 
 - manifest 仅声明 10 个实际命令路由域名。`login` 是唯一 write 命令，继续使用 v2 确认门；其余 15 项均为 read。
-- `network_capture_start/read` 复用现有 CDP 附着设施，只捕获匹配 pattern 且属于当前页或 manifest 许可域名的响应；最多保留 20 条、单体返回最多 8 MiB，日志只记录元数据。helper 只释放自己建立的 debugger 附着，并在 detach/tab removal 时清理会话。
+- `network_capture_start/read` 复用现有 CDP 附着设施，只捕获匹配 pattern 且属于当前页或 manifest 许可域名的响应；最多保留 20 条、单体返回最多 32 MiB（Chrome 单响应缓存 32 MiB、总缓存 64 MiB），日志只记录元数据。helper 只释放自己建立的 debugger 附着，并在 detach/tab removal 时清理会话。
 - v2 校验确认 `ctrip.com` 版本 `0.2.0`、15 个 Extension 命令，manifest、模块注册、路由域名和 safety 一致。
 - Ctrip/mock 与包聚焦 61 项、WebCLI 全量 83 文件/597 项、Extension 加载器/运行时 16 项、Profile/打包 6 项全部通过。
 - `prepare-build.cjs` 成功，公开 Profile 生成 8 个 host-managed 包；内建携程包为 `0.2.0`/15 命令，CLI 结构化帮助可见全部 15 个规范命令。
@@ -83,7 +83,7 @@
 
 1. 在测试账号环境完成人工登录或验证码，然后调用 `webcli call ctrip.com.whoami`，确认只返回最小化字段。
 2. 对尚未验证的只读查询使用公开测试参数逐项复验页面导航、真实选择器、输出和空结果；不进行下单、预订或支付。
-3. 特别观察单程航班是否完整捕获多个 `batchSearch` 响应、是否触发 8 MiB 上限，以及验证码后的重试行为。
+3. 特别观察单程航班是否完整捕获多个 `batchSearch` 响应、是否触发 32 MiB 上限，以及验证码后的重试行为。
 4. 后续再继续此前暂缓的真实 API 生成、Windows 最新修复包和 macOS 验收；本记录不把这些事项标为完成。
 
 ## 第一批历史记录
