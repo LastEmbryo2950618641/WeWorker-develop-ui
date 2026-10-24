@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-24（npm WebCLI 独立 Bridge）：npm 安装的 `webcli` 改用专用入口，在加载共享核心前固定使用 `ws://127.0.0.1:3712` 及独立的 PID/日志、浏览器 Profile、Adapter 数据目录；桌面端 CLI、Bridge 和扩展继续使用 3711。npm 打包只改写复制后的扩展 worker，源扩展和桌面扩展保持 3711；npm Bridge 对外校验实例身份，端口被其他服务占用时失败关闭，`service stop` 只处理已确认归属的实例。验证：端口解析、npm 入口、worker 改写、桌面环境锁定及 Bridge/浏览器相关聚焦测试通过；全量 WebCLI 测试仅剩 2 项 Windows 符号链接环境既有失败。未验证真实双浏览器登录态及完整安装包。
+
 - 2026-10-24（开发态白屏）：修复 Renderer 在 Vite 开发模式下直接导入 CommonJS 部署配置导致模块加载失败的问题。Vite 使用现有配置校验函数读取部署 JSON，并把结果注入 Renderer；配置文件变更会触发配置重载。验证：模型配置与 Vite 聚焦测试 16 项、Renderer 生产构建、JS 语法及差异检查通过；当前运行的 Electron 开发窗口已恢复显示首页，控制台无模块导出错误。未验证完整安装包。
 
 - 2026-10-24（侧栏图标 B 组定稿）：按用户选择使用 Fluent `panel-left-20-regular` 展开态、System UIcons `panel-left` 折叠态，保留原版路径并缩放短实线图标使外框宽高一致；无箭头、无虚线。验证：两态图标按 160px 栅格化测量可见边界均为 x16/y32、128×96，状态切换及响应式回归和 Renderer 构建通过。
