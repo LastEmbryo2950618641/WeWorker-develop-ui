@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
+import { createRequire } from 'node:module'
 import { validateBuiltinOutput } from '../builtin-adapter-build.js'
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url))
@@ -123,6 +124,22 @@ function shouldSkipEntry(entry, sourcePath, sourceRoot) {
   return EXCLUDED_FILE_SUFFIXES.some(suffix => entry.name.endsWith(suffix))
 }
 
+/**
+ * Generate the packaged metrics defaults next to the npm entrypoint. The
+ * checkout's model.json decides: a public model without metrics configuration
+ * always writes `{enabled:false}`; an enabled model requires a build-time
+ * `WEBCLI_METRICS_CLIENT_TOKEN` (or the explicit test-build opt-out).
+ */
+export function syncPackageMetrics({ webcliDir = defaultWebcliDir, modelPath, env = process.env } = {}) {
+  const requireCjs = createRequire(import.meta.url)
+  const { prepareMetricsClientConfig } = requireCjs(path.resolve(defaultWebcliDir, '..', 'weworker/scripts/metrics-client-config.cjs'))
+  return prepareMetricsClientConfig({
+    modelPath,
+    outputPath: path.join(webcliDir, 'metrics-client.json'),
+    env,
+  })
+}
+
 const isDirectExecution = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 if (isDirectExecution) {
   const repoRoot = path.resolve(defaultWebcliDir, '..')
@@ -133,5 +150,10 @@ if (isDirectExecution) {
     sourceExtensionDir: path.join(repoRoot, 'weworker/build/extension-dist'),
     sourceBuiltinDir: path.join(repoRoot, 'weworker/build/builtin-adapters'),
   })
+  const metrics = syncPackageMetrics({
+    webcliDir: defaultWebcliDir,
+    modelPath: path.join(repoRoot, 'weworker/model.json'),
+  })
   console.log(`[prepare-package-extension] copied ${result.fileCount} file(s) from ${result.sourceExtensionDir} to ${result.targetExtensionDir}`)
+  console.log(`[prepare-package-extension] metrics-client.json: ${metrics.enabled ? 'enabled' : 'disabled'}`)
 }

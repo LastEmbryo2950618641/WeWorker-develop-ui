@@ -5,7 +5,7 @@ import path from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { checkPackageResources, syncPackageExtension } from '../scripts/prepare-package-extension.js'
+import { checkPackageResources, syncPackageExtension, syncPackageMetrics } from '../scripts/prepare-package-extension.js'
 
 const tempDirs = []
 
@@ -69,6 +69,23 @@ describe('prepare package extension', () => {
     expect(fs.existsSync(path.join(webcliDir, 'extension', 'node_modules'))).toBe(false)
     expect(fs.existsSync(path.join(webcliDir, 'extension', 'test'))).toBe(false)
     expect(fs.existsSync(path.join(webcliDir, 'extension', 'stale'))).toBe(false)
+  })
+  it('generates disabled packaged metrics for a public model and requires a token when enabled', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'webcli-npm-metrics-pack-'))
+    tempDirs.push(root)
+    const webcliDir = path.join(root, 'webcli')
+    const publicModel = path.join(root, 'public-model.json')
+    fs.writeFileSync(publicModel, JSON.stringify({ providers: [] }))
+
+    expect(syncPackageMetrics({ webcliDir, modelPath: publicModel, env: {} })).toEqual({ enabled: false })
+    expect(JSON.parse(fs.readFileSync(path.join(webcliDir, 'metrics-client.json'), 'utf8'))).toEqual({ enabled: false })
+
+    const enabledModel = path.join(root, 'enabled-model.json')
+    fs.writeFileSync(enabledModel, JSON.stringify({ environment: { WEBCLI_METRICS_ENDPOINT: 'https://example.com/v1/metrics/batch', WEBCLI_METRICS_UPLOAD: 'on' } }))
+    expect(() => syncPackageMetrics({ webcliDir, modelPath: enabledModel, env: {} })).toThrow(/token/)
+    expect(syncPackageMetrics({ webcliDir, modelPath: enabledModel, env: { WEWORKER_METRICS_TEST_BUILD: '1' } })).toEqual({ enabled: false })
+    expect(syncPackageMetrics({ webcliDir, modelPath: enabledModel, env: { WEBCLI_METRICS_CLIENT_TOKEN: 'fixture-metrics-client-token-123456' } }))
+      .toEqual({ enabled: true, endpoint: 'https://example.com/v1/metrics/batch', token: 'fixture-metrics-client-token-123456' })
   })
   it('rewrites only the packaged npm worker to the npm Bridge port', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'webcli-npm-worker-'))
