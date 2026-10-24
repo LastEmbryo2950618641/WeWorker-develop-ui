@@ -612,6 +612,12 @@ export class WebSocketBridge extends EventEmitter {
         port: this._port ?? WS_PORT,
         ...(this._host ? { host: this._host } : {}),
       });
+      // Report the actually bound port (ephemeral ports start at 0); the
+      // underlying listen is asynchronous, so backfill on 'listening'.
+      this._wss.on('listening', () => {
+        const bound = this._wss.address();
+        if (bound && typeof bound === 'object' && bound.port) this._port = bound.port;
+      });
 
       this._wss.on("connection", (ws, req) => {
         const origin = req?.headers?.origin;
@@ -673,6 +679,21 @@ export class WebSocketBridge extends EventEmitter {
 
             const dispatch = () => {
               // 根据消息类型判断来源并处理
+              if (msg.type === 'service_info') {
+                // Instance identity probe: must be reachable before any client
+                // attaches, so handle it directly instead of routing through
+                // the extension-facing request whitelist below.
+                this._reply(ws, {
+                  type: 'service_info_result', id: msg.id, ok: true,
+                  instance: {
+                    kind: this._instanceKind,
+                    port: this._port,
+                    webcliVersion: this._version || null,
+                    tokenHash: this._serviceTokenHash,
+                  },
+                });
+                return;
+              }
               if (msg.type === 'list_tools_result' || msg.type === 'call_tool_result' || msg.type === 'call_tool_error' || msg.type === 'get_active_tab_result' || msg.type === 'get_trace_logs_result' || msg.type === 'validate_generation_preview_result') {
                 // 来自Chrome扩展的消息
                 this._handleExtensionMessage(msg, ws);

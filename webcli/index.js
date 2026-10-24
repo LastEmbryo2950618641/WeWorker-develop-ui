@@ -316,6 +316,24 @@ function getServiceNodeArgs() {
 
 // ─── Command: service start ──────────────────────────────────────────────────
 
+/**
+ * Wait for a freshly spawned daemon to listen on its own port. Cold starts
+ * scan every Adapter package and can take well over 5 seconds on Windows.
+ */
+async function waitForOwnBridge(pid, { timeoutMs = 30_000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isPidRunning(pid)) return false;
+    if (await checkPortListening()) {
+      if (INSTANCE.kind !== "npm") return true;
+      const info = await probeBridgeInstance();
+      if (info && info.kind === "npm" && info.port === INSTANCE.port) return true;
+    }
+    await new Promise(r => setTimeout(r, 250));
+  }
+  return false;
+}
+
 async function cmdServiceStart(daemon, report = console.log) {
   if (daemon) {
     await mkdir(getServiceStateDir(), { recursive: true });
@@ -351,17 +369,19 @@ async function cmdServiceStart(daemon, report = console.log) {
     }));
 
     // npm reports success only after its own Bridge is actually listening.
+    // A slow cold start must NOT fail the command: the daemon keeps starting,
+    // and ensureBridgeRunning keeps waiting for it below.
     if (INSTANCE.kind === "npm") {
-      let ready = false;
-      for (let i = 0; i < 15 && !ready; i++) {
-        await new Promise(r => setTimeout(r, 200));
-        if (!isPidRunning(child.pid)) break;
-        ready = await checkPortListening();
-      }
-      if (!ready) {
+      const ready = await waitForOwnBridge(child.pid);
+      if (!ready && !isPidRunning(child.pid)) {
         await unlink(PID_FILE).catch(() => {});
         await unlink(OWNER_FILE).catch(() => {});
         throw new Error(`WebCLI service failed to start on ${bridgeUrl(INSTANCE)}`);
+      }
+      if (!ready) {
+        report(`WebCLI service is starting in background (PID: ${child.pid}) — still initializing`);
+        report(`  Logs:   ${LOG_FILE}`);
+        return;
       }
     }
 
@@ -795,15 +815,23 @@ async function ensureBridgeRunning() {
   process.stderr.write("Bridge not running, starting...\n");
   await cmdServiceStart(true, message => process.stderr.write(message + '\n'));
 
-  // Wait for Bridge to be ready (max 5s); npm also verifies the identity of the service it just started.
-  for (let i = 0; i < 10; i++) {
-    await new Promise(r => setTimeout(r, 500));
+  // Wait for Bridge to be ready (max 30s — cold starts scan every Adapter
+  // package); npm also verifies the identity of the service it talks to.
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 250));
     if (!(await checkPortListening())) continue;
     if (INSTANCE.kind !== "npm") return;
     const info = await probeBridgeInstance();
     if (info && info.kind === "npm" && info.port === INSTANCE.port) return;
   }
-  console.error("Error: Bridge failed to start within 5 seconds");
+  const pid = await readPid();
+  if (pid && isPidRunning(pid)) {
+    console.error(`Error: Bridge (PID: ${pid}) is still starting — retry the command in a moment.`);
+    console.error(`  Logs: ${LOG_FILE}`);
+  } else {
+    console.error("Error: Bridge failed to start");
+  }
   process.exit(1);
 }
 
