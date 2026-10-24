@@ -470,7 +470,7 @@ function AboutTab({ appVersion, commitHash }) {
           description="启动时检查一次；开启后按设定间隔在后台检测新版本"
           stacked
           footer={(
-            <button
+            <button data-app-button="action"
               type="button"
               className="settings-btn settings-btn-primary"
               onClick={saveUpdateSettings}
@@ -521,7 +521,7 @@ function AboutTab({ appVersion, commitHash }) {
           stacked
           footer={(
             <div className="settings-inline-actions">
-              <button
+              <button data-app-button="action"
                 type="button"
                 className="settings-btn settings-btn-secondary"
                 onClick={checkUpdate}
@@ -530,7 +530,7 @@ function AboutTab({ appVersion, commitHash }) {
                 {checking || status === 'checking' ? '检查中...' : '检查更新'}
               </button>
               {canDownload && (
-                <button
+                <button data-app-button="action"
                   type="button"
                   className="settings-btn settings-btn-primary"
                   onClick={downloadUpdate}
@@ -540,7 +540,7 @@ function AboutTab({ appVersion, commitHash }) {
                 </button>
               )}
               {canInstall && (
-                <button
+                <button data-app-button="action"
                   type="button"
                   className="settings-btn settings-btn-primary"
                   onClick={installUpdate}
@@ -703,7 +703,7 @@ function PermissionsTab() {
           fallback="默认只允许已安装站点适配器中的地址；新增地址保存后会用于下一次 open_browser 调用"
           stacked
           footer={(
-            <button
+            <button data-app-button="action"
               type="button"
               onClick={handleSave}
               disabled={saving || !dirty}
@@ -723,7 +723,7 @@ function PermissionsTab() {
                 placeholder="例如 http://127.0.0.1:8765"
                 style={{ fontFamily: 'Consolas, monospace' }}
               />
-              <button type="button" onClick={addOrigin} className="settings-pill-btn">添加</button>
+              <button data-app-button="action" type="button" onClick={addOrigin} className="settings-pill-btn">添加</button>
             </div>
 
             {origins.length === 0 ? (
@@ -738,7 +738,7 @@ function PermissionsTab() {
                       readOnly
                       style={{ fontFamily: 'Consolas, monospace' }}
                     />
-                    <button type="button" onClick={() => removeOrigin(origin)} className="settings-pill-btn" style={{ color: 'var(--error)' }}>删除</button>
+                    <button data-app-button="action" data-variant="danger" type="button" onClick={() => removeOrigin(origin)} className="settings-pill-btn" style={{ color: 'var(--error)' }}>删除</button>
                   </div>
                 ))}
               </div>
@@ -766,7 +766,7 @@ function OriginList({ origins = [], emptyText, onRemove, readOnly = false }) {
             style={{ fontFamily: 'Consolas, monospace' }}
           />
           {!readOnly && (
-            <button type="button" onClick={() => onRemove?.(origin)} className="settings-pill-btn" style={{ color: 'var(--error)' }}>删除</button>
+            <button data-app-button="action" data-variant="danger" type="button" onClick={() => onRemove?.(origin)} className="settings-pill-btn" style={{ color: 'var(--error)' }}>删除</button>
           )}
         </div>
       ))}
@@ -1144,14 +1144,14 @@ function ConfigTab({ active = true }) {
           onSave={handleSaveUserDirectory}
           saving={savingUser}
         >
-          <div className="settings-pill settings-pill--wide">
+          <div className="settings-pill settings-pill--wide settings-pill--directory">
             <input
               className="settings-pill-input"
               value={userValue}
               onChange={(e) => { setUserValue(e.target.value); setUserMessage(null) }}
               placeholder="选择用户目录"
             />
-            <button type="button" onClick={chooseUserDirectory} className="settings-pill-btn">选择</button>
+            <button data-app-button="action" type="button" onClick={chooseUserDirectory} className="settings-pill-btn">选择</button>
           </div>
         </SettingRow>
 
@@ -1163,14 +1163,14 @@ function ConfigTab({ active = true }) {
           onSave={handleSaveDownloadDirectory}
           saving={savingDownload}
         >
-          <div className="settings-pill settings-pill--wide">
+          <div className="settings-pill settings-pill--wide settings-pill--directory">
             <input
               className="settings-pill-input"
               value={downloadValue}
               onChange={(e) => { setDownloadValue(e.target.value); setDownloadMessage(null) }}
               placeholder="download"
             />
-            <button type="button" onClick={chooseDownloadDirectory} className="settings-pill-btn">选择</button>
+            <button data-app-button="action" type="button" onClick={chooseDownloadDirectory} className="settings-pill-btn">选择</button>
           </div>
         </SettingRow>
 
@@ -1181,7 +1181,7 @@ function ConfigTab({ active = true }) {
           fallback={blacklistHasInvalidEntries || draftPatternError ? '存在无效规则时无法保存，请先修正输入' : '精确匹配按完整路径段/文件名；正则匹配按 JavaScript 正则解析'}
           stacked
           footer={(
-            <button
+            <button data-app-button="action"
               type="button"
               onClick={handleSaveBlacklist}
               disabled={savingBlacklist || !canSaveBlacklist}
@@ -1210,7 +1210,7 @@ function ConfigTab({ active = true }) {
                 placeholder={draftMatchMode === 'regex_path' ? REGEX_PATH_PLACEHOLDER : EXACT_PATH_PLACEHOLDER}
                 style={{ fontFamily: 'Consolas, monospace' }}
               />
-              <button type="button" onClick={handleAddBlacklistEntry} className="settings-pill-btn">添加</button>
+              <button data-app-button="action" type="button" onClick={handleAddBlacklistEntry} className="settings-pill-btn">添加</button>
             </div>
             {blacklist.length === 0 ? (
               <div className="settings-action-hint">暂无规则。精确匹配可直接粘贴路径或文件名；正则匹配需手写 JavaScript 正则。</div>
@@ -1236,7 +1236,7 @@ function ConfigTab({ active = true }) {
                         style={{ fontFamily: 'Consolas, monospace', borderColor: invalid ? 'var(--error)' : undefined }}
                         title={invalid || ''}
                       />
-                      <button type="button" onClick={() => handleRemoveBlacklistEntry(index)} className="settings-pill-btn" style={{ color: 'var(--error)' }}>删除</button>
+                      <button data-app-button="action" data-variant="danger" type="button" onClick={() => handleRemoveBlacklistEntry(index)} className="settings-pill-btn" style={{ color: 'var(--error)' }}>删除</button>
                     </div>
                   )
                 })}
@@ -1314,7 +1314,7 @@ function ConfigTab({ active = true }) {
           stacked
           footer={(
             <div className="settings-btn-group">
-              <button
+              <button data-app-button="action"
                 type="button"
                 onClick={handleResetPreviewExtensions}
                 disabled={resettingPreviewExtensions || (!resourcePreviewExtensionsCustomized && !previewExtensionsDirty)}
@@ -1322,7 +1322,7 @@ function ConfigTab({ active = true }) {
               >
                 {resettingPreviewExtensions ? '恢复中...' : '恢复默认'}
               </button>
-              <button
+              <button data-app-button="action"
                 type="button"
                 onClick={handleSavePreviewExtensions}
                 disabled={savingPreviewExtensions || !previewExtensionsDirty}
@@ -1387,7 +1387,7 @@ function ConfigTab({ active = true }) {
               onKeyDown={handlePreviewExtensionInputKeyDown}
               placeholder="添加后缀，例如 rs 或 .java"
             />
-            <button type="button" onClick={addPreviewExtension} className="settings-pill-btn">添加</button>
+            <button data-app-button="action" type="button" onClick={addPreviewExtension} className="settings-pill-btn">添加</button>
           </div>
         </SettingRow>
       </div>
@@ -1623,7 +1623,7 @@ function ModelTab() {
     }
     const contextLimit = parseContextLimitInput(f.context_limit)
     if (!isBuiltinProvider(pid) && contextLimit === null) {
-      setTestResult({ ok: false, message: '上下文窗口请输入 1K 到 100M 之间的整数，可使用 K/M 单位' })
+      setTestResult({ ok: false, message: '上下文窗口请输入 1K 到 100M 之间的数值，并使用 K 或 M 单位' })
       setSaving(null)
       return
     }
@@ -1675,7 +1675,7 @@ function ModelTab() {
   const handleDelete = async (pid) => {
     const provider = visibleProviders.find(item => item.id === pid)
     if (!provider || isBuiltinProvider(pid) || isFixedProvider(pid) || activeProvider === pid) return
-    if (!await showConfirm(`确定删除“${provider.name}”吗？此配置中的设置将被移除。`, '删除模型配置')) return
+    if (!await showConfirm(`确定删除“${provider.name}”吗？此配置中的设置将被移除。`, '删除模型配置', { danger: true })) return
     setDeletingProvider(pid)
     setTestResult(null)
     try {
@@ -2014,15 +2014,15 @@ function ModelTab() {
           const providerColor = templateId === 'custom' ? 'var(--provider-custom)' : p.color
           const detailActions = (
             <div className="settings-btn-group model-settings-header-actions">
-              <button type="button" onClick={() => handleTest(p.id)} disabled={!!testing[p.id] || (isBuiltinProvider(p.id) && !stored.has_key)} className="settings-btn settings-btn-secondary">
+              <button data-app-button="action" type="button" onClick={() => handleTest(p.id)} disabled={!!testing[p.id] || (isBuiltinProvider(p.id) && !stored.has_key)} className="settings-btn settings-btn-secondary">
                 {testing[p.id] ? '检测中…' : isBuiltinProvider(p.id) ? '测试连通性' : '测试模型可用性'}
               </button>
               {!singleProvider && !isActive && (
-                <button type="button" onClick={() => handleActivate(p.id)} disabled={!!activating || !stored.has_key} title={!stored.has_key ? '请先保存 API Key' : ''} className="settings-btn settings-btn-provider" style={{ '--provider-color': providerColor }}>
+                <button data-app-button="action" type="button" onClick={() => handleActivate(p.id)} disabled={!!activating || !stored.has_key} title={!stored.has_key ? '请先保存 API Key' : ''} className="settings-btn settings-btn-provider" style={{ '--provider-color': providerColor }}>
                   {activating === p.id ? '切换中...' : '切换使用'}
                 </button>
               )}
-              <button type="button" onClick={() => handleSave(p.id)} disabled={saving === p.id} className={`settings-btn ${saved === p.id ? 'settings-btn-success' : 'settings-btn-primary'}`}>
+              <button data-app-button="action" type="button" onClick={() => handleSave(p.id)} disabled={saving === p.id} className={`settings-btn ${saved === p.id ? 'settings-btn-success' : 'settings-btn-primary'}`}>
                 {saving === p.id ? '保存中...' : saved === p.id ? '已保存 ✓' : '保存'}
               </button>
             </div>
@@ -2149,15 +2149,16 @@ function ModelTab() {
                           searchable
                           allowCustom
                           searchPlaceholder="搜索或者添加自定义模型"
+                          customOptionLabel={(value) => `添加并使用“${value}”模型`}
                         />
-                        <button type="button" onClick={() => loadModels(p.id, true)} disabled={hasFixedModel(templateId) || loadingModels || Boolean(catalogIssue)} className="settings-btn settings-btn-secondary">
+                        <button data-app-button="action" type="button" onClick={() => loadModels(p.id, true)} disabled={hasFixedModel(templateId) || loadingModels || Boolean(catalogIssue)} className="settings-btn settings-btn-secondary">
                           {loadingModels ? '获取中…' : '刷新模型'}
                         </button>
                       </div>
                     </div>
                   </Field>
 
-                  <Field label="上下文窗口" hint="用于估算上下文占用率，可选择或直接输入">
+                  <Field label="上下文窗口" hint="用于估算上下文占用率，单位仅支持 K 或 M">
                     <AppDropdownInput
                       className="settings-input"
                       ariaLabel="上下文窗口" options={CONTEXT_LIMIT_PRESETS.map(value => ({ value, label: value }))}
@@ -2167,7 +2168,7 @@ function ModelTab() {
                         const parsed = parseContextLimitInput(f.context_limit)
                         if (parsed !== null) setFormField(p.id, 'context_limit', formatContextLimitInput(parsed))
                       }}
-                      placeholder="例如 200K、1M 或 1000000"
+                      placeholder="例如 200K 或 1M"
                       inputMode="text"
                     />
 
@@ -2235,15 +2236,16 @@ function ModelTab() {
                             searchable
                             allowCustom
                             searchPlaceholder="搜索或者添加自定义模型"
+                            customOptionLabel={(value) => `添加并使用“${value}”模型`}
                           />
-                          <button type="button" onClick={() => loadModels(p.id, true, 'weworker')} disabled={hasFixedModel(templateId) || loadingModels || Boolean(catalogIssue)} className="settings-btn settings-btn-secondary">
+                          <button data-app-button="action" type="button" onClick={() => loadModels(p.id, true, 'weworker')} disabled={hasFixedModel(templateId) || loadingModels || Boolean(catalogIssue)} className="settings-btn settings-btn-secondary">
                             {loadingModels ? '获取中…' : '刷新模型'}
                           </button>
                         </div>
                       </Field>
                       {catalogAddressFields()}
-                      <Field label="上下文窗口" hint="用于估算上下文占用率，可选择或直接输入">
-                        <AppDropdownInput className="settings-input" ariaLabel="上下文窗口" options={CONTEXT_LIMIT_PRESETS.map(value => ({ value, label: value }))} value={f.context_limit} onChange={(e) => setFormField(p.id, 'context_limit', e.target.value)} onBlur={() => { const parsed = parseContextLimitInput(f.context_limit); if (parsed !== null) setFormField(p.id, 'context_limit', formatContextLimitInput(parsed)) }} placeholder="例如 200K、1M 或 1000000" inputMode="text" />
+                      <Field label="上下文窗口" hint="用于估算上下文占用率，单位仅支持 K 或 M">
+                        <AppDropdownInput className="settings-input" ariaLabel="上下文窗口" options={CONTEXT_LIMIT_PRESETS.map(value => ({ value, label: value }))} value={f.context_limit} onChange={(e) => setFormField(p.id, 'context_limit', e.target.value)} onBlur={() => { const parsed = parseContextLimitInput(f.context_limit); if (parsed !== null) setFormField(p.id, 'context_limit', formatContextLimitInput(parsed)) }} placeholder="例如 200K 或 1M" inputMode="text" />
 
                       </Field>
                       </div>
@@ -2293,7 +2295,7 @@ function ModelTab() {
                                       matchAnchorWidth
                                       className="settings-model-dropdown"
                                     />
-                                    <button type="button" onClick={() => loadModels(p.id, true, 'webwright')} disabled={hasFixedModel(templateId) || loadingOpenAiModels || Boolean(openAiCatalogIssue)} className="settings-btn settings-btn-secondary">
+                                    <button data-app-button="action" type="button" onClick={() => loadModels(p.id, true, 'webwright')} disabled={hasFixedModel(templateId) || loadingOpenAiModels || Boolean(openAiCatalogIssue)} className="settings-btn settings-btn-secondary">
                                       {loadingOpenAiModels ? '获取中…' : '刷新模型'}
                                     </button>
                                   </div>
@@ -2358,7 +2360,7 @@ function SettingRow({
         <div className="settings-row-footer">
           <span className={hintClass}>{message?.text || fallback}</span>
           {footer || (onSave ? (
-            <button type="button" onClick={onSave} disabled={saving} className="settings-btn settings-btn-primary">
+            <button data-app-button="action" type="button" onClick={onSave} disabled={saving} className="settings-btn settings-btn-primary">
               {saving ? '保存中...' : '保存'}
             </button>
           ) : null)}
@@ -2534,7 +2536,7 @@ function CustomStyleDialog({ draft: initialDraft, canDelete, onSave, onDelete, o
   const requestDelete = async () => {
     if (confirming) return
     setConfirming(true)
-    const confirmed = await showConfirm(styleDeleteConfirmMessage(initialDraft?.label), STYLE_DELETE_CONFIRM_TITLE)
+    const confirmed = await showConfirm(styleDeleteConfirmMessage(initialDraft?.label), STYLE_DELETE_CONFIRM_TITLE, { danger: true })
     if (confirmed) {
       // 父级删除后会关闭本弹窗，这里不再回写状态。
       onDelete()
@@ -2606,7 +2608,7 @@ function CustomStyleDialog({ draft: initialDraft, canDelete, onSave, onDelete, o
           </span>
           <footer>
             {canDelete && (
-              <button
+              <button data-app-button="action" data-variant="danger"
                 type="button"
                 className="weworker-dialog__button settings-style-dialog__delete"
                 onClick={requestDelete}
@@ -2615,8 +2617,8 @@ function CustomStyleDialog({ draft: initialDraft, canDelete, onSave, onDelete, o
                 {STYLE_DELETE_LABEL}
               </button>
             )}
-            <button type="button" className="weworker-dialog__button" onClick={onClose}>取消</button>
-            <button type="submit" className="weworker-dialog__button is-primary">保存</button>
+            <button data-app-button="action" type="button" className="weworker-dialog__button" onClick={onClose}>取消</button>
+            <button data-app-button="action" type="submit" className="weworker-dialog__button is-primary">保存</button>
           </footer>
         </form>
       </section>
@@ -2819,7 +2821,7 @@ function StyleSettingsPanel({ active = true }) {
         fallback={`当前默认：${selectedStyleLabel}`}
         stacked
         footer={(
-          <button
+          <button data-app-button="action"
             type="button"
             onClick={handleSaveRoles}
             disabled={savingRoles || !rolesDirty}
