@@ -1,6 +1,6 @@
 # WeWorker Roadmap
 
-- 2026-10-24（`dev-1.0.0` 公开地址与品牌资产收敛）：官网、下载页、GitHub Release 更新元数据和仓库文档分别使用正式生产地址；桌面自动更新与 electron-builder 发布配置统一使用 GitHub `latest/download`，不再把官网页面作为更新源；社交预览及分享元数据使用统一 Logo。公开配置 4 项、桌面构建脚本 13 项测试、相关语法检查、官网与 Renderer 生产构建通过。未创建 Release、未构建桌面安装包、未部署官网，真实客户端更新下载待正式 Published Release 验证。
+- 2026-10-24（`dev-1.0.0` 公开地址与品牌资产收敛）：官网、下载页、GitHub Release 更新元数据和仓库文档分别使用正式生产地址；桌面自动更新与 electron-builder 发布配置统一使用 GitHub `latest/download`，不再把官网页面作为更新源；社交预览内嵌并逐字节校验官网统一 Logo，避免外部相对图片在 GitHub 预览中失效。公开配置 5 项、桌面构建脚本 13 项测试、相关语法检查、官网与 Renderer 生产构建通过，1280×640 社交预览实际渲染正确。未创建 Release、未构建桌面安装包、未部署官网，真实客户端更新下载待正式 Published Release 验证。
 
 - 2026-10-23（自定义对话协议）：模型配置支持选择 Anthropic Messages 或 OpenAI Chat Completions，地址提示、模型目录和连接检测随协议切换；本地代理转换 OpenAI 对话、工具调用和流式响应。旧配置默认 Anthropic；认证类型优先展示 API Key 并提供选择提示，配置下拉仅显示配置名，保留自定义模型管理。验证：Backend 协议与配置 25 项、Renderer 模型选择 25 项测试、Backend 类型检查及 Renderer 生产构建通过；真实 OpenAI 配置获取模型、连接检测和流式回复通过。未验证：完整桌面交互、安装包及 macOS。
 

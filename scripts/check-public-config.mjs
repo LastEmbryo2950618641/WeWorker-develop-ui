@@ -91,11 +91,20 @@ export function validatePublicConfig(repoRoot) {
     ['officialWeb/index.html', `${PUBLIC_SITE_URL}/`],
     ['officialWeb/index.html', `${PUBLIC_SITE_URL}/logo.png`],
     ['docs/assets/social-preview.html', '../../officialWeb/public/logo.png'],
-    ['docs/assets/social-preview.svg', '../../officialWeb/public/logo.png'],
+    ['docs/assets/social-preview.svg', 'data:image/png;base64,'],
   ]
   for (const [relativePath, expected] of publicUrlSources) {
     const content = fs.readFileSync(path.join(repoRoot, relativePath), 'utf8')
     if (!content.includes(expected)) errors.push(`${relativePath} must reference ${expected}`)
+  }
+
+  const socialPreviewSvg = fs.readFileSync(path.join(repoRoot, 'docs', 'assets', 'social-preview.svg'), 'utf8')
+  const embeddedLogo = socialPreviewSvg.match(/href="data:image\/png;base64,([^"]+)"/)?.[1]
+  const publicLogo = fs.readFileSync(path.join(repoRoot, 'officialWeb', 'public', 'logo.png'))
+  if (!embeddedLogo) {
+    errors.push('docs/assets/social-preview.svg must embed the public logo')
+  } else if (!Buffer.from(embeddedLogo, 'base64').equals(publicLogo)) {
+    errors.push('docs/assets/social-preview.svg embedded logo must match officialWeb/public/logo.png')
   }
 
   const updaterSource = fs.readFileSync(path.join(repoRoot, 'weworker', 'electron', 'update-manager.js'), 'utf8')

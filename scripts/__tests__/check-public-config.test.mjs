@@ -58,9 +58,13 @@ function buildFixtureRepo({ webcliVersion = '1.0.4', ledgerOverrides = {} } = {}
   writeText('weworker/scripts/build-electron-current-arch.cjs', 'const publish = { url: deployment.githubUrl }\n')
   writeText('officialWeb/src/lib/siteConfig.js', `export const OFFICIAL_SITE = '${PUBLIC_SITE_URL}'\nexport const GITHUB_REPO = '${PUBLIC_REPO_URL}'\n`)
   writeText('officialWeb/index.html', `<link rel="canonical" href="${PUBLIC_SITE_URL}/"><meta property="og:image" content="${PUBLIC_SITE_URL}/logo.png">\n`)
+  const fixtureLogo = Buffer.from('fixture-logo')
+  const publicLogo = path.join(root, 'officialWeb', 'public', 'logo.png')
+  fs.mkdirSync(path.dirname(publicLogo), { recursive: true })
+  fs.writeFileSync(publicLogo, fixtureLogo)
   writeText('docs/github-repo-settings.md', `${PUBLIC_REPO_URL}\n${PUBLIC_SITE_URL}\n`)
   writeText('docs/assets/social-preview.html', `${PUBLIC_SITE_URL}\n../../officialWeb/public/logo.png\n`)
-  writeText('docs/assets/social-preview.svg', `${PUBLIC_SITE_URL}\n../../officialWeb/public/logo.png\n`)
+  writeText('docs/assets/social-preview.svg', `${PUBLIC_SITE_URL}\n<image href="data:image/png;base64,${fixtureLogo.toString('base64')}"/>\n`)
 
   writeJson('webcli/package.json', { version: webcliVersion })
   writeJson('webcli/version.json', { version: ledgerOverrides.versionJson ?? webcliVersion })
@@ -106,6 +110,21 @@ test('retired public addresses and website updater sources are rejected', () => 
     assert.deepEqual(validatePublicConfig(root), [
       'desktop updater must not use the website download page as a metadata source',
       'docs/github-repo-settings.md still references retired address github.com/aiceflower/WeWorker',
+    ])
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('social preview embedded logo must match the public product logo', () => {
+  const root = buildFixtureRepo()
+  try {
+    fs.writeFileSync(
+      path.join(root, 'docs', 'assets', 'social-preview.svg'),
+      `${PUBLIC_SITE_URL}\n<image href="data:image/png;base64,${Buffer.from('different-logo').toString('base64')}"/>\n`,
+    )
+    assert.deepEqual(validatePublicConfig(root), [
+      'docs/assets/social-preview.svg embedded logo must match officialWeb/public/logo.png',
     ])
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
