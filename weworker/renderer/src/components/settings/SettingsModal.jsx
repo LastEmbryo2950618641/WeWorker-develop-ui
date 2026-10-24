@@ -42,6 +42,7 @@ import { backendFetch } from '../../api/http.js'
 import { fetchProviderModels } from '../../api/provider-models.js'
 import { getAnthropicUrlHint, getOpenAiUrlHint } from '../../utils/provider-url.js'
 import { showConfirm } from '../../store/dialog.js'
+import { showNotification, useNotificationsStore } from '../../store/notifications.js'
 import { BROWSER_MODE_OPTIONS, describeBrowserMode } from '../../utils/dedicated-browser.js'
 import SiteLoginSettings from '../site-login/SiteLoginSettings.jsx'
 import { deploymentConfig } from '../../config/deployment.js'
@@ -1396,7 +1397,7 @@ function ConfigTab({ active = true }) {
 }
 
 function ModelTab() {
-  const { activeProvider, providers, addProvider, deleteProvider, saveProvider, activateProvider } = useSettingsStore()
+  const { activeProvider, providers, addProvider, deleteProvider, saveProvider, activateProvider, saveCustomModels, customModelsSaving } = useSettingsStore()
   const [selectedProvider, setSelectedProvider] = useState(activeProvider || null)
   const [providerSearch, setProviderSearch] = useState('')
   const [addPickerOpen, setAddPickerOpen] = useState(false)
@@ -1429,6 +1430,20 @@ function ModelTab() {
   const [advancedProviders, setAdvancedProviders] = useState({})
   const [catalogAddressExpanded, setCatalogAddressExpanded] = useState({})
   const [forms, setForms] = useState({})
+  const previousProviders = useRef(providers)
+  useEffect(() => {
+    const previous = previousProviders.current
+    previousProviders.current = providers
+    setForms(current => {
+      let next = current
+      for (const [pid, stored] of Object.entries(providers)) {
+        if (current[pid] && stored.model !== previous[pid]?.model) {
+          next = { ...next, [pid]: { ...current[pid], model: stored.model } }
+        }
+      }
+      return next
+    })
+  }, [providers])
   const formNameTouched = useRef({})
   const [catalogs, setCatalogs] = useState({})
   const [catalogLoading, setCatalogLoading] = useState({})
@@ -1444,6 +1459,34 @@ function ModelTab() {
   const [testing, setTesting] = useState({})
   const testingProviders = useRef(new Set())
   const [testResult, setTestResult] = useState(null)
+  const contextLimitNoticeId = useRef(null)
+
+  const reportContextLimitError = () => {
+    const { notices } = useNotificationsStore.getState()
+    if (notices.some((notice) => notice.id === contextLimitNoticeId.current)) return
+    contextLimitNoticeId.current = showNotification('上下文窗口请输入 1K 到 100M 之间的数值，单位只能是 K 或 M，例如 200K、1M', { type: 'error' })
+  }
+
+  const clearContextLimitError = () => {
+    useNotificationsStore.getState().dismiss(contextLimitNoticeId.current)
+    contextLimitNoticeId.current = null
+  }
+
+  const changeContextLimit = (pid, value) => {
+    setFormField(pid, 'context_limit', value)
+    if (parseContextLimitInput(value) !== null) clearContextLimitError()
+    else if (/[^\d.,\sKM]/iu.test(value)) reportContextLimitError()
+  }
+
+  const finishContextLimit = (pid, value) => {
+    const parsed = parseContextLimitInput(value)
+    if (parsed === null) {
+      reportContextLimitError()
+      return
+    }
+    clearContextLimitError()
+    setFormField(pid, 'context_limit', formatContextLimitInput(parsed))
+  }
 
   const singleProvider = PROVIDERS.length === 1
   const { visible: visibleProviders, addable: addableProviders } = useMemo(
@@ -1485,16 +1528,17 @@ function ModelTab() {
   }, [visibleProviders])
 
   const getForm = (pid) => {
-    if (forms[pid]) return forms[pid]
     const p = providerDefinition(pid)
     const stored = providers[pid] ?? {}
+    const custom_models = Array.isArray(stored.custom_models) ? stored.custom_models : []
+    if (forms[pid]) return { ...forms[pid], custom_models }
     const name = visibleProviders.find(provider => provider.id === pid)?.name || p?.name || ''
     return {
       name,
       api_key: '',
       openai_api_key: '',
       model: hasFixedModel(providerType(pid)) ? p.defaultModel : stored.model || p?.defaultModel || '',
-      custom_models: Array.isArray(stored.custom_models) ? stored.custom_models : [],
+      custom_models,
       openai_model: hasFixedModel(providerType(pid)) ? p.defaultModel : stored.openai_model ?? (stored.model || p?.defaultModel || ''),
       context_limit: formatContextLimitInput(stored.context_limit),
       base_url: stored.base_url || '',
@@ -1514,7 +1558,7 @@ function ModelTab() {
   const setFormField = (pid, k, v) => {
     if (k === 'name') formNameTouched.current[pid] = true
     setForms((f) => ({ ...f, [pid]: {
-      ...getForm(pid),
+      ...(f[pid] || getForm(pid)),
       [k]: v,
     } }))
     setTestResult(null)
@@ -1570,7 +1614,12 @@ function ModelTab() {
       if (catalogRequestIds.current[key] !== requestId) return
       setCatalogs((current) => ({ ...current, [key]: { ...data, explicitRefresh } }))
       setForms((current) => {
-        const latestForm = current[pid] || getForm(pid)
+        const latestState = useSettingsStore.getState()
+        // A model save may finish while this catalog request is in flight.
+        if (latestState.customModelsSaving[pid]) return current
+        const latestStored = latestState.providers[pid]
+        const latestForm = { ...(current[pid] || getForm(pid)), custom_models: latestStored?.custom_models || [] }
+        if (latestStored?.model !== providers[pid]?.model) latestForm.model = latestStored.model
         const field = target === 'webwright' ? 'openai_model' : 'model'
         const nextModel = selectModelAfterCatalogRefresh(latestForm[field], data, {
           customModels: target === 'weworker' ? latestForm.custom_models : [],
@@ -1623,11 +1672,12 @@ function ModelTab() {
     }
     const contextLimit = parseContextLimitInput(f.context_limit)
     if (!isBuiltinProvider(pid) && contextLimit === null) {
-      setTestResult({ ok: false, message: '上下文窗口请输入 1K 到 100M 之间的数值，并使用 K 或 M 单位' })
+      reportContextLimitError()
       setSaving(null)
       return
     }
-    const updates = isBuiltinProvider(pid) ? { name } : { name, model: f.model, context_limit: contextLimit }
+    clearContextLimitError()
+    const updates = isBuiltinProvider(pid) ? { name } : { name, model: f.model, custom_models: f.custom_models, context_limit: contextLimit }
     if (f.api_key) updates.api_key = f.api_key
     if (f.openai_api_key) updates.openai_api_key = f.openai_api_key
     if (providerType(pid) === 'custom') {
@@ -1642,7 +1692,6 @@ function ModelTab() {
       updates.models_auth_type = f.models_auth_type
       updates.openai_models_url = f.openai_models_url
       updates.openai_models_url_is_full = f.openai_models_url_is_full
-      updates.custom_models = f.custom_models
       if (f.openai_model) updates.openai_model = f.openai_model
     }
     try {
@@ -1995,20 +2044,29 @@ function ModelTab() {
           const remoteModels = !catalogIssue && catalog?.source === 'remote' ? catalog.models : []
           const modelOptions = buildModelOptions(remoteModels, f.model, { customModels: f.custom_models })
             .map(option => ({ ...option, removable: option.custom }))
+          const modelSaving = Boolean(customModelsSaving[p.id])
+          const persistCustomModels = async (model, customModels) => {
+            if (useSettingsStore.getState().customModelsSaving[p.id]) return
+            try {
+              await saveCustomModels(p.id, model, customModels)
+              setFormField(p.id, 'model', model)
+            } catch {
+              showNotification('自定义模型保存失败，请重试。', { type: 'error' })
+            }
+          }
           const handleModelChange = (value) => {
-            const custom_models = remoteModels.some(model => String(model).trim() === value)
-              ? f.custom_models
-              : [...new Set([...(f.custom_models || []), value])]
-            setFormField(p.id, 'model', value)
-            setForms(current => ({ ...current, [p.id]: { ...(current[p.id] || getForm(p.id)), custom_models } }))
+            if (remoteModels.some(model => String(model).trim() === value) && !f.custom_models.includes(value)) {
+              setFormField(p.id, 'model', value)
+              return
+            }
+            void persistCustomModels(value, [...new Set([...f.custom_models, value])])
           }
           const handleRemoveCustomModel = (value) => {
             const custom_models = (f.custom_models || []).filter(model => model !== value)
             const model = f.model === value
-              ? String(remoteModels.find(item => String(item).trim() !== value) || '')
+              ? String(custom_models[0] || remoteModels.find(item => String(item).trim() !== value) || '')
               : f.model
-            setFormField(p.id, 'model', model)
-            setForms(current => ({ ...current, [p.id]: { ...(current[p.id] || getForm(p.id)), custom_models } }))
+            void persistCustomModels(model, custom_models)
           }
           const openAiModelOptions = buildModelOptions(!openAiCatalogIssue && openAiCatalog?.source === 'remote' ? openAiCatalog.models : [], f.openai_model)
           const providerColor = templateId === 'custom' ? 'var(--provider-custom)' : p.color
@@ -2022,8 +2080,8 @@ function ModelTab() {
                   {activating === p.id ? '切换中...' : '切换使用'}
                 </button>
               )}
-              <button data-app-button="action" type="button" onClick={() => handleSave(p.id)} disabled={saving === p.id} className={`settings-btn ${saved === p.id ? 'settings-btn-success' : 'settings-btn-primary'}`}>
-                {saving === p.id ? '保存中...' : saved === p.id ? '已保存 ✓' : '保存'}
+              <button data-app-button="action" type="button" onClick={() => handleSave(p.id)} disabled={saving === p.id || modelSaving} className={`settings-btn ${saved === p.id ? 'settings-btn-success' : 'settings-btn-primary'}`}>
+                {saving === p.id || modelSaving ? '保存中...' : saved === p.id ? '已保存 ✓' : '保存'}
               </button>
             </div>
           )
@@ -2139,7 +2197,7 @@ function ModelTab() {
                         <AppDropdownSelect
                           value={f.model}
                           options={modelOptions}
-                          disabled={hasFixedModel(templateId)}
+                          disabled={hasFixedModel(templateId) || modelSaving || saving === p.id}
                           onChange={handleModelChange}
                           onRemoveOption={handleRemoveCustomModel}
                           ariaLabel="模型"
@@ -2163,11 +2221,9 @@ function ModelTab() {
                       className="settings-input"
                       ariaLabel="上下文窗口" options={CONTEXT_LIMIT_PRESETS.map(value => ({ value, label: value }))}
                       value={f.context_limit}
-                      onChange={(e) => setFormField(p.id, 'context_limit', e.target.value)}
-                      onBlur={() => {
-                        const parsed = parseContextLimitInput(f.context_limit)
-                        if (parsed !== null) setFormField(p.id, 'context_limit', formatContextLimitInput(parsed))
-                      }}
+                      onChange={(e) => changeContextLimit(p.id, e.target.value)}
+                      onBlur={(e) => finishContextLimit(p.id, e.target.value)}
+                      aria-invalid={parseContextLimitInput(f.context_limit) === null}
                       placeholder="例如 200K 或 1M"
                       inputMode="text"
                     />
@@ -2226,7 +2282,7 @@ function ModelTab() {
                           <AppDropdownSelect
                             value={f.model}
                             options={modelOptions}
-                            disabled={hasFixedModel(templateId)}
+                            disabled={hasFixedModel(templateId) || modelSaving || saving === p.id}
                             onChange={handleModelChange}
                             onRemoveOption={handleRemoveCustomModel}
                             ariaLabel="WeWorker 对话模型"
@@ -2245,7 +2301,7 @@ function ModelTab() {
                       </Field>
                       {catalogAddressFields()}
                       <Field label="上下文窗口" hint="用于估算上下文占用率，单位仅支持 K 或 M">
-                        <AppDropdownInput className="settings-input" ariaLabel="上下文窗口" options={CONTEXT_LIMIT_PRESETS.map(value => ({ value, label: value }))} value={f.context_limit} onChange={(e) => setFormField(p.id, 'context_limit', e.target.value)} onBlur={() => { const parsed = parseContextLimitInput(f.context_limit); if (parsed !== null) setFormField(p.id, 'context_limit', formatContextLimitInput(parsed)) }} placeholder="例如 200K 或 1M" inputMode="text" />
+                        <AppDropdownInput className="settings-input" ariaLabel="上下文窗口" options={CONTEXT_LIMIT_PRESETS.map(value => ({ value, label: value }))} value={f.context_limit} onChange={(e) => changeContextLimit(p.id, e.target.value)} onBlur={(e) => finishContextLimit(p.id, e.target.value)} aria-invalid={parseContextLimitInput(f.context_limit) === null} placeholder="例如 200K 或 1M" inputMode="text" />
 
                       </Field>
                       </div>
