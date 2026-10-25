@@ -1675,6 +1675,7 @@ export class WebSocketBridge extends EventEmitter {
    * 模型不需要预先检测登录。
    */
   async _callToolWithLogin(toolName, args, traceID, adapterSnapshot, options = {}) {
+    if (toolName === 'open_browser') return this._openBrowserWithLogin(args);
     const pinnedRoute = this._route?.getStore() || null;
     const invoke = () => this._callToolInner(toolName, args, traceID, adapterSnapshot);
     // Login may span an extension reconnect. Re-resolve the socket by the same
@@ -1796,6 +1797,11 @@ export class WebSocketBridge extends EventEmitter {
         if (!manifest?.auth) throw new Error(`Adapter "${site}" does not declare a login.`);
         return manifest;
       };
+      const requireAutologin = () => {
+        const manifest = requireSite();
+        if (manifest.auth.autologin?.mode === 'off') throw new Error('该网站不支持自动登录，请使用二维码、动态密码或其他方式手动登录。');
+        return manifest;
+      };
       let result;
       if (action === 'status') {
         let sites = [];
@@ -1808,10 +1814,13 @@ export class WebSocketBridge extends EventEmitter {
         requireSite();
         const waitMs = Number.isFinite(Number(msg.waitMs)) ? Number(msg.waitMs) : DEFAULT_LOGIN_WAIT_MS;
         result = await login.login(site, { waitMs });
+      } else if (action === 'show_login') {
+        requireSite();
+        result = await login.show(site);
       } else if (action === 'cancel') {
         result = { cancelled: login.cancel(site) };
       } else if (action === 'set_autologin') {
-        requireSite();
+        if (msg.enabled === true) requireAutologin(); else requireSite();
         const vault = login.vault;
         if (msg.enabled === true && !vault.hasCredential(site)) throw new Error('请先保存该网站的账号密码。');
         result = vault.updateSite(site, {
@@ -1819,7 +1828,7 @@ export class WebSocketBridge extends EventEmitter {
           ...(msg.dismissed === true ? { dismissed: true } : {}),
         });
       } else if (action === 'save_credential') {
-        requireSite();
+        requireAutologin();
         result = await login.vault.save(site, { username: msg.username, password: msg.password });
       } else if (action === 'forget_credential') {
         requireSite();
@@ -2116,9 +2125,68 @@ export class WebSocketBridge extends EventEmitter {
     }
   }
 
-/**
-   * 打开浏览器并访问指定URL
-   * 优先使用Chrome扩展API（如果已连接），否则使用系统命令
+  async _openBrowserWithLogin(args = {}) {
+    const input = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+    const rawAdapter = input.adapter;
+    if (rawAdapter === undefined) return this.openBrowser(input.url);
+    if (typeof rawAdapter !== 'string' || !rawAdapter.trim() || rawAdapter.length > 128) {
+      throw profileError('INVALID_ARGUMENT', 'open_browser adapter must be one Adapter id.');
+    }
+    const adapter = rawAdapter.trim();
+    const manifest = this._siteManifest(adapter);
+    if (!manifest) throw profileError('ADAPTER_NOT_AVAILABLE', `Adapter "${adapter}" is not available.`);
+
+    // Binding a URL to an Adapter is an authorization decision, not a hint.
+    // Extra globally configured origins must never allow cross-Adapter binding.
+    const adapterOrigins = buildAllowedOpenBrowserOrigins([manifest], '');
+    const url = assertAllowedOpenBrowserUrl(input.url, adapterOrigins);
+    const opened = await this.openBrowser(url);
+    if (!manifest.auth) {
+      return { ...opened, auth: { site: adapter, status: 'not_configured', flowActive: false } };
+    }
+
+    let observation = null;
+    if (Number.isInteger(opened.tabId)) {
+      try {
+        observation = await this._request({ type: 'auth_observe_open', site: adapter, tabId: opened.tabId }, 7_000);
+      } catch (error) {
+        return {
+          ...opened,
+          auth: { site: adapter, status: 'unverified', flowActive: false, reason: error.code || 'OBSERVATION_FAILED' },
+        };
+      }
+    }
+    if (observation?.state === 'closed') {
+      return { ...opened, auth: { site: adapter, status: 'tab_closed', flowActive: false } };
+    }
+    if (observation?.state === 'unknown') {
+      return {
+        ...opened,
+        auth: { site: adapter, status: 'unverified', flowActive: false, ...(observation.timedOut ? { timedOut: true } : {}) },
+      };
+    }
+
+    // A redirect observed on the newly opened tab is authoritative for this
+    // navigation. Bind that exact tab and skip a global check that could select
+    // an older business tab in the same Profile.
+    const observedLogin = observation?.state === 'login';
+    const auth = await this._siteLogin().login(adapter, {
+      waitMs: 0,
+      ...(observedLogin ? {
+        skipCheck: true,
+        targetTabId: opened.tabId,
+        ...(observation.url ? { pageUrl: observation.url } : {}),
+      } : {}),
+    });
+    return {
+      ...opened,
+      auth: { ...auth, flowActive: auth.status === 'waiting_user' },
+    };
+  }
+
+  /**
+   * Open a URL. Adapter-aware authentication is layered by
+   * `_openBrowserWithLogin`; this method intentionally remains a pure opener.
    */
   async openBrowser(url) {
     let managed = [];
