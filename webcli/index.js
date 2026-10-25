@@ -157,8 +157,10 @@ Tools:
   completion bash|zsh|fish                 输出动态 shell 补全脚本（不修改 shell 配置）
   call <tool_name> [--key=value ...] [-v, --verbose] [--output-format=json|markdown|table|plain|csv|yaml]
                                   调用 Adapter 工具（Extension 自动启动 Bridge；Toolkit 直接运行）
+                                  打开已知 Adapter 网站：open_browser --url=<Homepage> --adapter=<adapter-id>
+                                  打开未知/通用网页时可省略 --adapter，此时不处理登录
                                   参数直接以 --key=value 形式传递：
-                                    webcli call open_browser --url=http://jd.com
+                                    webcli call open_browser --url=http://jd.com --adapter=jd.com
                                     webcli call jd.com.search_products --keyword=手机 --limit=5
                                   数组/对象用 JSON 字面量：
                                     webcli call tool --fields='{"标题":"xxx"}'
@@ -659,6 +661,11 @@ async function requireLoginSite(site) {
   return manifest;
 }
 
+function requireAutologinSite(manifest) {
+  if (manifest?.auth?.autologin?.mode === 'off') throw new Error('该网站不支持自动登录，请使用二维码、动态密码或其他方式手动登录。');
+  return manifest;
+}
+
 const LOGIN_STATE_TEXT = { logged_in: "已登录", logged_out: "未登录", unknown: "未知" };
 
 async function cmdLogin(site, { json = false, loginWaitSeconds, profile } = {}) {
@@ -706,15 +713,24 @@ async function cmdAuth(sub, rest = [], { json = false, profile } = {}) {
         const sites = await loadLoginSites();
         status = {
           autologinSupported: vault.supported,
-          sites: sites.map((manifest) => ({
-            site: manifest.name, name: manifest.auth.display_name || manifest.i18n?.zh?.name || manifest.name,
-            state: "unknown", autologin: { supported: vault.supported, ...vault.site(manifest.name) },
-          })),
+          sites: sites.map((manifest) => {
+            const mode = manifest.auth.autologin?.mode === 'off' ? 'off' : 'auto';
+            const preferences = vault.site(manifest.name);
+            return {
+              site: manifest.name, name: manifest.auth.display_name || manifest.i18n?.zh?.name || manifest.name,
+              state: "unknown", autologin: {
+                supported: vault.supported, allowed: mode !== 'off', mode, ...preferences,
+                ...(mode === 'off' ? { enabled: false } : {}),
+              },
+            };
+          }),
         };
       }
       if (json) { console.log(JSON.stringify(status, null, 2)); return; }
       for (const entry of status.sites) {
-        const auto = entry.autologin?.enabled ? `自动登录：开（${entry.autologin.username}）` : entry.autologin?.configured ? "自动登录：已暂停" : "自动登录：关";
+        const auto = entry.autologin?.allowed === false
+          ? "自动登录：不支持"
+          : entry.autologin?.enabled ? `自动登录：开（${entry.autologin.username}）` : entry.autologin?.configured ? "自动登录：已暂停" : "自动登录：关";
         console.log(`${entry.site.padEnd(18)} ${entry.name.padEnd(10)} ${(LOGIN_STATE_TEXT[entry.state] || entry.state).padEnd(4)} ${auto}${entry.flow ? `  登录中（${entry.flow}）` : ""}`);
       }
       if (!status.autologinSupported) console.log("\n当前系统暂不支持安全保存密码（目前支持 Windows），自动登录不可用。");
@@ -729,7 +745,8 @@ async function cmdAuth(sub, rest = [], { json = false, profile } = {}) {
       return;
     }
     if (sub === "save") {
-      await requireLoginSite(site);
+      const manifest = await requireLoginSite(site);
+      requireAutologinSite(manifest);
       if (!vault.supported) throw new Error("当前系统暂不支持安全保存密码（目前支持 Windows）。");
       if (!process.stdin.isTTY || !process.stderr.isTTY) throw new Error("保存密码需要在本机交互式终端中运行。");
       process.stderr.write(`${AUTOLOGIN_NOTICE}\n\n`);
@@ -748,9 +765,10 @@ async function cmdAuth(sub, rest = [], { json = false, profile } = {}) {
       return;
     }
     if (sub === "autologin") {
-      await requireLoginSite(site);
+      const manifest = await requireLoginSite(site);
       const value = rest[1];
       if (!["on", "off"].includes(value)) throw new Error("用法：webcli auth autologin <网站> on|off");
+      if (value === "on") requireAutologinSite(manifest);
       if (value === "on" && !vault.hasCredential(site)) throw new Error(`请先运行 webcli auth save ${site} 保存账号密码`);
       vault.updateSite(site, { enabled: value === "on" });
       console.log(`✓ ${site} 自动登录已${value === "on" ? "开启" : "关闭"}`);
@@ -996,7 +1014,16 @@ async function cmdCall(toolName, argsStr, options = {}) {
 
   const callTimeoutMs = resolveToolCallTimeout(toolName);
   const loginWaitMs = resolveLoginWaitMs(options.loginWaitSeconds);
-  const site = v2Match?.adapter?.name || "";
+  let site = v2Match?.adapter?.name || "";
+  if (toolName === 'open_browser' && args.adapter !== undefined) {
+    if (typeof args.adapter !== 'string' || !args.adapter.trim() || args.adapter.length > 128) {
+      console.log(formatCallOutput({ error: 'open_browser adapter must be one Adapter id.', code: 'INVALID_ARGUMENT', trace_id: null }, outputFormat));
+      process.exitCode = 1;
+      return;
+    }
+    site = args.adapter.trim();
+    args.adapter = site;
+  }
 
   const onTimeout = () => {
     console.log(formatCallOutput({ error: "工具调用超时", trace_id: null }, outputFormat));
