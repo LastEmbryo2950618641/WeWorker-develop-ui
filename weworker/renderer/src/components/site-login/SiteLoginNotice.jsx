@@ -106,7 +106,7 @@ export default function SiteLoginNotice() {
                   {notice.view.actions.map((action) => {
                     const opening = action === 'show' && showing === notice.key
                     return (
-                      <button key={action} type="button" style={buttonStyle} disabled={opening}
+                      <button data-app-button="action" key={action} type="button" style={buttonStyle} disabled={opening}
                         onClick={() => { void run(notice, action) }}>
                         {opening ? '正在打开…' : LOGIN_ACTION_LABELS[action]}
                       </button>
