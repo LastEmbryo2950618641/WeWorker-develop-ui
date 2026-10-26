@@ -182,13 +182,22 @@ git push origin v1.0.1
 
 ### 版本号与分支号对应
 
-`dev-X.Y.Z` 分支的版本号必须与分支号保持一致。创建或维护 `dev-X.Y.Z` 分支时，需要同步更新以下三个文件中的 `version` 字段为 `X.Y.Z`：
+`dev-X.Y.Z` 分支的版本号必须与分支号保持一致。创建或维护 `dev-X.Y.Z` 分支时，需要将以下位置的版本统一更新为 `X.Y.Z`（`scripts/check-public-config.mjs` 会强制校验）：
 
 - `weworker/package.json`
 - `weworker/renderer/package.json`
 - `weworker/backend-ts/package.json`
+- `officialWeb/package.json`
+- `metrics-server/package.json`
+- `extension/manifest.json`
+- 上述各目录下 `package-lock.json` 的根版本字段（仅根条目，不含依赖版本）
+- `weworker/changelog.json` 的首条版本记录
+- `officialWeb/src/lib/downloadConfig.js` 的 `APP_VERSION`
+- `CHANGELOG.md` 与 README「版本」章节
 
-桌面端打包（electron-builder）与安装后显示的版本均取自 `weworker/package.json`，构建脚本会校验三个文件版本一致；若分支号与版本号不对应，打包产物名称和安装后的版本显示都会与预期不符。
+注意：`webcli/` 走 npm 独立发布节奏，版本与桌面端解耦，不随分支号更新。
+
+桌面端打包（electron-builder）与安装后显示的版本均取自 `weworker/package.json`；若分支号与版本号不对应，打包产物名称和安装后的版本显示都会与预期不符。WebCLI 版本一致性由 `webcli/version.json`、`webcli/.claude-plugin/plugin.json` 和 `webcli/skills/webcli/SKILL.md` 的独立账本约束。
 
 ## 许可证
 
