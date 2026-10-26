@@ -171,9 +171,11 @@ npm run build:win
 
 开发启动和生产构建读取同一份 JSON。现有供应商的精简版与完整版配置可以在构建前整份覆盖 `model.json`，无需修改代码或同时调整构建 Profile；列表、默认供应商、网关、鉴权及固定规则均跟随覆盖后的文件。保留条目原有 ID 和必需字段即可兼容已保存设置；不在 JSON 中的条目不会被代码自动补回。修改后 Vite 开发服务会自动重新加载构建 Profile 及其引用的模型配置，更新注入页面的固定供应商等标记；Backend 仍需重启。已打包应用需要重新构建，不支持安装后直接修改 JSON 热更新。构建校验会拒绝非法字段、重复 ID、无效默认供应商及包含凭据的网关地址；现有供应商运行时使用当前 JSON 网关，避免旧保存地址覆盖新配置。新增供应商 ID 仍需配套后端配置存储支持，不能仅添加 JSON 条目。
 
-`weworker/default-site.json` 是首页默认站点的有序 Adapter ID 数组，覆盖本仓库全部内置 Adapter；公开顺序来自 `develop` 的 `build-profile.json.adapters`。Backend 在合并旧格式与托管 Adapter 后统一应用该顺序，首页默认展示其中前 5 个已启用、可见且有场景或描述的站点。用户保存的拖动顺序和展示数量优先；未安装站点跳过，额外安装的站点追加到末尾。新增或删除内置 Adapter 时同步维护此清单。
+`weworker/default-site.json` 是默认站点的有序配置数组，每项使用 `{ "id": "example.com", "enabled": true }`。`id` 为 Adapter ID，`enabled` 表示该站点在客户端是否有效：设为 `false` 时，首页、站点管理和其他共用站点列表的入口均不展示该站点，已有用户显示设置不能覆盖此配置；改回 `true` 后恢复展示资格。兼容旧的 ID 字符串，以及省略 `enabled` 的对象，均默认有效。此配置控制客户端展示，不卸载 Adapter，也不禁用 WebCLI 的直接调用。
 
-派生发行版在构建前用自身仓库的 `weworker/default-site.json` 覆盖共享源码中的同名文件，并与该发行版 Adapter 打包范围保持一致。该 JSON 直接编入 Backend bundle，开发态修改后重启 Backend，已打包应用需要重新构建。
+清单覆盖本仓库全部内置 Adapter，保留原有顺序。Backend 在合并旧格式与托管 Adapter 后统一应用该顺序，客户端先过滤无效站点，再按原有启用、可见和场景规则展示：首页默认展示前 5 个符合条件的站点。用户保存的拖动顺序和展示数量优先，但不能恢复无效站点；未安装站点跳过，清单外额外安装的站点默认有效并追加到末尾。新增或删除内置 Adapter 时同步维护此清单。
+
+派生发行版在构建前用自身仓库的 `weworker/default-site.json` 覆盖共享源码中的同名文件，并与该发行版 Adapter 打包范围保持一致。该 JSON 直接编入 Backend 和 Renderer bundle。开发态修改有效性后刷新客户端即可，修改默认顺序还需重启 Backend；已打包应用需要重新构建。
 
 `adapters` 只控制打包范围，开发模式下所有 Adapter 都可用。派生发行版将差异写入独立 overlay，通过 `WEWORKER_BUILD_PROFILE` 与 `WEWORKER_BUILD_OVERLAY` 传入：
 
