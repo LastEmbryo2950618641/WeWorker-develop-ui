@@ -171,14 +171,24 @@ npm run build:mac
 
 ## 版本
 
-当前版本为 `1.0.0`。公开版本变化见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本为 `1.0.1`。公开版本变化见 [CHANGELOG.md](CHANGELOG.md)。
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.0.1
+git push origin v1.0.1
 ```
 
 正式发布由维护者完成；推送版本 Tag 后会自动构建 Draft Release，维护者验证安装包后再发布。创建 Tag 前必须通过项目规定的审核、测试、构建和发布验证，完整流程见 [发布指南](docs/RELEASE.md)。
+
+### 版本号与分支号对应
+
+`dev-X.Y.Z` 分支的版本号必须与分支号保持一致。创建或维护 `dev-X.Y.Z` 分支时，需要同步更新以下三个文件中的 `version` 字段为 `X.Y.Z`：
+
+- `weworker/package.json`
+- `weworker/renderer/package.json`
+- `weworker/backend-ts/package.json`
+
+桌面端打包（electron-builder）与安装后显示的版本均取自 `weworker/package.json`，构建脚本会校验三个文件版本一致；若分支号与版本号不对应，打包产物名称和安装后的版本显示都会与预期不符。
 
 ## 许可证
 
