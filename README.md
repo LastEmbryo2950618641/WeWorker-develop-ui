@@ -77,7 +77,7 @@ npm run install:all
 npm run dev
 ```
 
-首次安装会同步网站探索agent运行环境，并安装桌面端、Renderer、Backend 和 WebCLI 的锁定依赖。期间会下载 Python 运行环境和 Electron（约 120 MB），可能出现一段时间没有新日志；请确保能够访问 npm registry、GitHub Releases 和相关 CDN。
+首次安装会同步网站探索agent运行环境，并通过 npm 官方的 `npm ci` 命令严格按照各目录的 `package-lock.json` 安装桌面端、Renderer、Backend 和 WebCLI 依赖。`npm ci` 会先删除对应目录已有的 `node_modules`，且不会改写 lockfile，适合首次克隆和复现正式构建；日常开发新增或升级依赖时请使用 `npm install <package>`，并提交同步更新的 `package.json` 和 `package-lock.json`。期间会下载 Python 运行环境和 Electron（约 120 MB），可能出现一段时间没有新日志；请确保能够访问 npm registry、GitHub Releases 和相关 CDN。
 
 ### 加载浏览器扩展
 

@@ -75,7 +75,7 @@ git clone <weworker-repository>
 npm run install:all
 ```
 
-该命令使用各目录的 `package-lock.json` 和 `npm ci` 做可重复安装。运行前用 `node --version` 确认是 `v22.x.x`；不需要自行安装系统 Python、PyInstaller 或 pywin32。
+该命令使用 npm 官方的 `npm ci` 严格按照各目录的 `package-lock.json` 做可重复安装。`npm ci` 会先删除对应目录已有的 `node_modules`，且不会改写 lockfile，适合首次克隆和复现正式构建；日常开发新增或升级依赖时请使用 `npm install <package>`，并提交同步更新的 `package.json` 和 `package-lock.json`。运行前用 `node --version` 确认是 `v22.x.x`；不需要自行安装系统 Python、PyInstaller 或 pywin32。
 
 或手动逐个安装：
 

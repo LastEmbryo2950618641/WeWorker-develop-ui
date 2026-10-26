@@ -74,6 +74,8 @@ npm run install:all
 - `weworker/backend-ts`
 - `webcli`
 
+这里的 `npm ci` 是 npm 官方的干净安装命令：它会先删除对应目录已有的 `node_modules`，严格按照 `package-lock.json` 安装且不会改写 lockfile，适合首次克隆和复现正式构建。日常开发新增或升级依赖时应使用 `npm install <package>`，并提交同步更新的 `package.json` 和 `package-lock.json`。
+
 如果一键安装失败，可按照 CI 的顺序分别执行：
 
 ```powershell
