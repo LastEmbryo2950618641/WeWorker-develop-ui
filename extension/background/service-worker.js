@@ -8,7 +8,7 @@ import { buildV2Bootstrap, v2CommandDefs, v2InjectionFiles } from "./v2-loader.j
 import { injectAdapterSources } from './adapter-script-loader.js';
 import { createPackagedAdapterMatcher, injectPackagedAdapter } from './packaged-adapter-loader.js';
 import { createHostAdapterClient } from './host-adapter-client.js';
-import { createHostAdapterRuntime, assertAdapterNavigationUrl, createNavigationGuard, navigateAdapterTab } from './host-adapter-runtime.js';
+import { createHostAdapterRuntime, assertAdapterNavigationUrl, createNavigationGuard, navigateAdapterTab, waitForAdapterPageRecovery } from './host-adapter-runtime.js';
 import {
   adapterHelperPatterns,
   adapterPrimaryHost,
@@ -304,7 +304,7 @@ const cdpExecutionContexts = new Map();
 const CDP_NETWORK_ENTRY_LIMIT = 200;
 const CDP_RESPONSE_PREVIEW_LIMIT = 4000;
 const CDP_REQUEST_PREVIEW_LIMIT = 2000;
-const ADAPTER_RESPONSE_CAPTURE_LIMIT = 8 * 1024 * 1024;
+const ADAPTER_RESPONSE_CAPTURE_LIMIT = 32 * 1024 * 1024;
 const ADAPTER_CAPTURE_ENTRY_LIMIT = 20;
 const ACTION_CAPTURE_VERSION = 'opencli-action-capture-v1';
 
@@ -2391,6 +2391,7 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
 
       let responsePreview = '';
       let responseBody = '';
+      let responseBodyError;
       try {
         const body = await chrome.debugger.sendCommand({ tabId }, 'Network.getResponseBody', { requestId: params.requestId });
         if (body?.base64Encoded) {
@@ -2400,7 +2401,9 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
           responseBody = body?.body || '';
         }
         responsePreview = truncateText(responseBody, CDP_RESPONSE_PREVIEW_LIMIT);
-      } catch { }
+      } catch (error) {
+        responseBodyError = /evict/i.test(String(error?.message)) ? 'BODY_EVICTED' : 'BODY_UNAVAILABLE';
+      }
 
       pushCdpNetworkEntry(tabId, {
         kind: 'cdp',
@@ -2436,6 +2439,7 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
             : responseBody,
           responseBodyFullSize: encodedBody.byteLength,
           responseBodyTruncated: truncated,
+          ...(responseBodyError ? { responseBodyError } : {}),
         });
         if (adapterSession.entries.length > ADAPTER_CAPTURE_ENTRY_LIMIT) {
           adapterSession.entries.splice(0, adapterSession.entries.length - ADAPTER_CAPTURE_ENTRY_LIMIT);
@@ -5212,6 +5216,15 @@ async function callToolInTab(tabId, toolName, args, traceID = null, allowTranspo
       lastError = err;
       const errMsg = err.message || String(err);
 
+      // Managed Adapter calls recover at the host boundary, where the pinned
+      // read/write policy, package snapshot, page URL and total deadline can
+      // all be enforced together. Generic channel errors are not BFCache.
+      if (!allowTransportRetry && /back\/forward cache|bfcache/i.test(errMsg)) {
+        const error = new Error('Adapter page entered back/forward cache; its message channel closed.');
+        error.code = 'ADAPTER_BFCACHE_DISCONNECTED';
+        throw error;
+      }
+
       // 检测 bfcache 或页面跳转导致的断连
       if (
         attempt < maxRetries &&
@@ -7261,6 +7274,7 @@ function getHostAdapterRuntime() {
     },
     inject: injectV2AdapterWithCode,
     ready: (tabId, manifest, timeoutMs, traceID) => waitForManagedPageReady(tabId, manifest, true, timeoutMs, traceID),
+    recover: (tabId, manifest, url, timeoutMs) => waitForAdapterPageRecovery(chrome, tabId, manifest, url, timeoutMs),
     query: (tabId, payload, manifest, command) => {
       assertAdapterNavigationUrl(manifest, assertPageQueryRoute(payload, command));
       return executePageQuery({ chrome, ensureCdpAttached, tabId, payload: { ...payload, metadataOnly: false } });
