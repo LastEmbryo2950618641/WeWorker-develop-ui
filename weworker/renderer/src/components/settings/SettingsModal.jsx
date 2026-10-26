@@ -36,6 +36,7 @@ import {
 } from '../../utils/style-draft.js'
 import { CONTEXT_LIMIT_PRESETS, formatContextLimitInput, parseContextLimitInput } from '../../utils/context-window.js'
 import { DEFAULT_WELCOME_FEATURED_SITE_LIMIT } from '../welcome/welcome-utils.js'
+import { DEFAULT_UPDATE_SETTINGS, UPDATE_CHECK_INTERVAL_HOURS } from '../../../../electron/update-settings.js'
 import weworkerLogo from '../../../../asset/logo.png'
 import './settings-theme.css'
 import { backendFetch } from '../../api/http.js'
@@ -338,10 +339,7 @@ function AboutTab({ appVersion, commitHash }) {
   const [downloading, setDownloading] = useState(false)
   const [installing, setInstalling] = useState(false)
   const [savingUpdateSettings, setSavingUpdateSettings] = useState(false)
-  const [updateSettings, setUpdateSettings] = useState({
-    autoCheckEnabled: true,
-    checkIntervalHours: 1,
-  })
+  const [updateSettings, setUpdateSettings] = useState(DEFAULT_UPDATE_SETTINGS)
 
   useEffect(() => {
     let cancelled = false
@@ -373,11 +371,10 @@ function AboutTab({ appVersion, commitHash }) {
   const updateSources = Array.isArray(updateState?.updateSources) && updateState.updateSources.length > 0
     ? updateState.updateSources
     : [
-        { id: 'official', label: '官网', metadataUrl: `${DOWNLOAD_URL}${updateMetadataFile}` },
         { id: 'github', label: 'GitHub latest', metadataUrl: `${GITHUB_UPDATE_URL}${updateMetadataFile}` },
       ]
   const activeUpdateSourceId = updateState?.activeUpdateSource?.id || ''
-  const checkIntervalValue = Number(updateSettings.checkIntervalHours || 1)
+  const checkIntervalValue = Number(updateSettings.checkIntervalHours || 12)
   const canCheck = status !== 'checking' && status !== 'downloading'
   const canDownload = status === 'available'
   const canInstall = status === 'downloaded'
@@ -418,9 +415,9 @@ function AboutTab({ appVersion, commitHash }) {
   const saveUpdateSettings = async () => {
     const nextSettings = {
       autoCheckEnabled: updateSettings.autoCheckEnabled !== false,
-      checkIntervalHours: [1, 3, 6, 9, 12, 15, 18, 21, 24].includes(Number(updateSettings.checkIntervalHours))
+      checkIntervalHours: UPDATE_CHECK_INTERVAL_HOURS.includes(Number(updateSettings.checkIntervalHours))
         ? Number(updateSettings.checkIntervalHours)
-        : 1,
+        : DEFAULT_UPDATE_SETTINGS.checkIntervalHours,
     }
     setSavingUpdateSettings(true)
     try {
@@ -500,7 +497,7 @@ function AboutTab({ appVersion, commitHash }) {
                   ...current,
                   checkIntervalHours: Number(hours),
                 }))}
-                options={[1, 3, 6, 9, 12, 15, 18, 21, 24].map((hours) => ({
+                options={UPDATE_CHECK_INTERVAL_HOURS.map((hours) => ({
                   value: hours,
                   label: `${hours} 小时`,
                 }))}
@@ -523,7 +520,7 @@ function AboutTab({ appVersion, commitHash }) {
             <div className="settings-inline-actions">
               <button
                 type="button"
-                className="settings-btn settings-btn-secondary"
+                className="settings-btn settings-btn-secondary settings-update-action"
                 onClick={checkUpdate}
                 disabled={!canCheck || checking}
               >
@@ -532,7 +529,7 @@ function AboutTab({ appVersion, commitHash }) {
               {canDownload && (
                 <button
                   type="button"
-                  className="settings-btn settings-btn-primary"
+                  className="settings-btn settings-btn-primary settings-update-action"
                   onClick={downloadUpdate}
                   disabled={downloading}
                 >
@@ -542,7 +539,7 @@ function AboutTab({ appVersion, commitHash }) {
               {canInstall && (
                 <button
                   type="button"
-                  className="settings-btn settings-btn-primary"
+                  className="settings-btn settings-btn-primary settings-update-action"
                   onClick={installUpdate}
                   disabled={installing}
                 >

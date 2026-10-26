@@ -1,6 +1,18 @@
 # WeWorker Roadmap
 
 - 2026-10-24（dev-1.0.0 WebCLI 契约修复）：打包后的 WebCLI 直接注入并输出源码包版本；`adapter install --file` 支持 v2 `.adapt` 归档并复用降级、权限变化与来源变化门禁；GitHub Issue/PR 详情支持在同次只读调用内从列表导航续读，修复 `max_comments=0`，并明确区分参数、登录、404 与未就绪错误。GitHub 包升级为 1.0.1；WebCLI 聚焦 24 项、版本打包测试 1 项、包校验、语法及差异检查通过。未执行真实 GitHub 登录页面、完整 WebCLI bundle 分发或安装包验收。
+- 2026-10-24（`dev-1.0.0` 公开地址与品牌资产收敛）：官网、下载页、GitHub Release 更新元数据和仓库文档分别使用正式生产地址；桌面自动更新与 electron-builder 发布配置统一使用 GitHub `latest/download`，不再把官网页面作为更新源；社交预览内嵌并逐字节校验官网统一 Logo，避免外部相对图片在 GitHub 预览中失效。公开配置 5 项、桌面构建脚本 13 项测试、相关语法检查、官网与 Renderer 生产构建通过，1280×640 社交预览实际渲染正确。未创建 Release、未构建桌面安装包、未部署官网，真实客户端更新下载待正式 Published Release 验证。
+
+- 2026-10-24（dev-1.0.0 携程与 Wikipedia 修复）：携程 Adapter 网络捕获上限提高到 32 MiB，并区分浏览器响应正文不可读、真实空响应、截断和 JSON 错误，航班参数补充 IATA 城市码提示；Wikipedia random 改用同源 Action API 获取随机非重定向条目导语，不再依赖 REST 302 跳转。携程包升级为 0.3.7、Wikipedia 包升级为 0.1.1；Extension 聚焦 12 项、WebCLI 两组 95 项、包校验、语法及差异检查通过。未执行真实携程航班、Wikipedia 网络、完整安装包或 macOS 验收。
+- 2026-10-24（dev-1.0.0 B 站与豆瓣修复）：B 站只读搜索和详情改为由 Host Runtime 自动导航续执行并识别关键词变化，点赞/收藏仍只做终止式页面准备、绝不自动重放；豆瓣搜索修复页面隔离执行时把分类器源码字符串当函数调用的问题，并保留安全验证域拒绝边界。B 站包升级为 1.0.4、豆瓣包升级为 0.1.2；WebCLI 两组聚焦测试 127 项、包校验、语法和差异检查通过。未执行真实 B 站/豆瓣账号、验证码、写操作或安装包验收。
+- 2026-10-24（dev-1.0.0 BFCache 安全恢复）：托管页面 Adapter 的明确 BFCache 传输断连只允许安全只读命令在原页面稳定恢复后重试，重试前重新校验并注入当前包；写操作、需确认命令、业务错误和普通通道断连均不重放，最多恢复两次并沿用原总超时与标签页队列。Extension 聚焦 37 项、WebCLI Host Runtime 32 项及相关语法/差异检查通过；未执行真实网站 BFCache 实机复验或安装包构建。
+- 2026-10-24（客户端易用性修复迁入 `dev-1.0.0`）：更新检查周期收敛为 6／12／24 小时并默认 12 小时，旧设置自动映射到最近可用值；更新按钮保持单行，频道权限说明改为面向用户的中文；欢迎页可重新添加已启用但隐藏的网站，并按实际可见数量判断上限。更新设置 3 项、欢迎页站点可用性 4 项聚焦测试、相关 JS 语法检查和 Renderer 生产构建通过。当前侧栏已不包含旧版收起箭头，未迁入该过时代码。未验证完整 Electron 交互、真实更新下载、安装包或 macOS。
+
+- 2026-10-24（dev-1.0.0 桌面 D10–D12 修复）：首条回退标题与异步模型标题通过全局 SSE 同步到侧栏；每天/每周计划保留 00:00 与周日零值；资源文件或目录重命名时同步系统生成的路径提示，不修改用户正文和无关路径。保留当前分支已有的独立草稿实现，不迁移 D09。聚焦测试 6 项、Renderer 生产构建、Backend 类型检查和差异检查通过；未执行完整 Electron 点击、真实模型标题生成或安装包验收。
+
+- 2026-10-24（本地源码构建文档）：在干净的公开 `main` 提交上按根 README 复现 Windows x64 构建，确认 Node.js 必须使用 22.x、首次 Electron 下载需可访问 GitHub Releases/CDN，`npm run install:all` 改用 lockfile 驱动的 npm 官方 `npm ci`；文档明确该命令会清理已有 `node_modules` 且不改写 lockfile，并区分日常新增或升级依赖应使用的 `npm install <package>`。补充 Electron/electron-builder 镜像、Windows 符号链接权限和终端安全软件拦截新生成 PyInstaller 可执行文件时的识别与安全处理。本地实际完成 Renderer、Backend、Bridge、WebCLI、Windows 解密工具及 NSIS 安装包生成，产出 `.exe`、`.blockmap`、`latest.yml` 和 win-unpacked；本机终端安全软件仍拒绝执行本次新生成的未签名 PyInstaller 文件。GitHub Actions 已在可信 Windows Runner 上完整执行同一 `npm run build:win` 并通过 runtime 自检、安装包校验、SHA-256/provenance 生成和 Artifact 上传；安装后人工冒烟仍未执行。
+
+- 2026-10-24（公开 Workflow 收敛）：将公开 CI 拆分为 `Validate`、`Common Build`、`Build Desktop`、`Release Desktop` 和 `Build Website`，保留配置检查、单元测试和各模块编译检查；桌面测试支持 Windows x64、macOS x64、macOS arm64 单独或全量打包，官网仅上传带校验和及来源信息的构建产物。公共构建直接使用当前仓库源码，不包含内部目录覆盖、内部仓库访问或内部凭据；关联 Issue 自动关闭规则同步适配 `dev-*`。验证：Workflow YAML、配置检查、单元测试、各模块编译检查及 GitHub Actions Windows x64 完整安装包构建通过，安装包 Artifact 已生成；macOS x64、macOS arm64、全平台手动入口和 Draft Release 待流程进入默认分支后验证。
 
 - 2026-10-23（自定义对话协议）：模型配置支持选择 Anthropic Messages 或 OpenAI Chat Completions，地址提示、模型目录和连接检测随协议切换；本地代理转换 OpenAI 对话、工具调用和流式响应。旧配置默认 Anthropic；认证类型优先展示 API Key 并提供选择提示，配置下拉仅显示配置名，保留自定义模型管理。验证：Backend 协议与配置 25 项、Renderer 模型选择 25 项测试、Backend 类型检查及 Renderer 生产构建通过；真实 OpenAI 配置获取模型、连接检测和流式回复通过。未验证：完整桌面交互、安装包及 macOS。
 
