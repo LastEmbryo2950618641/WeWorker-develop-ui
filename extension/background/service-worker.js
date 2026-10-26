@@ -8,7 +8,7 @@ import { buildV2Bootstrap, v2CommandDefs, v2InjectionFiles } from "./v2-loader.j
 import { injectAdapterSources } from './adapter-script-loader.js';
 import { createPackagedAdapterMatcher, injectPackagedAdapter } from './packaged-adapter-loader.js';
 import { createHostAdapterClient } from './host-adapter-client.js';
-import { createHostAdapterRuntime, assertAdapterNavigationUrl, createNavigationGuard, navigateAdapterTab } from './host-adapter-runtime.js';
+import { createHostAdapterRuntime, assertAdapterNavigationUrl, createNavigationGuard, navigateAdapterTab, waitForAdapterPageRecovery } from './host-adapter-runtime.js';
 import {
   adapterHelperPatterns,
   adapterPrimaryHost,
@@ -5216,6 +5216,15 @@ async function callToolInTab(tabId, toolName, args, traceID = null, allowTranspo
       lastError = err;
       const errMsg = err.message || String(err);
 
+      // Managed Adapter calls recover at the host boundary, where the pinned
+      // read/write policy, package snapshot, page URL and total deadline can
+      // all be enforced together. Generic channel errors are not BFCache.
+      if (!allowTransportRetry && /back\/forward cache|bfcache/i.test(errMsg)) {
+        const error = new Error('Adapter page entered back/forward cache; its message channel closed.');
+        error.code = 'ADAPTER_BFCACHE_DISCONNECTED';
+        throw error;
+      }
+
       // 检测 bfcache 或页面跳转导致的断连
       if (
         attempt < maxRetries &&
@@ -7265,6 +7274,7 @@ function getHostAdapterRuntime() {
     },
     inject: injectV2AdapterWithCode,
     ready: (tabId, manifest, timeoutMs, traceID) => waitForManagedPageReady(tabId, manifest, true, timeoutMs, traceID),
+    recover: (tabId, manifest, url, timeoutMs) => waitForAdapterPageRecovery(chrome, tabId, manifest, url, timeoutMs),
     query: (tabId, payload, manifest, command) => {
       assertAdapterNavigationUrl(manifest, assertPageQueryRoute(payload, command));
       return executePageQuery({ chrome, ensureCdpAttached, tabId, payload: { ...payload, metadataOnly: false } });
