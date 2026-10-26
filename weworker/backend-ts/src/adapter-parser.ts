@@ -488,7 +488,8 @@ export function parseAllAdapters(): Map<string, ParsedAdapter> {
     })
   }
   const ordered = new Map<string, ParsedAdapter>()
-  for (const id of defaultSiteOrder) {
+  for (const entry of defaultSiteOrder as Array<string | { id: string; enabled?: boolean }>) {
+    const id = typeof entry === 'string' ? entry : entry.id
     const adapter = result.get(id)
     if (adapter) ordered.set(id, adapter)
   }
