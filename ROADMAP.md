@@ -1,5 +1,7 @@
 # WeWorker Roadmap
 
+- 2026-10-24（dev-1.0.0 桌面 D10–D12 修复）：首条回退标题与异步模型标题通过全局 SSE 同步到侧栏；每天/每周计划保留 00:00 与周日零值；资源文件或目录重命名时同步系统生成的路径提示，不修改用户正文和无关路径。保留当前分支已有的独立草稿实现，不迁移 D09。聚焦测试 6 项、Renderer 生产构建、Backend 类型检查和差异检查通过；未执行完整 Electron 点击、真实模型标题生成或安装包验收。
+
 - 2026-10-24（公开 Workflow 收敛）：将公开 CI 拆分为 `Validate`、`Common Build`、`Build Desktop`、`Release Desktop` 和 `Build Website`，保留配置检查、单元测试和各模块编译检查；桌面测试支持 Windows x64、macOS x64、macOS arm64 单独或全量打包，官网仅上传带校验和及来源信息的构建产物。公共构建直接使用当前仓库源码，不包含内部目录覆盖、内部仓库访问或内部凭据；关联 Issue 自动关闭规则同步适配 `dev-*`。验证：Workflow YAML、配置检查、单元测试、各模块编译检查及 GitHub Actions Windows x64 完整安装包构建通过，安装包 Artifact 已生成；macOS x64、macOS arm64、全平台手动入口和 Draft Release 待流程进入默认分支后验证。
 
 - 2026-10-23（自定义对话协议）：模型配置支持选择 Anthropic Messages 或 OpenAI Chat Completions，地址提示、模型目录和连接检测随协议切换；本地代理转换 OpenAI 对话、工具调用和流式响应。旧配置默认 Anthropic；认证类型优先展示 API Key 并提供选择提示，配置下拉仅显示配置名，保留自定义模型管理。验证：Backend 协议与配置 25 项、Renderer 模型选择 25 项测试、Backend 类型检查及 Renderer 生产构建通过；真实 OpenAI 配置获取模型、连接检测和流式回复通过。未验证：完整桌面交互、安装包及 macOS。
