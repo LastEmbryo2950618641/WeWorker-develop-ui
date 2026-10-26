@@ -1,5 +1,6 @@
 # WeWorker Roadmap
 
+- 2026-10-24（dev-1.0.0 WebCLI 契约修复）：打包后的 WebCLI 直接注入并输出源码包版本；`adapter install --file` 支持 v2 `.adapt` 归档并复用降级、权限变化与来源变化门禁；GitHub Issue/PR 详情支持在同次只读调用内从列表导航续读，修复 `max_comments=0`，并明确区分参数、登录、404 与未就绪错误。GitHub 包升级为 1.0.1；WebCLI 聚焦 24 项、版本打包测试 1 项、包校验、语法及差异检查通过。未执行真实 GitHub 登录页面、完整 WebCLI bundle 分发或安装包验收。
 - 2026-10-24（`dev-1.0.0` 公开地址与品牌资产收敛）：官网、下载页、GitHub Release 更新元数据和仓库文档分别使用正式生产地址；桌面自动更新与 electron-builder 发布配置统一使用 GitHub `latest/download`，不再把官网页面作为更新源；社交预览内嵌并逐字节校验官网统一 Logo，避免外部相对图片在 GitHub 预览中失效。公开配置 5 项、桌面构建脚本 13 项测试、相关语法检查、官网与 Renderer 生产构建通过，1280×640 社交预览实际渲染正确。未创建 Release、未构建桌面安装包、未部署官网，真实客户端更新下载待正式 Published Release 验证。
 
 - 2026-10-24（dev-1.0.0 携程与 Wikipedia 修复）：携程 Adapter 网络捕获上限提高到 32 MiB，并区分浏览器响应正文不可读、真实空响应、截断和 JSON 错误，航班参数补充 IATA 城市码提示；Wikipedia random 改用同源 Action API 获取随机非重定向条目导语，不再依赖 REST 302 跳转。携程包升级为 0.3.7、Wikipedia 包升级为 0.1.1；Extension 聚焦 12 项、WebCLI 两组 95 项、包校验、语法及差异检查通过。未执行真实携程航班、Wikipedia 网络、完整安装包或 macOS 验收。
