@@ -6,6 +6,10 @@
 
 （暂无）
 
+## [1.0.2] - 2026-10-27
+
+<!-- 1.0.2 开发分支已创建，用户可见变更条目待发布前补充；同步更新 weworker/changelog.json 的 items -->
+
 ## [1.0.1] - 2026-10-26
 
 ### 新增
@@ -49,5 +53,6 @@
 - 这是 WeWorker 重新初始化开源仓库后的首个公开版本。
 - 开源仓库不继承内部仓库的 Git 历史和内部版本记录。
 
+[1.0.2]: https://github.com/WeWorker/WeWorker/releases/tag/v1.0.2
 [1.0.1]: https://github.com/WeWorker/WeWorker/releases/tag/v1.0.1
 [1.0.0]: https://github.com/WeWorker/WeWorker/releases/tag/v1.0.0
