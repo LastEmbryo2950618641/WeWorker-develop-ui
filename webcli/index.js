@@ -619,6 +619,8 @@ async function stopOwnService() {
  *  The login flow keeps running in the background either way. */
 function resolveLoginWaitMs(seconds) {
   if (Number.isFinite(seconds)) return Math.max(0, Math.min(15 * 60, seconds)) * 1000;
+  const env = Number(process.env.WEBCLI_LOGIN_WAIT_SECONDS);
+  if (Number.isFinite(env)) return Math.max(0, Math.min(15 * 60, env)) * 1000;
   return process.stdin.isTTY && process.stderr.isTTY ? 300_000 : 0;
 }
 
