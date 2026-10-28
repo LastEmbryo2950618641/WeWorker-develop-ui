@@ -11,6 +11,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { verifyHttpWrites } from './write-acceptance.mjs';
 import { verifyWriteResults } from './write-result-acceptance.mjs';
+import { verifyWriteSequences } from './write-sequence-acceptance.mjs';
 import { verifyWriteRepairs } from './write-repair-acceptance.mjs';
 import { verifySharedRepairs } from './shared-repair-acceptance.mjs';
 
@@ -93,6 +94,8 @@ try {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
   await startBridge();
+  if (process.argv.includes('--write-sequences-only')) await verifyWriteSequences({ call, startBridge, stopBridge, pass });
+  else {
   assert.ok((await call('profile.list')).data.profiles.every(profile => profile.contextId === 'legacy' && !profile.online));
   const auth = { type: 'bearer', origin, env: 'EXAMPLE_DISCOVERY_KEY' };
   const start = { mode: 'http', origin, auth, goal: 'Read example API', requestId: 'example-http-start' };
@@ -174,6 +177,7 @@ try {
   pass('restart during an in-flight HTTP operation preserves its budget and marks interrupted without replay');
   await verifyHttpWrites({ call, waitTask, startBridge, stopBridge, pass });
   await verifyWriteResults({ call, startBridge, stopBridge, pass });
+  await verifyWriteSequences({ call, startBridge, stopBridge, pass });
   await verifyWriteRepairs({ call, waitTask, startBridge, stopBridge, pass });
   await verifySharedRepairs({ call, waitTask, startBridge, stopBridge, pass });
   async function assertClean(target) {
@@ -184,6 +188,7 @@ try {
   for (const target of [path.join(root, 'bridge.log'), env.WEWORKER_ADAPTER_DATA_DIR, env.WEWORKER_USER_ADAPTERS_DIR]) await assertClean(target);
   assert.ok((await call('profile.list')).data.profiles.every(profile => profile.contextId === 'legacy' && !profile.online));
   pass('no browser ever connected; credentials/request/response values absent from logs, tasks, knowledge and installed package');
+  }
   await fs.writeFile(path.join(root, 'report.json'), JSON.stringify({ passed: true, bundledCliAndBridge: process.argv.includes('--bundled'), checks, requests }, null, 2));
 } catch (error) {
   await fs.writeFile(path.join(root, 'report.json'), JSON.stringify({ passed: false, checks, error: error.message }, null, 2));

@@ -34,10 +34,11 @@ import { normalizeInterceptSource, interceptValues } from './exploration-interce
 import { isHttpStrategy, httpToolContract, buildHttpTool } from './exploration-http.js';
 import { httpCredentialsCapability } from './http-contract.js';
 import { startHostExploration, collectHostEvidence } from './exploration-host.js';
-import { declareWriteSource, plannedWrites, writeCase, writeReview, verifyWrite, readbackWrite, writeProofDigest, writeFixtures, finishWriteValidation, importRepairWriteFixtures } from './exploration-write.js';
+import { declareWriteSource, plannedWrites, writeCase, writeReview, verifyWrite, readbackWrite, writeProofDigest, writeFixtures, finishWriteValidation, importRepairWriteFixtures, writeCasesVerified } from './exploration-write.js';
 import { verifyGeneratedWriteTools } from './generation-harness/write-tool-verifier.js';
 import { buildUiWriteTool } from './exploration-ui-write.js';
 import { buildExtensionWriteTool } from './exploration-extension-write.js';
+import { reviewWriteSequence, verifyWriteSequence, readbackWriteSequence } from './exploration-write-sequence.js';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const active = new Set(['collecting', 'validating', 'installing', 'verifying_write']);
@@ -93,6 +94,10 @@ export class ExplorationService {
           execution.error = { code: 'WRITE_INTERRUPTED' };
           recoveredWrite = true;
         }
+        for (const sequence of run.writeSequenceExecutions || []) if(sequence.status==='running') {
+          sequence.status='interrupted';recoveredWrite=true;
+          for(const step of sequence.steps) {const write=run.writeExecutions?.find(value=>value.reviewId===step.reviewId);if(write)step.status=write.status;}
+        }
         if (active.has(run.status)) this.update(run, 'interrupted', 'Bridge restarted; inspect consumed writes before continuing. Writes are never replayed.');
         else if (recoveredWrite) this.save(run);
       }
@@ -138,6 +143,7 @@ export class ExplorationService {
         return { stage, nextAction };
       }),
       writeExecutions: (run.writeExecutions || []).map(({ http, effect, resultBinding, ...record }) => record),
+      writeSequences: clone(run.writeSequenceExecutions || []),
       ...(run.repairScope ? { repair: { ...run.repairScope, editableFiles: run.editableFiles, knowledge: run.repairKnowledge } } : {}),
       error: run.error || null, nextActions: (next[run.status] || []).filter(name => name !== 'replan' || (run.draft && !run.repairScope)).map(name => `exploration.${name}`) };
   }
@@ -281,6 +287,8 @@ export class ExplorationService {
     }
     if (command === 'evidence') return { taskId, candidates: clone(run.candidates), discoveries: clone(run.discoveries || []), pageSources: clone(run.pageSources || []), allowedOrigins: run.allowedOrigins || [], policy: 'declared task/API origins; structure only; captured scalar values omitted; API document operations are unverified declarations' };
     if (command === 'write-readback') return readbackWrite(this, run, textArg(args.reviewId, 'reviewId', 64));
+    if (command === 'write-sequence-readback') return readbackWriteSequence(this,run,textArg(args.reviewId,'reviewId',64));
+    if (command === 'write-sequence-verify' && run.writeSequenceExecutions?.some(item=>item.reviewId===args.reviewId)) return verifyWriteSequence(this,run,args);
     if (command === 'write-verify' && run.writeExecutions?.some(item => item.reviewId === args.reviewId)) return verifyWrite(this, run, args);
     if (command === 'cancel') {
       if (this.readbacks.has(taskId)) {
@@ -296,7 +304,8 @@ export class ExplorationService {
     if (command === 'install' && run.status === 'installed') return this.summary(run);
     if (this.readbacks.has(taskId)) throw fail('TASK_BUSY', 'Wait for the independent effect read or cancel it before changing the task.');
     if (active.has(run.status) && !(this.readOnly && ['draft-read', 'verification-read'].includes(command))) throw fail('TASK_BUSY', 'Wait for the current operation or cancel the task.');
-    if (terminal.has(run.status) && !['draft-read', 'verification-read', 'write-verification-read'].includes(command)) throw fail('INVALID_STATE', 'This task is terminal. Start a new task.');
+    if (terminal.has(run.status) && !['draft-read', 'verification-read', 'write-verification-read'].includes(command)
+      && !(['write-sequence-review','write-sequence-verify'].includes(command)&&args.resumeFrom)) throw fail('INVALID_STATE', 'This task is terminal. Start a new task.');
     if (command === 'replan') {
       const revisions = archiveExplorationDraft(run, args.expectedDraftHash, textArg(args.reason, 'reason'));
       run.revisions = revisions;
@@ -387,7 +396,9 @@ export class ExplorationService {
     if (command === 'generate' || command === 'repair') return this.generate(run, args.plan, command === 'repair' ? args : null);
     if (!run.draft) throw fail('INVALID_STATE', 'Generate a draft first.');
     if (command === 'write-verification-read' || command === 'write-verification-write') return writeCase(this, run, args, command === 'write-verification-write');
-    if (command === 'write-review') return writeReview(this, run, args.tool);
+    if (command === 'write-review') return writeReview(this, run, args.tool, args.caseId);
+    if (command === 'write-sequence-review') return reviewWriteSequence(this,run,args);
+    if (command === 'write-sequence-verify') return verifyWriteSequence(this,run,args);
     if (command === 'write-verify') return verifyWrite(this, run, args);
     if (command === 'verification-read' || command === 'verification-write') {
       const tool = textArg(args.tool, 'tool', 200);
@@ -538,7 +549,10 @@ export class ExplorationService {
         if (tool.sourceApiKind !== 'action' || (!isHttpStrategy(tool.strategy) && !['PAGE_FETCH', 'UI_SELECTOR'].includes(tool.strategy)) || tool.sourceApiIndexes?.length !== 1 || !candidate || candidate.risk?.level !== 'write'
           || !['POST', 'PUT', 'PATCH', 'DELETE'].includes(candidate.method)
           || (!candidate.declared && !(candidate.status >= 200 && candidate.status < 300))) throw fail('INVALID_PLAN', 'Write plans require one declared or successfully observed write source and an explicit HTTP, PAGE_FETCH or UI_SELECTOR strategy.');
-        if (tool.strategy === 'UI_SELECTOR') buildUiWriteTool(run.siteKey, tool, candidate, run.origin);
+        if (tool.strategy === 'UI_SELECTOR') {
+          buildUiWriteTool(run.siteKey, tool, candidate, run.origin);
+          if (tool.uiWrite?.frames?.some(frame => ![run.origin, ...(run.allowedOrigins || [])].includes(frame.origin))) throw fail('HTTP_ORIGIN_DENIED', 'Every write frame origin must be explicitly declared by this task.');
+        }
         else if (tool.strategy === 'PAGE_FETCH') buildExtensionWriteTool(run.siteKey, tool, candidate, run.origin);
         else httpToolContract(tool, candidate);
         if (tool.pathParameters?.length) throw fail('INVALID_PLAN', 'Initial write verification uses exact authored requests; path templates are not generated.');
@@ -682,6 +696,7 @@ export class ExplorationService {
     for (const command of readPackageDirectory(run.draft.adapterDir).commands.filter(command => run.draft.toolNames.includes(command.name))) {
       if (isBackgroundCommand(command) && !this.capabilities().capabilities.includes('background_preview_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension for real background validation; page preview is not equivalent.');
       if (command.uiWrite && !this.capabilities().capabilities.includes('ui_write_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating UI writes.');
+      if (command.uiWrite?.version === 2 && !this.capabilities().capabilities.includes('ui_write_controls_v2')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating event-driven UI writes.');
       if (command.uiWrite?.result && !this.capabilities().capabilities.includes('ui_write_result_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating UI receipt IDs.');
       if (command.pageWrite && !this.capabilities().capabilities.includes('page_write_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating page writes.');
       const capability = httpCredentialsCapability(command.http);
@@ -746,6 +761,6 @@ export class ExplorationService {
   assertValidated(run) {
     const pkg = this.assertPlannedDraft(run);
     if (run.status !== 'review_ready' || !run.validation?.passed || run.runtimeDigest !== pkg.digest) throw fail('VALIDATION_REQUIRED', 'Validate the current draft before review or installation.');
-    if (plannedWrites(run).length && (run.preWriteDigest !== writeProofDigest(run) || plannedWrites(run).some(tool => !run.writeExecutions?.some(item => item.tool === tool && item.digest === run.preWriteDigest && item.status === 'verified')))) throw fail('VALIDATION_REQUIRED', 'Every current write requires mock and real effect verification.');
+    if (plannedWrites(run).length && (run.preWriteDigest !== writeProofDigest(run) || plannedWrites(run).some(tool => !writeCasesVerified(run,tool,run.preWriteDigest)))) throw fail('VALIDATION_REQUIRED', 'Every current write case requires mock and real effect verification.');
   }
 }

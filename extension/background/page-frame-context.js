@@ -99,8 +99,18 @@ export async function resolvePageFrame({ chrome, tabId, frames, ensureCdpAttache
       await assertCurrent();
       return { ...row.result, frameId: frame.id, loaderId: frame.loaderId };
     };
+    const identity = async () => {
+      await assertCurrent();
+      const nodes = [];
+      for (const owner of owners) {
+        const { node } = await send(owner.parent.isolated.source, 'DOM.describeNode', { objectId: owner.objectId });
+        if (!node?.backendNodeId) throw fail('PAGE_FRAME_TARGET_CHANGED', 'Cannot retain the exact frame owner identity.');
+        nodes.push(node.backendNodeId);
+      }
+      return { documents: selected.map(frame => ({ documentId: frame.selected.documentId, frameId: frame.context.auxData.frameId, url: frame.url })), owners: nodes };
+    };
     return { get selected() { return parent.selected; }, get leaf() { return parent; }, origin: chain.at(-1).origin, pathname: chain.at(-1).pathname,
       withDeadline: async (limit, operation) => { stepDeadline = limit; try { return await guard.run(operation); } finally { stepDeadline = Infinity; } },
-      assertCurrent, assertAncestors: () => assertCurrent(false), refreshLeaf, snapshot, script, send, run: guard.run, check: guard.check, tree, release };
+      assertCurrent, assertAncestors: () => assertCurrent(false), refreshLeaf, snapshot, identity, script, send, run: guard.run, check: guard.check, tree, release };
   } catch (error) { await release(); throw error; }
 }

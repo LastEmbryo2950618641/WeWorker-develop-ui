@@ -20,6 +20,7 @@ vi.mock('../adapter-host.js', async original => ({ ...await original(), resolveA
   : name === 'example.hash-navigation' ? { command: { runtime: 'extension', id: 'read', pageWorkflow: true, pageRoute: { navigation: { hashNavigation: {} } } }, adapter: { root: '/example' } }
   : name === 'example.hash-workflow' ? { command: { runtime: 'extension', id: 'read', pageWorkflow: true, pageRoute: { workflow: { steps: [{ query: { hashNavigation: {} } }] } } }, adapter: { root: '/example' } }
   : name === 'example.ui-result' ? { command: { runtime: 'extension', safety: 'write', uiWrite: { result: { attribute: 'data-result-id', publicId: true, idType: 'integer' } }, pageRoute: { origin: 'https://example.com', pathname: '/editor' } }, adapter: { root: '/example' } }
+  : name === 'example.ui-controls' ? {command:{runtime:'extension',safety:'write',uiWrite:{version:2},pageRoute:{origin:'https://example.com',pathname:'/editor'}},adapter:{root:'/example'}}
   : name === 'example.workflow' ? { command: { runtime: 'extension', id: 'read', pageWorkflow: true, pageRoute: { workflow: { steps: [] } } }, adapter: { root: '/example' } } : null }));
 vi.mock('../toolkit-runner.js', () => ({ runToolkitTool: vi.fn(async () => ({ exitCode: 0, result: { example: 'toolkit' } })) }));
 vi.mock('../http-runner.js', () => ({ runHttpTool: vi.fn(async () => ({ exitCode: 0, result: { example: 'http' } })) }));
@@ -236,6 +237,15 @@ it('rejects UI result IDs on an older profile before ordinary call dispatch with
   expect(result.error).toMatch(/UI receipt IDs/);
   expect([...old.received, ...current.received].some(msg => msg.type === 'call_tool')).toBe(false);
   expect((await rpc({ type: 'call_tool', toolName: 'example.ui-result', args, browserProfile: current.contextId })).result.contextId).toBe(current.contextId);
+});
+
+it('gates event-driven UI writes on the selected profile before any ordinary dispatch',async()=>{
+  const {rpc,peer}=await setup(),caps=['adapter_catalog_v1','page_sources_v1','page_write_v1','ui_write_v1'];
+  const old=await peer(randomUUID(),caps),current=await peer(randomUUID(),[...caps,'ui_write_controls_v2']);
+  const request=browserProfile=>rpc({type:'call_tool',toolName:'example.ui-controls',args:{title:'Example',__confirmed:true},browserProfile});
+  expect((await request(old.contextId)).error).toMatch(/event-driven UI/);
+  expect([...old.received,...current.received].some(value=>value.type==='call_tool')).toBe(false);
+  expect((await request(current.contextId)).result.contextId).toBe(current.contextId);
 });
 
 it.each(['query-navigation', 'query-workflow', 'hash-navigation', 'hash-workflow', 'control-workflow', 'origin-navigation', 'origin-workflow', 'frame-workflow'])('refuses %s on a selected legacy peer without any dispatch or profile fallback', async kind => {

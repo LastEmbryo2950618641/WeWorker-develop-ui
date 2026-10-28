@@ -1,5 +1,15 @@
 # API 自动探索 CLI 改造跟进与交接
 
+## 2026-10-28：W01–W04 写工作流
+
+用户继续授权开发 W01–W04。在 B01 提交 `e9db5f0` 上建立独立 `codex/opencli-write-workflows` 分支，未把新功能追加到 B01 PR #181。通用代码仅在公开仓库修改，原始公开/内部 checkout 未切换或覆盖。
+
+本轮接通 UI v2 控件/事件/自动保存、页面 hidden 字段、DOM click/CDP Enter、精确导航、开放 Shadow/嵌套跨源 frame；CLI 任务多用例/有限序列/实际 ID 传值/部分恢复；多 ID、公开 Header/Location/响应 URL、唯一匹配 UI 网络响应和精确 signed/decimal ID。W03 序列只在探索任务内编排，安装后仍为单工具调用；uncertain 不自动重试或放行安装。
+
+WebCLI 全量 147 文件/1722 项、扩展 360 项、双打包 UI 20 项、最终 frame/导航 6 项、网络结果 7 项、源码和双打包序列各 4 项、完整双打包 HTTP 28 项通过。最后审阅摘要/结果聚焦 2 文件/107 项通过。实现文件、最终补测、打包与保留失败见 [写工作流契约与证据](opencli_write_workflows.md)。范围内状态更新见 [完整台账](opencli_parity.md)。
+
+未发布、未安装到用户客户端、未操作真实账户写，未修改 CI/CD 或内部差异仓库。B02–04、A/U 余项和 E 系列仍开放；下文暂停和 W 系列待办均为历史快照，不能覆盖本节。
+
 ## 2026-10-28：四项基线测试失败已处理
 
 接续 B01 提交 `5e3c09b`，按用户要求处理两个 Windows symlink EPERM、上传大小 12/8192 和输出 ENOBUFS。最终修复测试与合成夹具，保留产品校验；上传诊断证明 Node/Chrome 对文本文件有不同视图，未采用会造成 Chrome 误报的句柄大小替代。详情见 [Windows 测试基线修复](webcli_windows_test_baseline.md)。

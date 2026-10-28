@@ -2,6 +2,8 @@
 
 连接 AI 工具与网站 Adapter 的统一命令行入口。
 
+声明式写控件、frame 表单、有限写序列和实际结果回查见 [W01–W04 写工作流](../docs/opencli_write_workflows.md)。
+
 Extension Adapter 通过本地 WebSocket Bridge 连接 Chrome 扩展；Toolkit Adapter 通过 WeWorker 内嵌 Toolkit Runtime 执行。CLI 和桌面端统一使用 `webcli call` 调用网站工具。
 
 **两类入口使用独立的 Bridge**：WeWorker 桌面端内置的 CLI 与扩展固定使用 `ws://localhost:3711`；npm 安装的独立 `webcli` 固定使用 `ws://127.0.0.1:3712`，并拥有独立的 PID/日志、浏览器 Profile 和 Adapter 数据目录。两者可以同时运行，登录态和浏览器实例不共享；如果 3712 被其他进程占用，npm CLI 会明确失败，不会连接桌面端的 3711。

@@ -26,6 +26,7 @@ import { verifyHashNavigation } from './hash-navigation-acceptance.mjs';
 import { verifyQueryNavigation } from './query-navigation-acceptance.mjs';
 import { verifyPageWorkflow } from './page-workflow-acceptance.mjs';
 import { verifyUiWrites } from './ui-write-acceptance.mjs';
+import { verifyUiControls } from './ui-controls-acceptance.mjs';
 import { verifyExtensionWrites } from './extension-write-acceptance.mjs';
 import { verifyPageWriteRepairs } from './page-write-repair-acceptance.mjs';
 import { verifyPageSharedRepair } from './page-shared-repair-acceptance.mjs';
@@ -348,6 +349,7 @@ try {
     startBridge: async () => { await startBridge(); await connected(); },
   });
   if (process.argv.includes('--ui-write-only')) { await uiWrites(); return; }
+  if (process.argv.includes('--ui-controls-only') || process.argv.includes('--ui-contexts-only') || process.argv.includes('--ui-results-only')) { await verifyUiControls({ cli, record, passed, browser }); return; }
   if (process.argv.includes('--page-write-only')) { await pageWrites(); return; }
   const pageRepairs = () => verifyPageWriteRepairs({ cli, record, passed,
     stopBridge: async () => { const closed = new Promise(resolve => bridge.once('exit', resolve)); bridge.kill('SIGTERM'); await closed; },

@@ -114,6 +114,8 @@ const EXTENSION_CAPABILITIES = [
   'page_navigation_origin_v1',
   'page_write_v1',
   'ui_write_v1',
+  'ui_write_controls_v2',
+  'write_results_v2',
   'ui_write_result_v1',
 ];
 

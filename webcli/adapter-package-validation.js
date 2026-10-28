@@ -193,6 +193,7 @@ export function validateV2Manifest(manifest, directoryName = "?") {
     validateHttpContract(command);
     validatePageWrite(command);
     validateUiWrite(command);
+    if (command.uiWrite?.frames?.some(frame => !adapterPagePatterns(manifest).some(pattern => hostMatchesPattern(new URL(frame.origin).hostname, pattern)))) fail(adapterName, 'UI write frame hosts must be declared in the page scope.');
     if (command.execution !== undefined && (command.runtime !== 'extension' || !command.execution
       || command.execution.type !== 'api' || command.execution.runtime !== 'background'
       || Object.keys(command.execution).some((key) => !['type', 'runtime'].includes(key)))) {
