@@ -1,5 +1,11 @@
 # API 自动探索 CLI 改造跟进与交接
 
+## 2026-10-28：恢复并完成 B01 frame
+
+用户基于内外 `dev-1.0.2` 恢复并明确要求完成 B01。公开基线 9a01e40，隔离分支 `codex/opencli-frame-resume`；原始公开/内部 checkout 未切换或覆盖。frame 声明、原生读取动作、跨源/hash 导航、有界循环、权限/capability、生成/安装/普通调用/知识/提取修复已接通。最终双打包 GOTyK7 16 项、源码 hash/中断 i2y5rz 10 项、基础 BRBCmv、扩展 353 项、主机聚焦 81 项通过；全量 WebCLI 1699 通过/4 个基线已复现失败。契约见 [frame 工作流](opencli_frame_workflows.md)，完整证据、失败与分发边界见 [上下文审计末节](opencli_workflow_context_audit.md)。
+
+B01 已关闭，其他 W/B02–04/A/U/E 余项保持。未推送/PR/发布/安装，内部差异仓库无需复制通用运行时；内部独立 npm 重打包和实际安装包仍需单独验收。下方历史“暂停”“frame 未接入”记录按其当时快照阅读，不覆盖本节。
+
 ## 2026-10-26：探索可靠性与本地客户端验收
 
 PR #170 的首轮 Linux CI：WebCLI 1666 项通过、1 项失败。失败来自 `wecli-shorthand.test.js` 对旧解析器内部字段 `argsJson` 的断言未同步；`call` 当前已将结构化参数合入 `flagArgs`，不再重复传入原始 JSON。修正该断言，并新增真实 Node 子进程覆盖两种 `--args` 写法、参数顺序、JSON 数字及前导零字符串 ID；相关 3 文件 36 项通过。此项在此前聚焦测试之外，完整回归状态以 PR 最新 CI 为准。

@@ -1,4 +1,4 @@
-import { normalizeWorkflowOrigin, workflowOriginRoutes } from './page-workflow-origins.js';
+import { normalizeWorkflowOrigin, workflowPermissionTargets } from './page-workflow-origins.js';
 /**
  * Adapter Package v2 — 校验、发现与解析
  *
@@ -242,10 +242,10 @@ export function validateV2Manifest(manifest, directoryName = "?") {
     if (command.pageRoute?.workflow !== undefined) {
       try {
         const source = validatePageWorkflowContract(command.pageRoute.workflow);
-        const routes = workflowOriginRoutes(source, command.pageRoute.origin);
-        if (routes.some(route => [route.origin, route.resultOrigin].some(origin => !adapterPagePatterns(manifest).some(pattern => hostMatchesPattern(new URL(origin).hostname, pattern))))) throw new Error('Workflow hosts must be declared.');
+        const routes = workflowPermissionTargets(source, command.pageRoute.origin, command.pageRoute.pathname);
+        if (routes.some(route => !adapterPagePatterns(manifest).some(pattern => hostMatchesPattern(new URL(route.origin).hostname, pattern)))) throw new Error('Workflow hosts must be declared.');
         if (command.pageWorkflow !== true || command.pageRoute.navigation || command.pageRoute.additionalPaths
-          || source.steps[0].pathname !== command.pageRoute.pathname) throw new Error('Invalid entry route.');
+          || source.steps.find(step => !step.frames) && source.steps.find(step => !step.frames).pathname !== command.pageRoute.pathname) throw new Error('Invalid entry route.');
       } catch { fail(adapterName, 'pageRoute.workflow requires a complete normalized read-only step sequence beginning at pathname.'); }
     }
     if (command.pageRoute?.additionalPaths !== undefined) {

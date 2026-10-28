@@ -109,6 +109,7 @@ const EXTENSION_CAPABILITIES = [
   'page_navigation_query_v1',
   'page_navigation_hash_v1',
   'page_workflow_v1',
+  'page_workflow_frames_v1',
   'page_workflow_control_v1',
   'page_navigation_origin_v1',
   'page_write_v1',

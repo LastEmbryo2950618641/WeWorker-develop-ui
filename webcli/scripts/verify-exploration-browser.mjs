@@ -20,6 +20,7 @@ import { verifyBrowserProfiles } from './browser-profile-acceptance.mjs';
 import { verifyHostHttp } from './http-acceptance.mjs';
 import { verifyPageNavigation } from './page-navigation-acceptance.mjs';
 import { verifyOriginNavigation } from './origin-navigation-acceptance.mjs';
+import { verifyFrameWorkflow } from './frame-workflow-acceptance.mjs';
 import { verifyWorkflowControl } from './workflow-control-acceptance.mjs';
 import { verifyHashNavigation } from './hash-navigation-acceptance.mjs';
 import { verifyQueryNavigation } from './query-navigation-acceptance.mjs';
@@ -325,6 +326,11 @@ try {
     startBridge: async () => { await startBridge(); await connected(); },
   });
   if (process.argv.includes('--origins-only')) { await originNavigation(); return; }
+  const frameWorkflow = () => verifyFrameWorkflow({ cli, browser, record, passed,
+    stopBridge: async () => { const closed = new Promise(resolve => bridge.once('exit', resolve)); bridge.kill('SIGTERM'); await closed; },
+    startBridge: async () => { await startBridge(); await connected(); },
+  });
+  if (process.argv.includes('--frames-only')) { await frameWorkflow(); return; }
   if (process.argv.includes('--control-only')) { await workflowControl(); return; }
   if (process.argv.includes('--hash-only')) { await hashNavigation(); return; }
   if (process.argv.includes('--navigation-only')) { await verifyPageNavigation({ cli, record, passed }); await verifyQueryNavigation({ cli, record, passed }); return; }

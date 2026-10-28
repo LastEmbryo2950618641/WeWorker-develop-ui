@@ -1,4 +1,5 @@
-import { usesWorkflowOrigins, pageSourceOriginTargets, matchesOriginTarget } from './page-workflow-origins.js';
+import { usesWorkflowOrigins, pageSourceOriginTargets, pageSourcePermissionTargets, matchesOriginTarget } from './page-workflow-origins.js';
+import { usesWorkflowFrames, requiresWorkflowFrameCapability } from './page-workflow-frames.js';
 import { usesWorkflowControl } from './page-workflow-control.js';
 import { normalizePageQuery, pageQueryValues } from './exploration-query.js';
 import { navigationParameters, usesNavigationQuery, usesNavigationHash } from './page-navigation-parameters.js';
@@ -322,6 +323,7 @@ export class ExplorationService {
       if (intercept && !this.capabilities().capabilities.includes('intercept_read_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension to observe intercepted page queries.');
       const source = query ? normalizePageQuery(args.source) : intercept ? normalizeInterceptSource(args.source, run.candidates) : normalizePageSource(args.source), reason = textArg(args.reason, 'reason');
       if (query && usesWorkflowOrigins(source) && !this.capabilities().capabilities.includes('page_navigation_origin_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before explicit cross-origin page reading.');
+      if (query && requiresWorkflowFrameCapability(source) && !this.capabilities().capabilities.includes('page_workflow_frames_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before frame or passive-read workflows.');
       if (query && usesWorkflowControl(source) && !this.capabilities().capabilities.includes('page_workflow_control_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before conditional or repeated page workflows.');
       if (query && usesNavigationHash(source) && !this.capabilities().capabilities.includes('page_navigation_hash_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before hash navigation.');
       if (query && usesNavigationQuery(source) && !this.capabilities().capabilities.includes('page_navigation_query_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before navigating public URL query parameters.');
@@ -331,14 +333,15 @@ export class ExplorationService {
         if (signal.aborted) return;
         const page = new URL(tab.url);
         const readTargets = query && usesWorkflowOrigins(source) ? pageSourceOriginTargets(source, run.origin, page.pathname) : [];
-        if (readTargets.some(target => ![run.origin, ...(run.allowedOrigins || [])].includes(target.origin))) throw fail('PAGE_ORIGIN_NOT_ALLOWED', 'Declare each navigation origin in start.allowedOrigins before observing it.');
+        const permissionTargets = query ? pageSourcePermissionTargets(source, run.origin, page.pathname) : [];
+        if (permissionTargets.some(target => ![run.origin, ...(run.allowedOrigins || [])].includes(target.origin))) throw fail('PAGE_ORIGIN_NOT_ALLOWED', 'Declare each navigation and frame origin in start.allowedOrigins before observing it.');
         const operationId = source.mode === 'workflow' || usesNavigationHash(source) || usesWorkflowOrigins(source) ? randomUUID() : undefined;
         const cancel = () => { this.request({ type: 'exploration_cancel_workflow', tabId: run.tabId, operationId }, 5000).catch(() => {}); };
         if (operationId) signal.addEventListener('abort', cancel, { once: true });
         let result;
         try {
           result = await this.request({ type: query ? 'exploration_page_query' : intercept ? 'exploration_intercept_read' : 'exploration_observe_page', tabId: run.tabId,
-            payload: { source, expectedOrigin: page.origin, expectedPath: source.mode === 'workflow' ? source.steps[0].pathname : page.pathname, ...(intercept || query ? { values } : {}), ...(operationId ? { operationId } : {}) } }, query ? 45000 : 30000);
+            payload: { source, expectedOrigin: page.origin, expectedPath: source.mode === 'workflow' && !usesWorkflowFrames(source) ? source.steps[0].pathname : page.pathname, ...(intercept || query ? { values } : {}), ...(operationId ? { operationId } : {}) } }, query ? 45000 : 30000);
         } finally { if (operationId) signal.removeEventListener('abort', cancel); }
         if (signal.aborted) return;
         if (!result?.ok) throw fail(result?.error?.code || 'PAGE_SOURCE_MISSING', result?.error?.message || 'Unable to observe the page source.');
@@ -671,6 +674,7 @@ export class ExplorationService {
     if ((run.pageSources || []).some(item => item.source.mode === 'workflow') && !this.capabilities().capabilities.includes('page_workflow_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating ordered page workflows.');
     if ((run.pageSources || []).some(item => item.source.mode === 'navigate') && !this.capabilities().capabilities.includes('page_navigation_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating parameterized page routes.');
     if ((run.pageSources || []).some(item => usesWorkflowOrigins(item.source)) && !this.capabilities().capabilities.includes('page_navigation_origin_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating explicit cross-origin page reading.');
+    if ((run.pageSources || []).some(item => requiresWorkflowFrameCapability(item.source)) && !this.capabilities().capabilities.includes('page_workflow_frames_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating frame or passive-read workflows.');
     if ((run.pageSources || []).some(item => usesWorkflowControl(item.source)) && !this.capabilities().capabilities.includes('page_workflow_control_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating conditional or repeated page workflows.');
     if ((run.pageSources || []).some(item => usesNavigationHash(item.source)) && !this.capabilities().capabilities.includes('page_navigation_hash_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating hash navigation.');
     if ((run.pageSources || []).some(item => usesNavigationQuery(item.source)) && !this.capabilities().capabilities.includes('page_navigation_query_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the extension before validating public URL query navigation.');

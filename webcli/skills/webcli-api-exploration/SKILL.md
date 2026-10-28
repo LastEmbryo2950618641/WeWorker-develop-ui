@@ -320,7 +320,7 @@ navigate 可加 `hashNavigation:{template:"items/:id",pathParameters:[{segmentIn
 - 观察/作者验证期间取消，扩展收到对应 operationId 后停止后续步骤；已派发的动作可能完成。Bridge 断线停止当前流程后续步骤，重启任务为 interrupted，不自动续跑。普通已安装调用没有单独的任务取消入口。
 - 所有参数合并为必填字符串；每个参数都至少需要两组不同值的作者 cases，精确验证最终业务结果。作者验证逐 case 发往扩展，避免多条长流程堆在一个传输超时内。无参数流程也须至少一组作者断言。
 - manifest.pageRoute.workflow 记录动作、参数、关联条件、顺序与路由，整体纳入安装权限；源码不能跳步或改变动作而保留旧权限。结果读取选择器可通过 scoped repair 修改，动作选择器/顺序/参数变化需要重新生成、验证和审阅。知识保存完整来源，观察 values 不自动保存为默认值。
-- 仍不支持写动作、跨源/子 frame 工作流、任意自定义控件、任意脚本控制与动态步骤生成。不得把只读流程通过当作写操作或任意网站流程通过。
+- 仍不支持写动作、任意自定义控件、任意脚本控制与动态步骤生成。显式跨源和子 frame 读取契约见下文；不得把只读流程通过当作写操作或任意网站流程通过。
 
 ### 明确目的源的只读导航
 
@@ -332,7 +332,17 @@ workflow 的后续步骤若留在目的源，逐步写 `origin:"https://example.
 
 观察必须从原任务 origin 开始；后续验证可在该来源的声明结果页继续，重启后仍固定任务 tab。跨源预览不找替代 tab，普通调用歧义则失败。旧 profile 零派发拒绝；取消/断线不开始下一动作或作者 case，不重放导航。frame、自定义脚本及业务写不在此读取授权内。
 
-导航提交后 tabs URL 可能短暂滞后，运行时仅在既有预算内等待精确旧 URL 更新；旧页不作为结果读取，必须保留完整目的 URL、新文档或 hash 刷新证明及稳定业务字段。超时/重定向失败后先检查实际状态，不手动放宽来源、换 tab 或补发导航。仓库中的 frame 身份基础探针尚未接入生成流程，不能据此编写 frame workflow。
+导航提交后 tabs URL 可能短暂滞后，运行时仅在既有预算内等待精确旧 URL 更新；旧页不作为结果读取，必须保留完整目的 URL、新文档或 hash 刷新证明及稳定业务字段。超时/重定向失败后先检查实际状态，不手动放宽来源、换 tab 或补发导航。
+
+### 显式 frame 只读工作流（page_workflow_frames_v1）
+
+在每个子 frame 步骤声明 `frames:[{"selector":"#owner","origin":"https://example.org","pathname":"/child"}]`，按主文档到叶节点顺序列出 1–8 层 iframe owner。每层选择器必须唯一，origin/pathname 是该 owner 初次解析的精确地址；不接受持久化 frameId/documentId、按 URL 找 frame 或自动改选页。所有祖先和目的源都须在 start.allowedOrigins 中声明。
+
+相同 owner 链在一次 workflow 中只解析一次，后续步骤复用完全相同的初始 frames 声明。步骤 pathname/origin 表示该上下文当前地址；叶节点跨源导航后显式写 step.origin，省略 origin 表示 frames 末项的初始 origin。无 frames 表示主文档，各上下文单独衔接路径；固定 tab 的匹配仅使用主文档路由，不把 child 地址当作主页面。若普通调用需要重置流程，可先显式 navigate 主文档，再首次解析所有 frame。
+
+支持已有 navigate、query、filter、when/repeat/until/collect，以及 workflow 专用 `query:{"mode":"read","result":{"strategy":"DOM_STATE","path":["publicResult"]}}` 被动读取。动作限已有原生搜索、筛选和翻页语义；同一 frame 的明确导航可更新叶文档，必须保留原 owner 和全部祖先，任一 owner/祖先替换或歧义都停止。hash 仍需业务关联、刷新字段和同目标 reload；不会重载父页面代替子页面。
+
+完整 frames、动作和路线纳入 manifest 权限、review 和知识；repair 只改变结果提取，不改变 owner 或动作。作者 cases 全部重验，旧 profile 在观察、验证与普通调用前拒绝，不回退其他 profile。取消、断线、单步或总预算耗尽后不继续或重放。此契约不授权 frame 写、任意脚本或自定义控件。
 
 ### 有界分支与循环（page_workflow_control_v1）
 
