@@ -84,5 +84,5 @@ it('rejects linked Toolkit script directories before hashing outside files', asy
   mkdirSync(directory); mkdirSync(outside); symlinkSync(outside, join(directory, 'scripts'), process.platform === 'win32' ? 'junction' : 'dir');
   writeFileSync(join(directory, 'SKILL.md'), '# Example');
   writeFileSync(join(directory, 'manifest.json'), JSON.stringify({ schema_version: 1, adapter_type: 'toolkit', id: 'linked', entry: 'scripts/toolkit.py' }));
-  expect(await verifyAdapters({ directory, paths, runtime: 'toolkit' })).toMatchObject({ ok: false });
+  expect(await verifyAdapters({ directory, paths, runtime: 'toolkit' })).toMatchObject({ ok: false, results: [{ errors: [{ code: 'UNSAFE_TOOLKIT_FILE' }] }] });
 });

@@ -21,7 +21,14 @@ function fail(adapterId, message, code = 'INVALID_TOOLKIT_PACKAGE') {
 }
 
 function assertRegularFile(adapterId, adapterRoot, relativePath) {
-  const filePath = assertManagedFile(adapterRoot, relativePath);
+  let filePath;
+  try { filePath = assertManagedFile(adapterRoot, relativePath); }
+  catch (error) {
+    if (['UNSAFE_ADAPTER_FILE', 'UNSAFE_ADAPTER_DIRECTORY'].includes(error.code)) {
+      fail(adapterId, `required file "${relativePath}" must be a regular file with no linked parent directory.`, 'UNSAFE_TOOLKIT_FILE');
+    }
+    throw error;
+  }
   if (!filePath.startsWith(`${resolve(adapterRoot)}${sep}`)) {
     fail(adapterId, `invalid file path "${relativePath}".`);
   }

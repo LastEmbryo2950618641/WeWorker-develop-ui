@@ -76,6 +76,8 @@ E01 的其他浏览器/系统、E02 实际 Windows/macOS 客户端安装、E03 �
 
 中间失败：Git 初稿逐对象多进程读取使 Windows 一项测试超时，改为有界 batch 后通过；没有放宽超时。首次上游直接导入缺 turndown，隔离目录安装 1.8.8 已声明生产依赖（ignore-scripts）后可运行；第一版合成 registry 缺 access 被上游拒绝，补明确 read/write 后记录实际行为。均不算首次成功。
 
+PR #188 首轮 Linux CI：1737 项通过、1 项失败。Toolkit 必需文件的符号链接在新增父目录检查处更早拒绝，错误文案与既有断言不符；保留原“must be a regular file”契约并给出 UNSAFE_TOOLKIT_FILE 分类，同时加强 Windows junction/普通符号目录断言，不删除或放宽原测试。最终状态以修复提交 CI 为准。
+
 ## 下一阶段 U06
 
 优先补已确认的统一诊断产物：明确任务/profile/时间或游标窗口，聚合现有任务 trace、普通调用 trace、network/console 事件、状态和可选截图，保留每项来源、时间、执行环境、截断/缺失原因、摘要和脱敏说明。导出到明确新目录，拒绝覆盖、越界和链接；有界读取，不隐式重放动作、启动未知进程、删除历史文件或混合账户上下文。
