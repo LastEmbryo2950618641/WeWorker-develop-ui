@@ -124,6 +124,15 @@ webcli call open_browser --url="<Homepage URL>" --adapter=<adapter-id>
 
 仅页面型命令需要打开业务网页并等待注入完成。先用 `adapter info/skill` 查看具体命令：PUBLIC_API/AUTH_API 无浏览器依赖；COOKIE_API 和 Extension 后台 API 可以复用浏览器登录态而无需业务页。Extension 后台是否还使用页面 helper，以其代码和实际验收为准，不凭登录要求推断必须开页。
 
+### 遇到登录要求（AUTH_REQUIRED）
+
+脚本/AI 调用遇到未登录时**立即返回**，不会阻塞等待：命令返回 `AUTH_REQUIRED`，WeWorker 浏览器已自动打开登录页，登录流程在后台继续。此时：
+
+1. **立即告知用户**去登录：「WeWorker 浏览器已打开 <站点名> 登录页，请完成登录（支持扫码、短信验证码或账号密码）」。不要替用户等待或反复重试。
+2. 用户回复已登录后，**重新执行同一条命令**即可（登录流程仍在后台，重跑会直接续上）；只读命令也可在用户操作期间用 `webcli call <adapter>.check-login-status`（如可用）做有界轮询（如每 15 秒一次、最多 5 次），不要无限轮询。
+3. 返回 `AUTH_RETRY_REQUIRED` 表示登录已完成但该命令是写操作，为防重复执行没有自动重试——向用户确认后重新执行。
+4. 需要 CLI 代为等待时显式传 `--login-wait=<秒>`（上限 900）；终端人工使用默认等待 300 秒并自动继续，脚本/AI 默认不等待。
+
 ### 截图
 
 ```bash
