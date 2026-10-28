@@ -2,6 +2,8 @@
 
 连接 AI 工具与网站 Adapter 的统一命令行入口。
 
+日期／选项与目录／chooser 上传见 [B02 契约与证据](../docs/opencli_b02_controls.md)。
+
 声明式写控件、frame 表单、有限写序列和实际结果回查见 [W01–W04 写工作流](../docs/opencli_write_workflows.md)。
 
 Extension Adapter 通过本地 WebSocket Bridge 连接 Chrome 扩展；Toolkit Adapter 通过 WeWorker 内嵌 Toolkit Runtime 执行。CLI 和桌面端统一使用 `webcli call` 调用网站工具。

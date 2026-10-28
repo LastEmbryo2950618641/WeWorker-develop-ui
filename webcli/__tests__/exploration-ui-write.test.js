@@ -213,3 +213,17 @@ it('changing the UI resource GET invalidates the old exact review without a subm
   manifest.commands[0].uiWrite.result.attribute = 'data-new-id';
   expect(adapterPermissions(manifest)).not.toEqual(adapterPermissions(pkg.manifest));
 });
+
+it('validates exact date/popup declarations and binds popup changes into permission review',async()=>{
+  const f=await setup();const pkg=readPackageDirectory(f.run.draft.adapterDir),command=structuredClone(pkg.manifest.commands[0]);
+  command.uiWrite.version=2;command.uiWrite.inputMode='native-input-change';
+  command.uiWrite.inputs[0].kind='date';expect(()=>validateUiWrite(command)).not.toThrow();
+  Object.assign(command.uiWrite.inputs[0],{kind:'choice',popup:'#choices',option:'[role=option]'});
+  expect(()=>validateUiWrite(command)).not.toThrow();
+  const baseline=adapterPermissions({...pkg.manifest,commands:[command]});
+  command.uiWrite.inputs[0].popup='#other';expect(adapterPermissions({...pkg.manifest,commands:[command]})).not.toEqual(baseline);
+  for(const patch of [{popup:''},{option:''},{script:'example'},{kind:'file'}]){
+    const invalid=structuredClone(command);Object.assign(invalid.uiWrite.inputs[0],patch);expect(()=>validateUiWrite(invalid)).toThrow();
+  }
+  command.uiWrite.inputMode='native-setter-no-events';expect(()=>validateUiWrite(command)).toThrow();
+});

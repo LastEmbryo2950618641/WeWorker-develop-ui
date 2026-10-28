@@ -216,8 +216,8 @@ it('forwards path metadata without substituting a process-specific readable leng
   const files = contents.map((body, index) => {
     const file = path.join(options.rootDir, `example-${index}.json`); fs.writeFileSync(file, body); return file;
   });
-  const stat = fs.statSync.bind(fs);
-  const metadata = vi.spyOn(fs, 'statSync').mockImplementation((file, ...args) => {
+  const stat = fs.lstatSync.bind(fs);
+  const metadata = vi.spyOn(fs, 'lstatSync').mockImplementation((file, ...args) => {
     const value = stat(file, ...args);
     return files.includes(file) ? Object.assign(Object.create(value), { size: 65536 }) : value;
   });
@@ -235,10 +235,22 @@ it('rejects unavailable upload metadata without sending a browser upload', async
   const { options, requestExtension, service } = setup(); await service.execute('bind', { session: 'work', tabId: 7 });
   const file = path.join(options.rootDir, 'example-unavailable.json'); fs.writeFileSync(file, '{"example":true}');
   const capable = new BrowserService({ ...options, capabilities: () => ({ connected: true, capabilities: ['browser_commands_v1', 'browser_upload_target_v1'] }) });
-  const stat = fs.statSync.bind(fs);
-  const inspect = vi.spyOn(fs, 'statSync').mockImplementation((target, ...args) => { if (target === file) throw new Error('Example inspection failure'); return stat(target, ...args); });
+  const stat = fs.lstatSync.bind(fs);
+  const inspect = vi.spyOn(fs, 'lstatSync').mockImplementation((target, ...args) => { if (target === file) throw new Error('Example inspection failure'); return stat(target, ...args); });
   try {
     expect((await capable.execute('upload', { session: 'work', selector: '#file', paths: [file] })).error.code).toBe('FILE_UNAVAILABLE');
     expect(requestExtension.mock.calls.some(([message]) => message.command === 'upload')).toBe(false);
   } finally { inspect.mockRestore(); }
+});
+it('gates directory/chooser selection on the selected extension and keeps the filesystem snapshot private',async()=>{
+  const {options,service,requestExtension}=setup();await service.execute('bind',{session:'work',tabId:7});
+  const directory=path.join(options.rootDir,'example-folder');fs.mkdirSync(directory);fs.writeFileSync(path.join(directory,'example.json'),'{}');
+  const args={session:'work',selector:'#choose',paths:[directory],directory:true,chooser:true};
+  const old=new BrowserService({...options,capabilities:()=>({connected:true,capabilities:['browser_commands_v1','browser_upload_target_v1']})});
+  expect((await old.execute('upload',args)).error.code).toBe('EXTENSION_UPGRADE_REQUIRED');
+  expect(requestExtension.mock.calls.some(([v])=>v.command==='upload')).toBe(false);
+  const current=new BrowserService({...options,capabilities:()=>({connected:true,capabilities:['browser_commands_v1','browser_upload_target_v1','browser_upload_extended_v1']})});
+  const result=await current.execute('upload',args);expect(result.ok).toBe(true);expect(JSON.stringify(result)).not.toContain('relativePath');
+  expect(requestExtension.mock.calls.at(-1)[0].args._uploadFiles).toEqual([{name:'example.json',size:2,relativePath:'example-folder/example.json'}]);
+  expect((await current.execute('upload',{...args,directory:'sometimes'})).error.code).toBe('INVALID_ARGUMENT');
 });

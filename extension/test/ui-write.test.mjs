@@ -17,7 +17,7 @@ function fixture(mode, resultText, previousId = null) {
     hasAttribute(k){return Object.hasOwn(this.attrs,k);}
     getAttribute(k){return this.attrs[k]??null;}
     dispatchEvent(event){events++;this.onEvent?.(event);}
-    click(){this.form.requestSubmit();}
+    click(){if(this.onClick)this.onClick();else this.form.requestSubmit();}
   }
   class Input extends Element {get value(){return this._value;}set value(v){this._value=v; if(mode==='replaced' && v==='After')this.isConnected=false;}}
   class Textarea extends Input {}
@@ -117,4 +117,26 @@ test('explicit hidden page fields remain in the document and are never returned;
   const spec={...ui,version:2,hiddenFields:[{selector:'#csrf',name:'csrf',source:'page'}]};
   const reply=await f.run({ui:spec});assert.equal(reply.ok,true);assert.equal(hidden.value,'example-placeholder');assert.equal(JSON.stringify(reply).includes('example-placeholder'),false);
   const undeclared=fixture('extra');assert.equal((await undeclared.run({ui:{...ui,version:2}})).error.code,'UI_WRITE_EXTRA_FIELDS');
+});
+
+test('declared popup choices select exact values and stop on ambiguity, disability or replacement',async()=>{
+  for(const mode of ['normal','ambiguous','disabled','replaced','unowned','invalid-native']){
+    const f=fixture(mode==='invalid-native'?'invalid':undefined),Button=f.button.constructor,Element=f.receipt.constructor;let choiceClicks=0;
+    const choice=new Button(),option=new Button(),popup=new Element();
+    Object.assign(choice,{type:'button',form:f.form,attrs:{role:'combobox','data-field':'category','data-value':'Before','aria-controls':'choices','aria-expanded':'false'}});
+    Object.assign(option,{type:'button',form:f.form,attrs:{role:'option','data-value':'Blue'}});
+    Object.assign(popup,{id:'choices',attrs:{role:'listbox'},children:{button:mode==='ambiguous'?[option,option]:[option]},contains:node=>node===option});
+    choice.onClick=()=>{choiceClicks++;choice.attrs['aria-expanded']='true';if(mode==='unowned')choice.attrs['aria-controls']='other';};
+    option.onClick=()=>{choice.attrs['data-value']='Blue';if(mode==='replaced')f.form.children['#choice']=[new Button()];};
+    if(mode==='disabled')option.attrs['aria-disabled']='true';
+    f.form.children['#choice']=[choice];f.form.elements.push(choice,option);
+    const query=f.document.querySelectorAll;f.document.querySelectorAll=selector=>selector==='#choices'?[popup]:query(selector);
+    const spec={...ui,version:2,inputMode:'native-input-change',inputs:[...ui.inputs,{kind:'choice',selector:'#choice',name:'category',parameter:'category',popup:'#choices',option:'button'}]};
+    const result=await f.run({ui:spec,request:{url:ui.url,method:'POST',body:{title:'After',category:'Blue'}}});
+    assert.equal(result.ok,mode==='normal',mode);assert.equal(f.count().submissions,mode==='normal'?1:0,mode);
+    if(mode==='normal'){assert.equal(result.eventsDispatched,4);assert.equal(choice.attrs['data-value'],'Blue');}
+    if(mode==='invalid-native'){assert.equal(choiceClicks,0);assert.equal(result.eventsDispatched,0);}
+    if(mode==='ambiguous')assert.equal(result.error.code,'UI_WRITE_CHOICE_AMBIGUOUS');
+    if(mode==='replaced')assert.equal(result.error.code,'UI_WRITE_INPUT_UNSUPPORTED');
+  }
 });

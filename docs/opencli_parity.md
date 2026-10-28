@@ -1,5 +1,7 @@
 # WebCLI 与 OpenCLI 能力对齐台账
 
+2026-10-28 B02：完成原生日期／明确弹层选项的生成、效果验证和安装普通调用，补目录相对路径验证、原 frame 原生 chooser 与动态 input/multipart 流程。上游仍固定 1.8.8，并补实际 BasePage/CDP 行为核查。契约、证据与边界见 [B02 控件与上传](opencli_b02_controls.md)。WebCLI 148 文件/1727 项、扩展 363 项通过；最终实机与打包记录见交接。B03–B04、A/U 余项及 E 系列继续开放。
+
 2026-10-28 W01–W04：声明式控件/页面写、CLI 任务有限序列、多用例和实际响应 ID 契约已实现并通过隔离实机验证。WebCLI **147 文件/1722 项**、扩展 **360 项**通过；双打包 UI **20 项**、双打包序列及重启恢复 **4 项**通过。准确范围、模块、最终补测和历史失败见 [写工作流契约与证据](opencli_write_workflows.md)。本阶段不代表整体 OpenCLI 对齐完成。
 
 2026-10-28 前序：用户要求一并处理四项基线测试失败，现已完成。当时 WebCLI **147 文件/1708 项全部通过**，源码与双打包上传验收各 4 项通过；保留严格产品校验。根因、文件视图差异及测试改动见 [Windows 测试基线修复](webcli_windows_test_baseline.md)。下方 B01 条目中的 1699/4 为当时历史快照。
@@ -31,7 +33,7 @@
 | W03 | 已验证（CLI 任务序列） | 多组 cases、有限多步/批量写、实际 ID 传递、逐步持久化、部分续跑和 Bridge 重启不重放。序列位于探索任务；安装后仍为单工具调用，无安装态复合命令。见 opencli_write_workflows.md |
 | W04 | 已验证（显式实际响应契约） | 多 ID、公开 Header/Location/响应 URL、原 frame 唯一匹配 UI 网络响应、负安全整数及最多 512 字符的精确十进制 ID；不任取页面网络响应。见 opencli_write_workflows.md |
 | B01 | 已验证（约定只读契约） | 既有 query/hash/有界 when/repeat/until/collect/显式跨源基础上，2026-10-28 完成 frame 声明、读取、原生 click/Enter/筛选/分页、子页面跨源与 hash 导航、生成/作者验证/安装/普通调用/知识/提取修复。固定 owner/祖先/主 tab，独立权限与 capability，取消/断线/替换/超时不重放。最终双打包 GOTyK7 16 项、源码 hash/中断 i2y5rz 10 项、基础 BRBCmv、扩展 353 项、主机聚焦 81 项通过。WebCLI 全量 1699 通过/4 个已在原始基线复现的环境或夹具失败；保留中间失败。W 系列 frame 写已由本轮 W02 接续验证；E 系列安装包/跨平台验收仍开放；B01 历史证据见 opencli_workflow_context_audit.md |
-| B02 | 部分实现 | 自定义日期/选项、目录/file chooser/自定义上传 |
+| B02 | 已验证（明确控件与原生 chooser 契约） | 原生日期、明确关联弹层的选项／日历，目录 name/size/relativePath 验证、原 frame 原生 chooser、动态 input 与自定义 multipart 页面流程。生成/验证/安装/普通调用适用于日期/选项工具，上传为 browser 原语；不含 File System Access/OS 窗口、任意第三方控件或自动生成安装态复合上传工具。详见 opencli_b02_controls.md |
 | B03 | 部分实现 | 跨 frame/DataTransfer 拖拽 |
 | B04 | 部分实现 | AX/Shadow/子 frame 截图、任意设备模拟恢复 |
 | A01 | 部分实现 | YAML/API 文档发现与更广引用解析 |
@@ -84,7 +86,7 @@ U02 审计与实现（2026-10-18）：实际读取上游 1.8.8 `dist/src/output.
 | --- | --- | --- |
 | 任意 Agent 与发现 | 不依赖桌面或第二模型 Key；结构化帮助、Skill；Codex/Claude 独立对话 | 核心架构已实现；跨 Agent 独立验收待做 |
 | 浏览器会话 | open/bind/unbind/close/tab、profile、多连接管理、doctor；用户页不误关闭、跨 CLI/重启恢复 | 命名会话、owned/bound 关闭规则、doctor、持久绑定、Chrome 会话身份守卫已实现；新增稳定 contextId、profile list/rename/use、flag/env/default、双连接隔离与断线不重放；双真实浏览器及重启/重载验收通过，旧历史只读保留；其他浏览器品牌及平台分发未验收；WeWorker profile UI 另列产品集成 |
-| 页面操作 | state/find/get/extract、click/dblclick/fill/type/select/check/uncheck/focus/hover/scroll/keys/drag/upload/dialog；过期引用和模糊定位报错 | 主/子 frame 原生指针、同 frame 拖拽、输入/弹窗已真实验收；AX 引用支持开放/关闭/嵌套 Shadow DOM 控件及准确文档；DOM 显式 shadow 查询、树内标签及嵌套引用已实现；原生复合字段、HTML 树、明确选项匹配/保留校验已真实验收；隐藏/Shadow/AX/嵌套跨源原生文件输入上传与验证通过；自定义控件、目录输入与跨 frame/DataTransfer 拖拽待补 |
+| 页面操作 | state/find/get/extract、click/dblclick/fill/type/select/check/uncheck/focus/hover/scroll/keys/drag/upload/dialog；过期引用和模糊定位报错 | 主/子 frame 原生指针、同 frame 拖拽、输入/弹窗已真实验收；AX 引用支持开放/关闭/嵌套 Shadow DOM 控件及准确文档；DOM 显式 shadow 查询、树内标签及嵌套引用已实现；原生复合字段、HTML 树、明确选项匹配/保留校验已真实验收；隐藏/Shadow/AX/嵌套跨源原生文件输入上传与验证通过；B02 明确自定义控件／目录／原生 chooser 范围见专项；跨 frame/DataTransfer 拖拽待补 |
 | 页面观察 | frames/screenshot/console/eval/wait、网络摘要/detail/filter/follow、有界响应读取、失效错误 | frame eval/身份、完整截图、下载续等、console/network JSONL 与游标已真实验收；state source=ax、DOM/AX 指标比较、跨 frame 引用及部分结果/超时通过；截图主文档 DOM 编号、临时 CSS 尺寸、新文件保存及恢复通过，AX/子 frame 编号与任意设备模拟恢复未覆盖 |
 | 探索策略 | PUBLIC/COOKIE/PAGE_FETCH/INTERCEPT/DOM_STATE/UI_SELECTOR；接口/页面状态/脚本发现与策略理由 | PUBLIC_API/COOKIE_API/AUTH_API 已接入显式计划、作者 cases、安装、调用与只读 repair；mode=http 支持无浏览器 JSON OpenAPI 发现和真实请求证据。PAGE_FETCH、声明式页面来源、单步 INTERCEPT、跨文档查询和 2–8 步只读 workflow 已验证。YAML/任意 API 文档爬取、循环/分支/自定义控件等任意多步流程未覆盖；无静默回退 |
 | 请求和鉴权 | POST 只读查询、GraphQL、动态路径、跨源、Cookie/CSRF/runtime 签名、写操作语义与确认 | 显式 origin、JSON/form POST、GraphQL query、API 路径参数、Cookie/CSRF、环境 Bearer/header/Basic/HMAC、store/分区已验证；HTTP 单请求写生成/mock/精确审阅/实际效果与不重放已接通。Extension PAGE_FETCH 固定同源写要求服务端幂等支持；原生同文档 UI 单次提交与独立效果验证已接入，不保证一次网络请求/副作用；声明式控件与任务内多步写见 W01–W04；任意站点签名/OAuth 仍待做；动态 query/hash 和显式跨源主文档导航的最终验证见顶部 B01；INTERCEPT 页面签名不能等同通用鉴权 |
@@ -101,7 +103,7 @@ U02 审计与实现（2026-10-18）：实际读取上游 1.8.8 `dist/src/output.
 | 更广 UI 写 | W01/W02 声明式控件、事件、自动保存、hidden、DOM click/CDP Enter、精确导航与开放 Shadow/frame 已验；任意第三方控件脚本和闭合 Shadow 不在契约内。 |
 | 写流程与维护 | 既有定向/共享修复保留；W03 已覆盖 CLI 任务多步/批量写、实际结果传递、部分成功恢复及多用例。安装态复合命令不在本次实现内。 |
 | 写结果关联 | W04 已覆盖多 ID、公开 Header/Location/响应 URL、原文档唯一匹配的 UI 网络响应，以及 signed-integer/decimal；精确十进制最多 512 字符，不接受任意响应或舍入后的 ID。 |
-| 复杂读取与浏览器 | 动态 query/hash、有界循环/分支和显式跨 origin 主文档导航的实现与证据见 B01；frame 编排已接入；剩余自定义日期/选项、目录/file chooser/自定义上传、跨 frame/DataTransfer 拖拽、AX/Shadow/子 frame 截图与任意设备模拟恢复。 |
+| 复杂读取与浏览器 | 动态 query/hash、有界循环/分支和显式跨 origin 主文档导航的实现与证据见 B01；frame 编排已接入；B02 日期/选项及目录/chooser 明确范围见专项；剩余跨 frame/DataTransfer 拖拽、AX/Shadow/子 frame 截图与任意设备模拟恢复。 |
 | API 文档与认证 | JSON OpenAPI/Swagger、HMAC/Cookie/CSRF 等已有；YAML、更广发现/引用解析、站点签名/OAuth 按实际契约扩展。 |
 | 尚待审计 | Adapter/插件管理、shell completion、输出格式全覆盖、1366 命令/179 分组中的站点与应用映射、外部 CDP/Electron/CLI、Worker 网络/流式 body/持久回放；先映射现有与上游，不能一律认定未实现。 |
 | 验收欠账 | Chromium 1194、其他浏览器/系统/实际安装包、全新 Codex/Claude 独立对话、代表站点及全部认证组合仍未完成；外部真实账户写未授权、未验收。 |

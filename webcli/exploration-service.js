@@ -696,6 +696,7 @@ export class ExplorationService {
     for (const command of readPackageDirectory(run.draft.adapterDir).commands.filter(command => run.draft.toolNames.includes(command.name))) {
       if (isBackgroundCommand(command) && !this.capabilities().capabilities.includes('background_preview_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension for real background validation; page preview is not equivalent.');
       if (command.uiWrite && !this.capabilities().capabilities.includes('ui_write_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating UI writes.');
+      if (command.uiWrite?.inputs?.some(v => ['date','choice'].includes(v.kind)) && !this.capabilities().capabilities.includes('ui_write_choices_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension for declared date and popup choices.');
       if (command.uiWrite?.version === 2 && !this.capabilities().capabilities.includes('ui_write_controls_v2')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating event-driven UI writes.');
       if (command.uiWrite?.result && !this.capabilities().capabilities.includes('ui_write_result_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating UI receipt IDs.');
       if (command.pageWrite && !this.capabilities().capabilities.includes('page_write_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before validating page writes.');

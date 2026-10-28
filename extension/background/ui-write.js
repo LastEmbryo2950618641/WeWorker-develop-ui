@@ -58,7 +58,7 @@ export async function pageUiSubmit(input) {
     const correlate = entries.find(v => v.binding.parameter === spec.confirmation.parameter);
     if (!correlate || Object.keys(input.request.body).length !== entries.length || entries.some(({ binding }) => typeof input.request.body[binding.name] !== 'string')) error('INVALID_UI_WRITE');
     const wanted = input.request.body[correlate.binding.name];
-    const valueOf = ({ binding, node }) => binding.kind === 'checkbox' ? String(node.checked) : binding.kind === 'contenteditable' ? node.textContent : node.value;
+    const valueOf = ({ binding, node }) => binding.kind === 'choice' ? node.getAttribute('data-value') : binding.kind === 'checkbox' ? String(node.checked) : binding.kind === 'contenteditable' ? node.textContent : node.value;
     const inspect = (allowReceipt = false) => {
       current();
       if (roots.some(v => unique(v.root, v.selector) !== v.host || !v.host.isConnected || v.host.shadowRoot !== v.shadow)) error('UI_WRITE_TARGET_CHANGED');
@@ -72,10 +72,12 @@ export async function pageUiSubmit(input) {
       for (const { binding, node } of entries) {
         const kind = binding.kind || 'text';
         const supported = kind === 'text' ? node instanceof HTMLTextAreaElement || node instanceof HTMLInputElement && ['text', 'search'].includes(node.type)
+          : kind === 'date' ? node instanceof HTMLInputElement && node.type === 'date'
+          : kind === 'choice' ? node instanceof HTMLButtonElement && node.form === form && node.type === 'button' && node.getAttribute('role') === 'combobox' && node.getAttribute('data-field') === binding.name && !node.name
           : kind === 'select' ? node instanceof HTMLSelectElement && !node.multiple
           : kind === 'checkbox' ? node instanceof HTMLInputElement && node.type === 'checkbox'
           : kind === 'contenteditable' && node.isContentEditable && node.getAttribute('role') === 'textbox' && node.getAttribute('data-field') === binding.name;
-        if (unique(form, binding.selector) !== node || !visible(node) || (kind !== 'contenteditable' && (node.form !== form || node.name !== binding.name)) || node.matches(':disabled') || node.readOnly
+        if (unique(form, binding.selector) !== node || !visible(node) || (!['contenteditable','choice'].includes(kind) && (node.form !== form || node.name !== binding.name)) || node.matches(':disabled') || node.readOnly
           || node.getAttribute('aria-disabled') === 'true' || !supported) error('UI_WRITE_INPUT_UNSUPPORTED');
         if (kind === 'select') {
           const options = [...node.options].filter(v => v.value === input.request.body[binding.name]);
@@ -95,6 +97,7 @@ export async function pageUiSubmit(input) {
     };
     inspect();
     for (const { binding, node } of entries) {
+      if (binding.kind === 'choice') continue;
       if (binding.kind === 'contenteditable') node.textContent = input.request.body[binding.name];
       else {
         const prototype = binding.kind === 'select' ? HTMLSelectElement.prototype : node instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
@@ -102,10 +105,35 @@ export async function pageUiSubmit(input) {
       }
     }
     inspect();
+    if (entries.some(entry => entry.binding.kind !== 'choice' && valueOf(entry) !== input.request.body[entry.binding.name])
+      || [...form.elements].some(node => node.willValidate && !node.validity.valid)) error('UI_WRITE_INPUT_REJECTED');
+    // Popup choices are explicit page actions, not arbitrary widget scripts.
+    // All other values are prepared first; each click can itself have effects.
+    for (const entry of entries.filter(v => v.binding.kind === 'choice')) {
+      const {binding,node}=entry, wantedValue=input.request.body[binding.name];
+      inspect();
+      if(node.getAttribute('data-value')===wantedValue)continue;
+      eventsDispatched++; HTMLElement.prototype.click.call(node); await Promise.resolve();
+      inspect();
+      const popup=unique(root,binding.popup);
+      if(!visible(popup)||!popup.id||node.getAttribute('aria-controls')!==popup.id||node.getAttribute('aria-expanded')!=='true'
+        || !['listbox','grid'].includes(popup.getAttribute('role')))error('UI_WRITE_CHOICE_UNAVAILABLE');
+      const options=[...popup.querySelectorAll(binding.option)];
+      if(options.length>500)error('UI_WRITE_CHOICE_UNAVAILABLE');
+      const matches=options.filter(v=>v.getAttribute('data-value')===wantedValue);
+      if(matches.length!==1)error('UI_WRITE_CHOICE_AMBIGUOUS');
+      const option=matches[0];
+      if(!visible(option)||!['option','gridcell'].includes(option.getAttribute('role'))||option.matches(':disabled')||option.getAttribute('aria-disabled')==='true')error('UI_WRITE_CHOICE_UNAVAILABLE');
+      inspect();
+      if(unique(root,binding.popup)!==popup||!option.isConnected||!popup.contains(option))error('UI_WRITE_TARGET_CHANGED');
+      eventsDispatched++;HTMLElement.prototype.click.call(option);await Promise.resolve();
+      inspect(autosave);
+      if(valueOf(entry)!==wantedValue)error('UI_WRITE_INPUT_REJECTED');
+    }
     const valuesMatch = () => entries.every(entry => valueOf(entry) === input.request.body[entry.binding.name]);
     if (!valuesMatch() || [...form.elements].some(node => node.willValidate && !node.validity.valid)) error('UI_WRITE_INPUT_REJECTED');
     if (spec.inputMode === 'native-input-change') {
-      for (const { node } of entries) for (const type of ['input', 'change']) {
+      for (const { node } of entries.filter(v => v.binding.kind !== 'choice')) for (const type of ['input', 'change']) {
         inspect(autosave); if (!valuesMatch()) error('UI_WRITE_INPUT_REJECTED');
         eventsDispatched++;
         node.dispatchEvent(new Event(type, { bubbles: true, composed: true }));

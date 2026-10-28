@@ -181,6 +181,7 @@ const cookieResolver = service => async payload => (await service.request({ type
 async function pageRequest(service, execution, request, signal, { document, operationId, deadline } = {}) {
   if (signal.aborted) throw fail('PAGE_WRITE_CANCELLED', 'Page request cancelled before dispatch.');
   if (!service.capabilities().capabilities.includes('page_write_v1') || execution.page.ui && !service.capabilities().capabilities.includes('ui_write_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before page write verification.');
+  if (execution.page.ui?.inputs?.some(v => ['date','choice'].includes(v.kind)) && !service.capabilities().capabilities.includes('ui_write_choices_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension for declared date and popup choices.');
   if (execution.page.ui?.version === 2 && !service.capabilities().capabilities.includes('ui_write_controls_v2')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before event-driven UI verification.');
   if (requiresWriteResultV2(execution.effect.resultReadback) && !service.capabilities().capabilities.includes('write_results_v2')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before advanced write result verification.');
   if (execution.page.ui?.result && !service.capabilities().capabilities.includes('ui_write_result_v1')) throw fail('CAPABILITY_UNAVAILABLE', 'Reload the selected extension before reading UI receipt IDs.');

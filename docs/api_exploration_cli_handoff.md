@@ -1,5 +1,20 @@
 # API 自动探索 CLI 改造跟进与交接
 
+## 2026-10-28：B02 控件与上传
+
+在指定的恢复 checkout 核对后，从 #186 最新 af85115 建立独立 codex/opencli-b02-controls 分支。开始及开发复核时 #181、#186 均 OPEN，远程 dev-1.0.2 为 9a01e40；B02 依赖 #186（再依赖 #181），不重复 cherry-pick 前序提交，目标仍为 dev-1.0.2，不自动合并。原始公开 checkout 保持原分支；内部 checkout 的已有修改未触碰。
+
+B02 新增明确 date/choice UI 契约、目录输入和原 frame 原生 chooser；已有 browser 操作、W02 的审阅/效果/安装链复用。生成、零写 mock、独立效果、安装和普通工具调用对日期/选项实测；上传是 browser 原语，验证动态 input、目录、真实字节与 multipart 接收，不把本地路径或验证任务安装到用户客户端。准确边界见 [B02 专项](opencli_b02_controls.md)。W03 仍是探索任务内序列，安装后单工具调用；W04 仍只使用明确实际来源与最多 512 字符 decimal ID。
+
+固定 npm OpenCLI 1.8.8：实际 BasePage + CDP harness 验证 type 日期、原生 select/file、目录路径，确认 fill 日期/custom select/chooser 按钮 upload 的拒绝行为；未审计新版或冒称上游 daemon/扩展全链路。
+
+WebCLI 完整 148 文件/1727 项通过（maxWorkers=2，原测试超时未放宽）；最终扩展 363 项通过。首轮 1718 通过/8 失败中两项能力元数据空值检查已修，其余六项在降低并发且构建目录稳定后复查通过，六文件专项共 91 项通过。失败原因和本机打包依赖问题保留在专项文档。
+
+最终双打包控件 9 项（CdnxMZ）、上传 4 项（OO3WMp）、随包 Skill 4 项（mCxpE4）通过；npm 1091 文件与 5 个扩展模块资源核对通过。最后预检及 chooser 时序补强后扩展 363 项重跑通过；完整证据和失败记录见 B02 专项。
+
+后续仍开放：B03 跨 frame/DataTransfer 拖拽，B04 AX/Shadow/子 frame 截图及设备恢复；A01 YAML/更广文档引用、A02 站点签名/OAuth；U01/U02 管理/格式等余项、U03 行为映射、U04 外部 CDP、U05 external、U06 网络诊断；E01–E04 跨浏览器/平台、实际安装包、新对话和真实认证站点。没有创建新对话/子 Agent、改持久记忆、发布或改 CI/CD。以下记录均按其当时阶段阅读。
+
+
 ## 2026-10-28：W01–W04 写工作流
 
 用户继续授权开发 W01–W04。在 B01 提交 `e9db5f0` 上建立独立 `codex/opencli-write-workflows` 分支，未把新功能追加到 B01 PR #181。通用代码仅在公开仓库修改，原始公开/内部 checkout 未切换或覆盖。

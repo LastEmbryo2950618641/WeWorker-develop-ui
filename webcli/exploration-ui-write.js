@@ -25,8 +25,8 @@ export function validateUiWrite(command) {
   if (!['http:', 'https:'].includes(url.protocol) || url.origin !== operationOrigin || url.href !== spec.url || url.search || url.hash || url.username || url.password || url.pathname.includes(':id')
     || typeof route.pathname !== 'string' || !/^\/(?!\/)/.test(route.pathname) || page.origin !== route.origin || page.pathname !== route.pathname || page.search || page.hash || page.username || page.password || route.pathname.includes(':id')) fail('UI writes require fixed same-origin form and page URLs.');
   if (!selector(spec.form) || !Array.isArray(spec.inputs) || !spec.inputs.length || spec.inputs.length > 10
-    || spec.inputs.some(v => !exact(v, ['selector', 'name', 'parameter', ...(enhanced && v.kind !== undefined ? ['kind'] : [])]) || !selector(v.selector) || !publicName(v.name) || !publicName(v.parameter)
-      || v.kind !== undefined && !['text', 'select', 'checkbox', 'contenteditable'].includes(v.kind))
+    || spec.inputs.some(v => !exact(v, ['selector', 'name', 'parameter', ...(enhanced && v.kind !== undefined ? ['kind'] : []), ...(enhanced && v.kind === 'choice' ? ['popup','option'] : [])]) || !selector(v.selector) || !publicName(v.name) || !publicName(v.parameter)
+      || v.kind !== undefined && !['text', 'date', 'choice', 'select', 'checkbox', 'contenteditable'].includes(v.kind) || v.kind === 'choice' && (!selector(v.popup) || !selector(v.option) || spec.inputMode !== 'native-input-change'))
     || ['name', 'parameter', 'selector'].some(key => new Set(spec.inputs.map(v => v[key])).size !== spec.inputs.length)
     || !(enhanced && spec.submit?.mode === 'none' ? exact(spec.submit, ['mode']) && spec.inputMode === 'native-input-change'
       : exact(spec.submit, ['selector', 'text', ...(enhanced && spec.submit?.mode !== undefined ? ['mode'] : [])]) && selector(spec.submit.selector) && typeof spec.submit.text === 'string' && spec.submit.text.trim() && spec.submit.text.length <= 200

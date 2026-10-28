@@ -5,6 +5,10 @@ description: 通过 WebCLI 探索公开/鉴权 HTTP API，或通过浏览器插�
 
 # API 探索与 Adapter 生成
 
+## B02 日期与弹层选项
+
+UI v2 的 kind=date 声明原生 input[type=date]，要求精确 ISO 值和有效 min/max/step。kind=choice 须声明 popup 和 option selectors：控件是 type=button、role=combobox、data-field 匹配 name、无提交 name；当前值为 data-value。点击后 popup 唯一可见且 role=listbox/grid，id 与 aria-controls 对应，aria-expanded=true；在 popup 内精确匹配一个可用 option/gridcell 的 data-value，再点击一次。日历可用 ISO 日期 data-value，不自动翻月。要求 native-input-change 和选定 profile 的 ui_write_choices_v1。页面负责 choice 事件，不另发重复 input/change；任一替换/歧义/禁用/值回退停止。沿用独立效果验证、安装门禁和单工具普通调用。普通 browser 层复用 find/click/get；目录与 chooser 上传见 webcli-browser，不能把路径写入生成包。
+
 ## 写控件、序列与实际结果（W01–W04）
 
 UI 新契约使用 `uiWrite.version:2`，选定 profile 必须支持 `ui_write_controls_v2`。显式 `inputMode:native-input-change` 填写后派发 input/change，支持 text、select、checkbox（精确字符串 true/false）和声明 `role=textbox`、`data-field` 的 contenteditable。事件可能自动保存；`submit:{mode:"none"}` 不再提交。显式 requestSubmit、DOM click 或原生 Enter；Enter selector 是已声明输入，text 对应 aria-label。值撤回、节点替换、焦点/身份变化时停止，不重新选控件或重放。

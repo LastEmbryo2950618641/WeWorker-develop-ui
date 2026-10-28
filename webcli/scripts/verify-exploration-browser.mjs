@@ -349,7 +349,7 @@ try {
     startBridge: async () => { await startBridge(); await connected(); },
   });
   if (process.argv.includes('--ui-write-only')) { await uiWrites(); return; }
-  if (process.argv.includes('--ui-controls-only') || process.argv.includes('--ui-contexts-only') || process.argv.includes('--ui-results-only')) { await verifyUiControls({ cli, record, passed, browser }); return; }
+  if (process.argv.includes('--b02-controls-only') || process.argv.includes('--ui-controls-only') || process.argv.includes('--ui-contexts-only') || process.argv.includes('--ui-results-only')) { await verifyUiControls({ cli, record, passed, browser }); return; }
   if (process.argv.includes('--page-write-only')) { await pageWrites(); return; }
   const pageRepairs = () => verifyPageWriteRepairs({ cli, record, passed,
     stopBridge: async () => { const closed = new Promise(resolve => bridge.once('exit', resolve)); bridge.kill('SIGTERM'); await closed; },

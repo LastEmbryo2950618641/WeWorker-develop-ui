@@ -198,6 +198,8 @@ export async function executeFramePointer(chrome, tabId, command, args, ensureCd
                 checkContext();
                 let releaseAt = from;
                 try {
+                    await control.beforePress?.();
+                    checkContext();
                     await mouse({ type: 'mousePressed', ...from, button: 'left', buttons: 1, clickCount: count });
                     if (to)
                         for (let i = 1; i <= 10; i++) {

@@ -48,6 +48,7 @@
     "browser-commands.js",
     "browser-profiles.js",
     "browser-service.js",
+    "upload-files.js",
     "browser-follow.js",
     "tab-operation-locks.js",
     "bridge.js",
