@@ -1,5 +1,11 @@
 # API 自动探索 CLI 改造跟进与交接
 
+## 2026-10-28：四项基线测试失败已处理
+
+接续 B01 提交 `5e3c09b`，按用户要求处理两个 Windows symlink EPERM、上传大小 12/8192 和输出 ENOBUFS。最终修复测试与合成夹具，保留产品校验；上传诊断证明 Node/Chrome 对文本文件有不同视图，未采用会造成 Chrome 误报的句柄大小替代。详情见 [Windows 测试基线修复](webcli_windows_test_baseline.md)。
+
+最新 WebCLI 全量 **147 文件/1708 项全部通过**；聚焦 37 项；源码上传 6u6czT 与 CLI＋Bridge 双打包 d5nsFK 各 4 项通过，包含真实字节和表单接收验证。构建通过，既有三个列映射资源提示保留。下方 B01 验收的“4 个基线失败”为历史结果，已由本节关闭；本机文件视图差异本身未改变。
+
 ## 2026-10-28：恢复并完成 B01 frame
 
 用户基于内外 `dev-1.0.2` 恢复并明确要求完成 B01。公开基线 9a01e40，隔离分支 `codex/opencli-frame-resume`；原始公开/内部 checkout 未切换或覆盖。frame 声明、原生读取动作、跨源/hash 导航、有界循环、权限/capability、生成/安装/普通调用/知识/提取修复已接通。最终双打包 GOTyK7 16 项、源码 hash/中断 i2y5rz 10 项、基础 BRBCmv、扩展 353 项、主机聚焦 81 项通过；全量 WebCLI 1699 通过/4 个基线已复现失败。契约见 [frame 工作流](opencli_frame_workflows.md)，完整证据、失败与分发边界见 [上下文审计末节](opencli_workflow_context_audit.md)。

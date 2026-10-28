@@ -32,7 +32,9 @@ export async function verifyBrowserUploads({cli,root,record,passed}){
   });
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const call=(command,args={},ok=true)=>cli(`browser.${command}`,{session,...args},ok);
-  const names=['example-upload-a.txt','example 上传 b.txt'],contents=['Example alpha\n','Example beta with Unicode 示例\n'];
+  // Public JSON fixtures avoid machine-specific .txt transformations. Still
+  // verify exact byte content in Chrome and in the receiving loopback server.
+  const names=['example-upload-a.json','example 上传 b.json'],contents=['{"example":"alpha"}\n','{"example":"Unicode 示例"}\n'];
   const paths=names.map(name=>path.join(root,name));for(let i=0;i<paths.length;i++)await fs.writeFile(paths[i],contents[i]);
   const expected=names.map((name,i)=>({name,content:contents[i]}));
   const inspect=async(selector,extra={})=>(await call('get',{selector,property:'compound',...extra})).data.value;
@@ -78,5 +80,15 @@ export async function verifyBrowserUploads({cli,root,record,passed}){
     assert.ok(['UPLOAD_TARGET_CHANGED','UPLOAD_INTERRUPTED','UPLOAD_VERIFICATION_FAILED','FRAME_DOCUMENT_CHANGED'].includes(nav.code),nav.code);assert.equal(nav.details.dispatched,true);
     await record('upload-report',{passed:true,verifiedFiles:2,formSubmissions:received.length,crossOriginFrames:children.length,nestedFrame:true,closedAx:true});
     passed('retained file uploads: hidden/semantic/shadow/AX/nested cross-origin targets, exact bytes and form submission, ambiguous/disabled/stale/changed-document guards and post-change verification');
+  }catch(error){
+    // Only synthetic fixture metadata/equality, never uploaded file contents.
+    const local=[];
+    for(let i=0;i<paths.length;i++){
+      const handle=await fs.open(paths[i],'r');
+      try{local.push({name:names[i],pathSize:(await fs.stat(paths[i])).size,handleSize:(await handle.stat()).size,readSize:(await handle.readFile()).length,expectedSize:Buffer.byteLength(contents[i])});}
+      finally{await handle.close();}
+    }
+    const browser=await read(`Promise.all([...document.querySelector('#main').files].map(async(file,index)=>({name:file.name,size:file.size,readSize:(await file.arrayBuffer()).byteLength,matchesExpected:await file.text()===${JSON.stringify(contents)}[index]})))`).catch(()=>null);
+    await record('upload-failure-diagnostics',{local,browser});throw error;
   }finally{try{await call('close');}finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}}
 }
