@@ -1,5 +1,34 @@
 # API 自动探索 CLI 改造跟进与交接
 
+## 2026-10-28：U01 通用验证与诊断交付
+
+在指定恢复 checkout，从干净 B02 `db712f397b218dd654d6a77baa28e9a3b9f660a9` 建立 `codex/opencli-u01-verification`。开始和提交前复核：目标 `dev-1.0.2` 仍为 `9a01e40`，#181/#186/#187 均未合并。本 PR 依赖 #187 → #186 → #181，不重复摘取提交；合并方式尚未确定，若前序 squash/rebase 须重新整理后续增量。未切换或覆盖其他 checkout。
+
+新增 `adapter verify` 复用静态校验与显式知识源的历史作者证据；`--runtime legacy|toolkit` 保留无效候选并诊断语法/完整性/运行时文件；`adapter source <local-repo> --ref <full-sha>` 发现固定提交中的 v2 子包，`install --git ... --package ... --digest ...` 通过原安装 store。没有新 Runner、隐式写验证或权限放宽。契约、具体错误、上游 1.8.8 真实行为、Git 生命周期未覆盖范围和 U06 排期见 [U01 专项](opencli_u01_verification.md)。
+
+本机 Windows、Node 24.20.0；真实调用只用任务自有 Git/临时安装根/loopback，未安装客户端或操作真实账户。报告仅存本机临时目录，不提交业务响应或 profile。
+
+| 验证层 | 结果及本机证据 |
+| --- | --- |
+| 固定上游实际函数 | `opencli-u01-audit-Dp0Eea/report.json`：普通 read/write verify 零执行、缺 smoke 明确失败、空目标零命令、禁用子包过滤；不是上游 daemon/安装生命周期 |
+| WebCLI 完整 | 150 文件／1738 项通过，`.cache/u01-webcli-full.log`；两 worker。最后分类/权限摘要/读取预算细化另有下面聚焦及最终打包复验 |
+| 最终相关聚焦 | 4 文件／42 项通过，`.cache/u01-final-focused.log`；含验证、Git、Toolkit、安装 store。Git 链接和脏 checkout 保留有实 Git 对象覆盖 |
+| 最终源码管理与调用 | 5 项，`webcli-u01-acceptance-02ZrmN/report.json` |
+| 最终打包管理与调用 | 5 项，`webcli-u01-acceptance-hbnhPM/report.json`；真实固定 commit 安装、普通 GET、六格式、legacy/Toolkit 失败及零写诊断 |
+| 实际 npm 分发安装 | `npm pack` 1093 文件，安装到任务 `.cache/u01-npm/install`；实际 npm-entry 5 项，`webcli-u01-acceptance-t4CZAG/report.json`；没有全局安装或更换用户客户端 |
+| 完整 HTTP 回归 | 源码 29 项 `webcli-http-discovery-V29DGX`，CLI＋Bridge 29 项 `webcli-http-discovery-wB9wEr`；生成/作者验证/安装/普通调用/知识、独立写效果/取消/重启/修复/不重放 |
+| 最终生成和证据专项 | 源码 4 项 `webcli-http-discovery-73RNqs`，双 bundle 4 项 `webcli-http-discovery-FXFQ3V`；两个真实作者 cases 与已安装摘要匹配，verify 没有新请求 |
+| 实际历史写证据补查 | 对上述完整 HTTP 留下的包和知识，源码与最终 bundle 均识别真实 HISTORICAL_WRITE_EFFECT；同时保留其他命令的 missing/digest mismatch，require-evidence 均退出 1；没有重放，未把部分证明认证为全包通过 |
+| 资源和边界检查 | 8 个改动运行模块与实际 npm 安装副本字节一致；5 个前序扩展模块的源码/prepared/npm 一致，npm worker 按既有 3712 规则核对。公开 prepare 33 个包成功，JS/MJS 语法与 diff whitespace 通过；增量私网 IP/常见 Token/私钥模式零命中 |
+
+各专项有重叠，不合并为独立案例总数。扩展执行代码未修改，B02 最终 363 项和控件/上传实机证据沿用原范围，没有冒称本轮重跑。最后 bundle 重新构建，仍有三个既有列映射资源缺失提示；没有改成静默成功。资源及历史写证据摘要为 `.cache/u01-delivery-summary.json`。
+
+中间失败：Windows Git 逐文件子进程读取使一项测试超时，改为有界 cat-file batch 后通过，未放宽超时；上游缺依赖和合成注册缺 access 的失败保留在专项。历史写证据补查首次错误期待全部命令通过，真实记录存在旧摘要和缺失；修正验收预期，保留严格产品门禁。这是证据范围纠正，不是放宽校验。
+
+下一阶段 U06：首先统一有界、脱敏、来源明确的诊断产物导出（任务/普通 trace、network、console、状态和可选截图）；Worker、未结束 SSE/长响应、结果续取和流量 replay 先核对固定上游 1.8.8 行为。U04/U05 不自动展开，U03 无映射不视为缺失。E01–E04 保留，尤其 E02 Windows/macOS 实际客户端安装未执行；已有 CI 安装包成功和本轮 npm 安装均不能替代。远程 Git clone/update、OpenCLI TS 插件生命周期和 embedded Toolkit 真运行未因此关闭。
+
+没有发布或改 CI/CD、没有真实账户写、没有创建聊天/子 Agent、没有改持久记忆。PR 与当前提交 CI 状态以 GitHub 的最新记录为准，不自动合并。
+
 ## 2026-10-28：B02 控件与上传
 
 在指定的恢复 checkout 核对后，从 #186 最新 af85115 建立独立 codex/opencli-b02-controls 分支。开始及开发复核时 #181、#186 均 OPEN，远程 dev-1.0.2 为 9a01e40；B02 依赖 #186（再依赖 #181），不重复 cherry-pick 前序提交，目标仍为 dev-1.0.2，不自动合并。原始公开 checkout 保持原分支；内部 checkout 的已有修改未触碰。

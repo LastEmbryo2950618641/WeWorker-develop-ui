@@ -61,6 +61,8 @@
     "stats.js",
     "adapter-cli.js",
     "adapter-diagnostics.js",
+    "adapter-verification.js",
+    "adapter-git-source.js",
     "adapter-conventions.js",
     "adapter-export.js",
     "adapter-registry.js",

@@ -1,5 +1,7 @@
 # WebCLI 与 OpenCLI 能力对齐台账
 
+2026-10-28 U01：补统一静态/历史 evidence 报告、legacy/Toolkit 无执行诊断，以及固定本地 Git commit 的 v2 子包发现/审阅摘要安装。真实作者验证和写效果继续复用原入口，不把历史证据升级为当前效果。准确范围、上游 1.8.8 行为与未覆盖的远程插件生命周期见 [U01 专项](opencli_u01_verification.md)。下一阶段仅推进 U06 已确认的统一诊断产物并先做 Worker/流式/replay 行为核查；E02 实际客户端安装保持开放。
+
 2026-10-28 B02：完成原生日期／明确弹层选项的生成、效果验证和安装普通调用，补目录相对路径验证、原 frame 原生 chooser 与动态 input/multipart 流程。上游仍固定 1.8.8，并补实际 BasePage/CDP 行为核查。契约、证据与边界见 [B02 控件与上传](opencli_b02_controls.md)。WebCLI 148 文件/1727 项、扩展 363 项通过；最终实机与打包记录见交接。B03–B04、A/U 余项及 E 系列继续开放。
 
 2026-10-28 W01–W04：声明式控件/页面写、CLI 任务有限序列、多用例和实际响应 ID 契约已实现并通过隔离实机验证。WebCLI **147 文件/1722 项**、扩展 **360 项**通过；双打包 UI **20 项**、双打包序列及重启恢复 **4 项**通过。准确范围、模块、最终补测和历史失败见 [写工作流契约与证据](opencli_write_workflows.md)。本阶段不代表整体 OpenCLI 对齐完成。
@@ -38,7 +40,7 @@
 | B04 | 部分实现 | AX/Shadow/子 frame 截图、任意设备模拟恢复 |
 | A01 | 部分实现 | YAML/API 文档发现与更广引用解析 |
 | A02 | 部分实现 | 站点签名/OAuth；按上游和实际站点契约审计，不能把 HMAC 视为全部认证 |
-| U01 | 已审计／部分实现 | 随包 skills list/read、v2 status/目录与已安装静态 validate 已补；源码/打包 Skill 各 4 项、管理各 5 项。eject 新目录复制/显式 develop-use 已验（源码/打包各 3 项）；convention-audit 七类静态提示源码/最终打包各 3 项已验；统一 verify/evidence、Git/monorepo、legacy 和 Toolkit 诊断仍开放，见管理审计文档 |
+| U01 | 本阶段通用验证与诊断已补；完整管理生命周期仍部分实现 | 保留已有 skills/status/validate/eject/convention-audit。新增 verify 静态＋显式知识源的历史证据汇总、legacy/Toolkit 静态诊断、本地固定 Git commit/monorepo v2 发现与精确摘要单包安装。默认零工具执行，不认证当前效果；远程 Git clone/update、OpenCLI TS 插件生命周期及 embedded Toolkit 实际运行仍未验证／未实现，不整体宣称 U01 全对齐。见 opencli_u01_verification.md 与交接最终证据 |
 | U02 | 部分实现／继续核对入口 | 六格式/md/yml、JSONL 和 Bash/Zsh/Fish 补全已验；AdapterHub 复用 JSON 路径输出结果/help/错误，源码/打包管理各 5、输出各 5、补全各 4 项。其他 Adapter/服务管理格式、发布与凭据路径实际验收仍开放 |
 | U03 | 初步映射／行为审计未完成 | 1.8.8 的 1366 命令/179 分组逐项台账见 opencli_command_map_1_8_8.json；当前 33 包，150 名称候选、36 同包未匹配、1180 历史无映射。候选不是对齐，无映射不是已证明不存在；全部留待源码/行为与实机证据复核 |
 | U04 | 已审计／实际差距待实现 | 上游独立 CDPBridge＋外部应用注册/启动，现有 chrome.debugger/profile 传输不等价；见 opencli_cdp_audit.md。需隔离真实目标验证，不接管未知端口/应用；不开发 OpenCLI 桌面客户端 |

@@ -123,6 +123,18 @@ try {
   const originalMapping = { meaning: 'Public item identifier', source: 'Response id property' };
   await call('exploration.knowledge-save', { taskId, expectedHash: knowledge.data.hash, fields: { id: originalMapping } });
   pass('host HTTP evidence → generation → two authored cases → reviewed installation → ordinary CLI call → knowledge');
+  if (process.argv.includes('--u01') || process.argv.includes('--u01-only')) {
+    const knowledgeDir = path.join(env.WEWORKER_ADAPTER_DATA_DIR, 'adapter-workspaces/public/http-exploration/knowledge');
+    const count = requests.length;
+    const report = JSON.parse((await exec(process.execPath, [cliEntry, 'adapter', 'verify', '--installed', site,
+      '--knowledge-dir', knowledgeDir, '--require-evidence', '--output-format=json'], { env })).stdout);
+    assert.equal(report.ok, true); assert.equal(report.executed, false); assert.equal(report.evidenceComplete, true);
+    assert.equal(report.results[0].evidence[0].status, 'HISTORICAL_READ_CASES');
+    assert.equal(report.results[0].evidence[0].cases, 2); assert.equal(requests.length, count);
+    assert.doesNotMatch(JSON.stringify(report), /example-auth-placeholder|example-unpersisted-(?:input|response)|"args"|"expect"/);
+    pass('U01 actual authored cases and matching installed digest aggregate without any new request or raw evidence disclosure');
+  }
+  if (!process.argv.includes('--u01-only')) {
   await stopBridge(); const beforeRestart = requests.length; await startBridge();
   assert.equal((await call('exploration.get', { taskId })).data.status, 'installed');
   assert.equal((await call('exploration.list', { mode: 'http' })).data.tasks[0].taskId, taskId);
@@ -188,6 +200,7 @@ try {
   for (const target of [path.join(root, 'bridge.log'), env.WEWORKER_ADAPTER_DATA_DIR, env.WEWORKER_USER_ADAPTERS_DIR]) await assertClean(target);
   assert.ok((await call('profile.list')).data.profiles.every(profile => profile.contextId === 'legacy' && !profile.online));
   pass('no browser ever connected; credentials/request/response values absent from logs, tasks, knowledge and installed package');
+  }
   }
   await fs.writeFile(path.join(root, 'report.json'), JSON.stringify({ passed: true, bundledCliAndBridge: process.argv.includes('--bundled'), checks, requests }, null, 2));
 } catch (error) {
