@@ -940,11 +940,11 @@ async function cmdCall(toolName, argsStr, options = {}) {
       process.exitCode = 1;
       return;
     }
-    await ensureBridgeRunning();
+    if (command !== 'export') await ensureBridgeRunning();
     const { callExploration } = await import('./exploration-client.js');
-    const result = await callExploration(command, args, { profile: options.profile });
+    const result = await callExploration(command, args, { profile: options.profile, ...(command === 'export' ? { timeoutMs: 180000 } : {}) });
     printManagement(result);
-    if (!result.ok) process.exitCode = 1;
+    if (!result.ok || (command === 'export' && !result.data?.complete)) process.exitCode = 1;
     return;
   }
 

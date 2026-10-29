@@ -123,6 +123,20 @@ try {
   const originalMapping = { meaning: 'Public item identifier', source: 'Response id property' };
   await call('exploration.knowledge-save', { taskId, expectedHash: knowledge.data.hash, fields: { id: originalMapping } });
   pass('host HTTP evidence → generation → two authored cases → reviewed installation → ordinary CLI call → knowledge');
+  if (process.argv.includes('--u06-only')) {
+    const directory=path.join(root,'u06-http-export'), before=requests.length;
+    const output=await call('exploration.export',{taskId,directory});
+    assert.equal(output.ok,true);assert.equal(output.data.complete,true);assert.equal(requests.length,before);
+    const receipt=JSON.parse(await fs.readFile(path.join(directory,'receipt.json')));
+    assert.equal(receipt.environment.runtime,'host-http');assert.equal(receipt.currentEffectVerified,false);
+    assert.equal(receipt.sections.network.reason,'NOT_APPLICABLE_HOST_HTTP');
+    assert.equal(receipt.sections.knowledge.status,'available');
+    const knowledgeRows=(await fs.readFile(path.join(directory,'knowledge.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
+    assert.equal(knowledgeRows[0].status,'HISTORICAL_READ_CASES');assert.equal(knowledgeRows[0].cases,2);
+    const text=(await Promise.all((await fs.readdir(directory)).map(name=>fs.readFile(path.join(directory,name),'utf8')))).join('');
+    assert.doesNotMatch(text,/example-auth-placeholder|example-unpersisted-(?:input|response)|"args"|"expect"/);
+    pass('U06 host HTTP export binds real installed digest and author history, declares browser limits, sends zero new requests');
+  }
   if (process.argv.includes('--u01') || process.argv.includes('--u01-only')) {
     const knowledgeDir = path.join(env.WEWORKER_ADAPTER_DATA_DIR, 'adapter-workspaces/public/http-exploration/knowledge');
     const count = requests.length;
@@ -134,7 +148,7 @@ try {
     assert.doesNotMatch(JSON.stringify(report), /example-auth-placeholder|example-unpersisted-(?:input|response)|"args"|"expect"/);
     pass('U01 actual authored cases and matching installed digest aggregate without any new request or raw evidence disclosure');
   }
-  if (!process.argv.includes('--u01-only')) {
+  if (!process.argv.includes('--u01-only') && !process.argv.includes('--u06-only')) {
   await stopBridge(); const beforeRestart = requests.length; await startBridge();
   assert.equal((await call('exploration.get', { taskId })).data.status, 'installed');
   assert.equal((await call('exploration.list', { mode: 'http' })).data.tasks[0].taskId, taskId);

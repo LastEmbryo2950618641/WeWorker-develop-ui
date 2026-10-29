@@ -31,6 +31,7 @@ import { verifyExtensionWrites } from './extension-write-acceptance.mjs';
 import { verifyPageWriteRepairs } from './page-write-repair-acceptance.mjs';
 import { verifyPageSharedRepair } from './page-shared-repair-acceptance.mjs';
 import { verifyBackgroundApi } from './background-api-acceptance.mjs';
+import { verifyDiagnostics } from './diagnostics-acceptance.mjs';
 
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'webcli-browser-acceptance-'));
@@ -123,10 +124,10 @@ try {
     }
   }
   await startBridge();
-  async function cli(command, args = {}, expectedOk = true) {
+  async function cli(command, args = {}, expectedOk = true, profile) {
     let result;
-    try { result = await exec(process.execPath, [cliEntry, 'call', command, '--args', JSON.stringify(args), '--output-format=json'], { env, timeout: 95000, maxBuffer: 3_000_000 }); }
-    catch (error) { if (expectedOk) throw error; result = error; }
+    try { result = await exec(process.execPath, [cliEntry, 'call', command, '--args', JSON.stringify(args), '--output-format=json', ...(profile ? ['--profile',profile] : [])], { env, timeout: 95000, maxBuffer: 3_000_000 }); }
+    catch (error) { if (expectedOk && !(command === 'exploration.export' && error.stdout && JSON.parse(error.stdout).ok)) throw error; result = error; }
     const output = JSON.parse(result.stdout);
     if (command.startsWith('exploration.') || command.startsWith('browser.')) assert.equal(output.ok, expectedOk, JSON.stringify(output));
     return output;
@@ -299,11 +300,12 @@ try {
     throw new Error('Extension did not connect');
   }
   await connected(); passed('standalone extension connected');
-  const backgroundApi = () => verifyBackgroundApi({ browser, cli, record, passed,
+  if (process.argv.includes('--diagnostics-only')) { await verifyDiagnostics({ cli, root, record, passed, browser, launchSecond:()=>launchContext('u06-second') }); return; }
+  const backgroundApi = () => verifyBackgroundApi({ browser, cli, record, passed, root,
     stopBridge: async () => { const closed = new Promise(resolve => bridge.once('exit', resolve)); bridge.kill('SIGTERM'); await closed; },
     startBridge: async () => { await startBridge(); await connected(); },
   });
-  if (process.argv.includes('--background-only')) { await backgroundApi(); return; }
+  if (process.argv.includes('--background-only') || process.argv.includes('--u06-trace-only')) { await backgroundApi(); return; }
   const profiles = () => verifyBrowserProfiles({ browser, cliEntry, env, record, passed,
     launchSecond: () => launchContext('browser-profile-second'),
     stopBridge: async () => { const closed = new Promise(resolve => bridge.once('exit', resolve)); bridge.kill('SIGTERM'); await closed; },

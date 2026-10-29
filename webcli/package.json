@@ -23,6 +23,7 @@
     "exploration-client.js",
     "exploration-evidence.js",
     "exploration-service.js",
+    "diagnostic-export.js",
     "exploration-verification.js",
     "exploration-knowledge.js",
     "exploration-repair.js",

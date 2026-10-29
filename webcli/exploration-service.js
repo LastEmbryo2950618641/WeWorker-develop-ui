@@ -39,6 +39,7 @@ import { verifyGeneratedWriteTools } from './generation-harness/write-tool-verif
 import { buildUiWriteTool } from './exploration-ui-write.js';
 import { buildExtensionWriteTool } from './exploration-extension-write.js';
 import { reviewWriteSequence, verifyWriteSequence, readbackWriteSequence } from './exploration-write-sequence.js';
+import { exportTaskDiagnostics } from './diagnostic-export.js';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const active = new Set(['collecting', 'validating', 'installing', 'verifying_write']);
@@ -249,6 +250,7 @@ export class ExplorationService {
     const taskId = textArg(args.taskId, 'taskId', 100);
     const run = this.runs.get(taskId);
     if (!run) throw fail('TASK_NOT_FOUND', 'Task not found; use exploration.list.');
+    if (command === 'export') return exportTaskDiagnostics(this, run, args);
     if (command === 'get') return this.summary(run);
     if (command === 'analyze') return analyzeExploration(run, this.capabilities().capabilities);
     if (command === 'revisions') return { taskId, revisions: (run.revisions || []).map(explorationRevisionView) };

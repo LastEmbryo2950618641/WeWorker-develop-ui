@@ -155,6 +155,8 @@ webcli extension-path                   输出扩展目录路径
 
 ## Skill 系统
 
+已有任务可用 `webcli call exploration.export --profile <profile> --args-file export.json` 汇总诊断，参数必须含 `taskId` 和绝对新目录 `directory`。Bridge 须已运行；默认省略正文、账号、凭据、日志原文和截图，部分结果保留但退出码为 1。显式 `screenshot:true` 才包含任务当前 viewport 的未脱敏像素；HTTP 没有浏览器来源。时间窗、预算、来源、失败和历史证据边界见 [U06 诊断契约](../docs/opencli_u06_diagnostics.md)。
+
 复杂参数和多行代码建议写入 UTF-8 JSON 对象文件，通过 `webcli call exploration.draft-write --args-file "args.json"` 传入。支持带 BOM 的文件和含空格的路径，文件上限 2 MiB；`content` 字段必须是字符串。`--args-file` 与 `--args` 只能出现一个，结构化对象中的字段覆盖同名 `--key=value`。不要把多行源码拼进 shell 命令；工具名之后的多余位置参数会报错。
 
 未知站点探索用 `webcli call browser.open --session=explore --url=https://example.com`，再用返回的 tabId 开始探索。`open_browser` 用于已有 Adapter 的导航与登录契约，可能受允许列表限制。参数文件只负责保留 JSON 类型；HTTP 运行器对明确声明为 number/integer 且不允许 string 的字段转换非空数字字符串，字符串 ID（如 `007`）保留原样。

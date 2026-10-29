@@ -1,5 +1,7 @@
 # WebCLI 与 OpenCLI 能力对齐台账
 
+2026-10-29 U06：新增 `exploration.export`，统一任务/普通调用 trace、network/console、状态、静态包/知识历史和显式截图的新目录产物；按 task/profile/时间窗限定、默认结构脱敏，缺失/截断/部分失败不冒充完整成功。固定 1.8.8 direct CDP 与 journal/artifact 函数补行为证据，本项目源码/双 bundle/实际临时 npm 验收见 [U06 专项](opencli_u06_diagnostics.md) 和交接。上游扩展/daemon 全链路、HTTP/Toolkit 普通 trace 汇总及 E02 实际客户端安装仍未关闭；没有新增请求重放。
+
 2026-10-28 U01：补统一静态/历史 evidence 报告、legacy/Toolkit 无执行诊断，以及固定本地 Git commit 的 v2 子包发现/审阅摘要安装。真实作者验证和写效果继续复用原入口，不把历史证据升级为当前效果。准确范围、上游 1.8.8 行为与未覆盖的远程插件生命周期见 [U01 专项](opencli_u01_verification.md)。下一阶段仅推进 U06 已确认的统一诊断产物并先做 Worker/流式/replay 行为核查；E02 实际客户端安装保持开放。
 
 2026-10-28 B02：完成原生日期／明确弹层选项的生成、效果验证和安装普通调用，补目录相对路径验证、原 frame 原生 chooser 与动态 input/multipart 流程。上游仍固定 1.8.8，并补实际 BasePage/CDP 行为核查。契约、证据与边界见 [B02 控件与上传](opencli_b02_controls.md)。WebCLI 148 文件/1727 项、扩展 363 项通过；最终实机与打包记录见交接。B03–B04、A/U 余项及 E 系列继续开放。
@@ -45,7 +47,7 @@
 | U03 | 初步映射／行为审计未完成 | 1.8.8 的 1366 命令/179 分组逐项台账见 opencli_command_map_1_8_8.json；当前 33 包，150 名称候选、36 同包未匹配、1180 历史无映射。候选不是对齐，无映射不是已证明不存在；全部留待源码/行为与实机证据复核 |
 | U04 | 已审计／实际差距待实现 | 上游独立 CDPBridge＋外部应用注册/启动，现有 chrome.debugger/profile 传输不等价；见 opencli_cdp_audit.md。需隔离真实目标验证，不接管未知端口/应用；不开发 OpenCLI 桌面客户端 |
 | U05 | 已审计／实际差距待实现 | 1.8.8 external.js 与 cli.js：13 个内置元数据、用户注册、PATH 查找、安装和原样 stdio/退出码透传；本项目无对应注册/执行入口，Toolkit Runner 不等价。审计见 opencli_external_audit.md；尚无本项目实现/实机证据 |
-| U06 | 源码已审计／行为与实现欠账 | 固定 1.8.8 npm＋tag 扩展：未见独立 Worker 捕获或未结束正文流；replay 为命令结果复用，trace 导出不是请求重发。确认统一诊断产物差距，其他项仍需隔离行为证据，见 opencli_network_audit.md；不据静态阅读关闭 |
+| U06 | 统一任务诊断产物已补／限定行为核查已验 | `exploration.export` 的有界来源、时间窗、脱敏、新目录、部分失败和零重放已有源码/双 bundle/临时 npm 证据。1.8.8 direct CDP 区分父页/SW 返回与 Worker 自发请求、未结束正文与完成读取；journal/artifact harness 验证结果复用和导出零请求。本项目真实扩展对应核查通过。上游扩展/daemon 全链路及 HTTP/Toolkit 普通 trace 汇总仍开放；不据此新增未证实的 Worker/流式正文/流量重发，见 opencli_u06_diagnostics.md |
 | E01 | 验收欠账 | Chromium 1194 Shadow/frame 兼容，其他浏览器与系统 |
 | E02 | 验收欠账 | macOS arm64/x64、Windows 实际安装包；发布/受限配置仍单独授权 |
 | E03 | 验收欠账 | 全新 Codex/Claude 独立对话；当前未授权创建新聊天 |

@@ -1,5 +1,33 @@
 # API 自动探索 CLI 改造跟进与交接
 
+## 2026-10-29：U06 统一诊断交付
+
+指定恢复 checkout 从干净 U01 `72b01a39a5df8bf935c98ef7ff223ba3a6c2da7e` 建立 `codex/opencli-u06-diagnostics`。重新 fetch 后目标 `dev-1.0.2` 为 `c15dfe5`；#181/#186/#187/#188 均 OPEN、mergeCommit=null，四级祖先关系成立，`git cherry` 未见等价 patch 已进入目标。以 merge `327613f` 纳入目标新增的登录立即返回修复，不 cherry-pick 前序、不改其他 checkout。依赖仍为本 PR → #188 → #187 → #186 → #181；未来 squash/rebase 合并必须再按 patch/祖先整理后续增量。
+
+本轮增量为 `exploration.export` 及专属的 task-tab trace 读取：复用任务记录、browser events/state/screenshot 和 U01 静态/历史诊断，按 task/profile、UTC 窗口和预算生成 receipt/summary/时间线等统一产物。新目录独占写、默认结构脱敏、图片显式选择、部分结果退出 1；不自动启动服务、不调用 Adapter、不重放动作、不授予写权限。完整契约、上游和当前限制见 [U06 专项](opencli_u06_diagnostics.md)。
+
+| 验证层 | 结果与本机记录 |
+| --- | --- |
+| 固定上游来源 | npm 1.8.8 tarball SHA256 与前序一致；四个执行/审计 JS 模块与 tarball 字节一致；固定 tag 的 cdp/journal Git blob 重取并核验。未使用新版 |
+| 上游实际行为 | `opencli-u06-audit-cKINAp/report.json`：真实 direct CDP 的 page/SW-returned、独立 Worker 请求、未结束与完成正文、失败；journal/export 函数 harness 的结果续取/丢失/过大和导出零请求。不是 upstream CLI/daemon/扩展全链路 |
+| WebCLI 完整 | 151 文件／1759 项，`.cache/u06-webcli-full.log`；两 worker。扩展/Bridge/任务来源、既有写保护回归均未放宽 |
+| 扩展完整 | 365 项，`.cache/u06-extension-full.log`；含新增任务 trace 范围/身份/origin/预算拒绝测试 |
+| 浏览器源码 | `webcli-browser-acceptance-HznUDk/report.json`，7 项：含两项基础连接，5 项 U06 网络/产物/截图/完成正文/截断失败 |
+| CLI＋Bridge 双 bundle | `webcli-browser-acceptance-Dcu7ty/report.json`，8 项；在相同 U06 专项上另验第二个真实 profile 拒绝读取原任务。早期双 bundle `SouJX2` 7 项保留，不重复累加 |
+| 实际普通调用关联 | 双 bundle `webcli-browser-acceptance-fHmDlU/report.json`，5 项；复用已有后台验收的生成/作者 cases/安装/普通调用/知识，导出真实 trace ID，来源摘要匹配，零新请求。普通 call 不认证独立效果，trace retention 未知保持 partial |
+| HTTP 源码／双 bundle | `webcli-http-discovery-ONUPKc` / `webcli-http-discovery-vZFxff`，各 4 项；已有真实两组作者 cases、生成安装、普通调用和知识被关联到产物，零额外请求，浏览器来源明确不适用 |
+| 实际临时 npm | `webcli-u06-npm-sAzyI3/report.json`，4 项；真实 npm-entry/Bridge 读取复制的已验 HTTP 任务/包/知识，未重新运行作者验证；无 Bridge 不启动，要求不可用来源时退出 1，源码/prepared/npm 必需文件字节匹配（worker 仅既有 3712 差异） |
+
+上述报告均在系统临时根，日志位于当前 checkout `.cache`；不提交测试浏览器 profile、实际产物或运行时缓存。各层证据有重叠，不相加为独立案例总数。最后导出等待/断线提示补充“检查原目录、不覆盖部分产物”，随后重建最终 bundle/npm 并补聚焦与分发检查；最终补录见下方，先前成功不冒充最后未变更模块之外的重跑。
+
+中间失败：`webcli-browser-acceptance-OwuGGz` 首次期待完成后的 SSE 原始正文，实际被现有非 JSON 正文省略规则拒绝。改验收为“SSE 完成事件但正文省略；JSON 长响应完成后正文可读”，没有放宽产品脱敏，最终源码和 bundle 通过。已有三个列映射资源缺失构建提示仍存在。没有通过删除断言、增加重发或扩大控件权限获得通过。
+
+U06 本轮关闭契约内统一任务诊断导出及分发缺口，并补限定 Worker/流式/replay 行为证据；上游真实扩展/daemon 的网络与断线结果续取仍未验，HTTP/Toolkit 普通 trace 全局汇总不在此入口。没有新增完整 Worker 观察、未结束增量正文或流量重发。U04/U05 不展开；U03 未映射不等于缺失。W03 安装后单工具调用、W01/W02/B02 明确控件契约、W04 明确实际来源/512 字符 decimal、B02 browser 上传和 U01 历史证据边界全部保持。
+
+E01–E04 继续开放，尤其 **E02 实际 Windows/macOS 客户端安装没有执行**。CI 打包、npm 安装和隔离 Chrome 均不能替代实机客户端安装。没有安装或替换用户客户端、真实账户写、接管未知进程/端口、改全局工具环境、CI/CD、发布、内部配置、持久记忆、新对话或子 Agent。不自动合并；以交付 PR 当前 HEAD 的 CI 为准。
+
+最终分发补录：导出等待提示细化后，相关 4 文件／51 项通过（`.cache/u06-final-focused.log`）；最终 CLI/Bridge 重新构建，实际临时 npm pack **1094 文件**（含 diagnostic-export.js）。最终 HTTP 双 bundle `webcli-http-discovery-bwPGZ0` **4 项**，最终实际 npm `webcli-u06-npm-CMuRNr` **4 项**通过，六个宿主模块和三个扩展文件的源码/prepared/npm 对应检查包含最终 exploration-client。17 个改动 JS/MJS 语法与 diff whitespace 通过。没有重跑未变更的浏览器执行模块并冒称新客户端安装。提交前再次 fetch：目标仍为 c15dfe5，四个前序 PR 仍 OPEN。
+
 ## 2026-10-28：U01 通用验证与诊断交付
 
 在指定恢复 checkout，从干净 B02 `db712f397b218dd654d6a77baa28e9a3b9f660a9` 建立 `codex/opencli-u01-verification`。开始和提交前复核：目标 `dev-1.0.2` 仍为 `9a01e40`，#181/#186/#187 均未合并。本 PR 依赖 #187 → #186 → #181，不重复摘取提交；合并方式尚未确定，若前序 squash/rebase 须重新整理后续增量。未切换或覆盖其他 checkout。
