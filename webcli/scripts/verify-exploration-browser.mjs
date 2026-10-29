@@ -20,15 +20,18 @@ import { verifyBrowserProfiles } from './browser-profile-acceptance.mjs';
 import { verifyHostHttp } from './http-acceptance.mjs';
 import { verifyPageNavigation } from './page-navigation-acceptance.mjs';
 import { verifyOriginNavigation } from './origin-navigation-acceptance.mjs';
+import { verifyFrameWorkflow } from './frame-workflow-acceptance.mjs';
 import { verifyWorkflowControl } from './workflow-control-acceptance.mjs';
 import { verifyHashNavigation } from './hash-navigation-acceptance.mjs';
 import { verifyQueryNavigation } from './query-navigation-acceptance.mjs';
 import { verifyPageWorkflow } from './page-workflow-acceptance.mjs';
 import { verifyUiWrites } from './ui-write-acceptance.mjs';
+import { verifyUiControls } from './ui-controls-acceptance.mjs';
 import { verifyExtensionWrites } from './extension-write-acceptance.mjs';
 import { verifyPageWriteRepairs } from './page-write-repair-acceptance.mjs';
 import { verifyPageSharedRepair } from './page-shared-repair-acceptance.mjs';
 import { verifyBackgroundApi } from './background-api-acceptance.mjs';
+import { verifyDiagnostics } from './diagnostics-acceptance.mjs';
 
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const root = await fs.mkdtemp(path.join(os.tmpdir(), 'webcli-browser-acceptance-'));
@@ -121,10 +124,10 @@ try {
     }
   }
   await startBridge();
-  async function cli(command, args = {}, expectedOk = true) {
+  async function cli(command, args = {}, expectedOk = true, profile) {
     let result;
-    try { result = await exec(process.execPath, [cliEntry, 'call', command, '--args', JSON.stringify(args), '--output-format=json'], { env, timeout: 95000, maxBuffer: 3_000_000 }); }
-    catch (error) { if (expectedOk) throw error; result = error; }
+    try { result = await exec(process.execPath, [cliEntry, 'call', command, '--args', JSON.stringify(args), '--output-format=json', ...(profile ? ['--profile',profile] : [])], { env, timeout: 95000, maxBuffer: 3_000_000 }); }
+    catch (error) { if (expectedOk && !(command === 'exploration.export' && error.stdout && JSON.parse(error.stdout).ok)) throw error; result = error; }
     const output = JSON.parse(result.stdout);
     if (command.startsWith('exploration.') || command.startsWith('browser.')) assert.equal(output.ok, expectedOk, JSON.stringify(output));
     return output;
@@ -297,11 +300,12 @@ try {
     throw new Error('Extension did not connect');
   }
   await connected(); passed('standalone extension connected');
-  const backgroundApi = () => verifyBackgroundApi({ browser, cli, record, passed,
+  if (process.argv.includes('--diagnostics-only')) { await verifyDiagnostics({ cli, root, record, passed, browser, launchSecond:()=>launchContext('u06-second') }); return; }
+  const backgroundApi = () => verifyBackgroundApi({ browser, cli, record, passed, root,
     stopBridge: async () => { const closed = new Promise(resolve => bridge.once('exit', resolve)); bridge.kill('SIGTERM'); await closed; },
     startBridge: async () => { await startBridge(); await connected(); },
   });
-  if (process.argv.includes('--background-only')) { await backgroundApi(); return; }
+  if (process.argv.includes('--background-only') || process.argv.includes('--u06-trace-only')) { await backgroundApi(); return; }
   const profiles = () => verifyBrowserProfiles({ browser, cliEntry, env, record, passed,
     launchSecond: () => launchContext('browser-profile-second'),
     stopBridge: async () => { const closed = new Promise(resolve => bridge.once('exit', resolve)); bridge.kill('SIGTERM'); await closed; },
@@ -325,6 +329,11 @@ try {
     startBridge: async () => { await startBridge(); await connected(); },
   });
   if (process.argv.includes('--origins-only')) { await originNavigation(); return; }
+  const frameWorkflow = () => verifyFrameWorkflow({ cli, browser, record, passed,
+    stopBridge: async () => { const closed = new Promise(resolve => bridge.once('exit', resolve)); bridge.kill('SIGTERM'); await closed; },
+    startBridge: async () => { await startBridge(); await connected(); },
+  });
+  if (process.argv.includes('--frames-only')) { await frameWorkflow(); return; }
   if (process.argv.includes('--control-only')) { await workflowControl(); return; }
   if (process.argv.includes('--hash-only')) { await hashNavigation(); return; }
   if (process.argv.includes('--navigation-only')) { await verifyPageNavigation({ cli, record, passed }); await verifyQueryNavigation({ cli, record, passed }); return; }
@@ -342,6 +351,7 @@ try {
     startBridge: async () => { await startBridge(); await connected(); },
   });
   if (process.argv.includes('--ui-write-only')) { await uiWrites(); return; }
+  if (process.argv.includes('--b02-controls-only') || process.argv.includes('--ui-controls-only') || process.argv.includes('--ui-contexts-only') || process.argv.includes('--ui-results-only')) { await verifyUiControls({ cli, record, passed, browser }); return; }
   if (process.argv.includes('--page-write-only')) { await pageWrites(); return; }
   const pageRepairs = () => verifyPageWriteRepairs({ cli, record, passed,
     stopBridge: async () => { const closed = new Promise(resolve => bridge.once('exit', resolve)); bridge.kill('SIGTERM'); await closed; },

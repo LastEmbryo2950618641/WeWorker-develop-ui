@@ -1,4 +1,5 @@
 import { usesWorkflowOrigins } from './page-workflow-origins.js';
+import { requiresWorkflowFrameCapability } from './page-workflow-frames.js';
 import { usesWorkflowControl } from './page-workflow-control.js';
 /**
  * WebSocket Bridge
@@ -938,7 +939,7 @@ export class WebSocketBridge extends EventEmitter {
         return;
       }
       const readCommands = namespace === 'browser' ? ['help', 'sessions', 'doctor']
-        : ['help', 'capabilities', 'list', 'get', 'events', 'evidence', 'trace', 'analyze', 'revisions', 'revision-read', 'draft-read', 'verification-read', 'write-verification-read', 'knowledge-read', 'repair-info'];
+        : ['help', 'capabilities', 'list', 'get', 'events', 'evidence', 'trace', 'export', 'analyze', 'revisions', 'revision-read', 'draft-read', 'verification-read', 'write-verification-read', 'knowledge-read', 'repair-info'];
       result = await this._runInProfile(msg, ws, async () => {
         const route = this._route.getStore();
         if (route.readOnly && !readCommands.includes(msg.command)) throw profileError('LEGACY_READ_ONLY', 'Pre-profile history is read-only. Start a new task or bind a session in an explicitly selected profile.');
@@ -2001,9 +2002,12 @@ export class WebSocketBridge extends EventEmitter {
     if ((usesNavigationHash(selected?.command.pageRoute?.navigation) || usesNavigationHash(selected?.command.pageRoute?.workflow)) && !this._extensionCapabilities?.includes('page_navigation_hash_v1')) throw new Error('Reload the selected browser extension before calling hash navigation.');
     if ((usesNavigationQuery(selected?.command.pageRoute?.navigation) || usesNavigationQuery(selected?.command.pageRoute?.workflow)) && !this._extensionCapabilities?.includes('page_navigation_query_v1')) throw new Error('Reload the browser extension before calling public URL query navigation.');
     if ((usesWorkflowOrigins(selected?.command.pageRoute?.navigation) || usesWorkflowOrigins(selected?.command.pageRoute?.workflow)) && !this._extensionCapabilities?.includes('page_navigation_origin_v1')) throw new Error('Reload the selected browser extension before calling explicit cross-origin page reading.');
+    if (requiresWorkflowFrameCapability(selected?.command.pageRoute?.workflow) && !this._extensionCapabilities?.includes('page_workflow_frames_v1')) throw new Error('Reload the selected browser extension before calling frame workflows or passive read steps.');
     if (usesWorkflowControl(selected?.command.pageRoute?.workflow) && !this._extensionCapabilities?.includes('page_workflow_control_v1')) throw new Error('Reload the selected browser extension before calling conditional or repeated page workflows.');
     if (selected?.command.pageRoute?.workflow && !this._extensionCapabilities?.includes('page_workflow_v1')) throw new Error('Reload the browser extension before calling ordered page workflows.');
     if (selected?.command.uiWrite && !this._extensionCapabilities?.includes('ui_write_v1')) throw new Error('Reload the browser extension before calling UI writes.');
+    if (selected?.command.uiWrite?.inputs?.some(v => ['date','choice'].includes(v.kind)) && !this._extensionCapabilities?.includes('ui_write_choices_v1')) throw new Error('Reload the selected browser extension for declared date and popup choices.');
+    if (selected?.command.uiWrite?.version === 2 && !this._extensionCapabilities?.includes('ui_write_controls_v2')) throw new Error('Reload the selected browser extension before calling event-driven UI writes.');
     if (selected?.command.uiWrite?.result && !this._extensionCapabilities?.includes('ui_write_result_v1')) throw new Error('Reload the browser extension before reading UI receipt IDs.');
     if (selected?.command.pageWrite && !this._extensionCapabilities?.includes('page_write_v1')) throw new Error('Reload the browser extension before calling page writes.');
     if (selected?.command.pageStrategy === 'INTERCEPT' && !this._extensionCapabilities?.includes('intercept_read_v1')) throw new Error('Reload the browser extension before calling intercepted page queries.');

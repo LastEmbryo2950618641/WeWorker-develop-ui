@@ -120,6 +120,8 @@ Adapters:
   <adapter> <command> help                 单个命令参数说明（第三级）
   adapter validate <dir>                   校验 v2 adapter 包（结构+禁入文件，规范 docs/adapter_package_spec.md）
   adapter convention-audit <dir>           静态规范审计（不执行命令；--installed [id] 检查已安装包）
+  adapter verify <dir>                     静态校验及历史证据（--installed [id]；--runtime managed|legacy|toolkit）
+  adapter source <repo> --ref <full-sha>     只读发现本地 Git 固定提交中的 v2 子包
   adapter list                             列出已安装的 adapter
   adapter list --json                      JSON 格式输出（含工具定义）
   adapter info <id>                        查看 adapter 的工具列表
@@ -938,11 +940,11 @@ async function cmdCall(toolName, argsStr, options = {}) {
       process.exitCode = 1;
       return;
     }
-    await ensureBridgeRunning();
+    if (command !== 'export') await ensureBridgeRunning();
     const { callExploration } = await import('./exploration-client.js');
-    const result = await callExploration(command, args, { profile: options.profile });
+    const result = await callExploration(command, args, { profile: options.profile, ...(command === 'export' ? { timeoutMs: 180000 } : {}) });
     printManagement(result);
-    if (!result.ok) process.exitCode = 1;
+    if (!result.ok || (command === 'export' && !result.data?.complete)) process.exitCode = 1;
     return;
   }
 

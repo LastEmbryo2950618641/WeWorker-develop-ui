@@ -11,6 +11,7 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { verifyHttpWrites } from './write-acceptance.mjs';
 import { verifyWriteResults } from './write-result-acceptance.mjs';
+import { verifyWriteSequences } from './write-sequence-acceptance.mjs';
 import { verifyWriteRepairs } from './write-repair-acceptance.mjs';
 import { verifySharedRepairs } from './shared-repair-acceptance.mjs';
 
@@ -93,6 +94,8 @@ try {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
   await startBridge();
+  if (process.argv.includes('--write-sequences-only')) await verifyWriteSequences({ call, startBridge, stopBridge, pass });
+  else {
   assert.ok((await call('profile.list')).data.profiles.every(profile => profile.contextId === 'legacy' && !profile.online));
   const auth = { type: 'bearer', origin, env: 'EXAMPLE_DISCOVERY_KEY' };
   const start = { mode: 'http', origin, auth, goal: 'Read example API', requestId: 'example-http-start' };
@@ -120,6 +123,32 @@ try {
   const originalMapping = { meaning: 'Public item identifier', source: 'Response id property' };
   await call('exploration.knowledge-save', { taskId, expectedHash: knowledge.data.hash, fields: { id: originalMapping } });
   pass('host HTTP evidence → generation → two authored cases → reviewed installation → ordinary CLI call → knowledge');
+  if (process.argv.includes('--u06-only')) {
+    const directory=path.join(root,'u06-http-export'), before=requests.length;
+    const output=await call('exploration.export',{taskId,directory});
+    assert.equal(output.ok,true);assert.equal(output.data.complete,true);assert.equal(requests.length,before);
+    const receipt=JSON.parse(await fs.readFile(path.join(directory,'receipt.json')));
+    assert.equal(receipt.environment.runtime,'host-http');assert.equal(receipt.currentEffectVerified,false);
+    assert.equal(receipt.sections.network.reason,'NOT_APPLICABLE_HOST_HTTP');
+    assert.equal(receipt.sections.knowledge.status,'available');
+    const knowledgeRows=(await fs.readFile(path.join(directory,'knowledge.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);
+    assert.equal(knowledgeRows[0].status,'HISTORICAL_READ_CASES');assert.equal(knowledgeRows[0].cases,2);
+    const text=(await Promise.all((await fs.readdir(directory)).map(name=>fs.readFile(path.join(directory,name),'utf8')))).join('');
+    assert.doesNotMatch(text,/example-auth-placeholder|example-unpersisted-(?:input|response)|"args"|"expect"/);
+    pass('U06 host HTTP export binds real installed digest and author history, declares browser limits, sends zero new requests');
+  }
+  if (process.argv.includes('--u01') || process.argv.includes('--u01-only')) {
+    const knowledgeDir = path.join(env.WEWORKER_ADAPTER_DATA_DIR, 'adapter-workspaces/public/http-exploration/knowledge');
+    const count = requests.length;
+    const report = JSON.parse((await exec(process.execPath, [cliEntry, 'adapter', 'verify', '--installed', site,
+      '--knowledge-dir', knowledgeDir, '--require-evidence', '--output-format=json'], { env })).stdout);
+    assert.equal(report.ok, true); assert.equal(report.executed, false); assert.equal(report.evidenceComplete, true);
+    assert.equal(report.results[0].evidence[0].status, 'HISTORICAL_READ_CASES');
+    assert.equal(report.results[0].evidence[0].cases, 2); assert.equal(requests.length, count);
+    assert.doesNotMatch(JSON.stringify(report), /example-auth-placeholder|example-unpersisted-(?:input|response)|"args"|"expect"/);
+    pass('U01 actual authored cases and matching installed digest aggregate without any new request or raw evidence disclosure');
+  }
+  if (!process.argv.includes('--u01-only') && !process.argv.includes('--u06-only')) {
   await stopBridge(); const beforeRestart = requests.length; await startBridge();
   assert.equal((await call('exploration.get', { taskId })).data.status, 'installed');
   assert.equal((await call('exploration.list', { mode: 'http' })).data.tasks[0].taskId, taskId);
@@ -174,6 +203,7 @@ try {
   pass('restart during an in-flight HTTP operation preserves its budget and marks interrupted without replay');
   await verifyHttpWrites({ call, waitTask, startBridge, stopBridge, pass });
   await verifyWriteResults({ call, startBridge, stopBridge, pass });
+  await verifyWriteSequences({ call, startBridge, stopBridge, pass });
   await verifyWriteRepairs({ call, waitTask, startBridge, stopBridge, pass });
   await verifySharedRepairs({ call, waitTask, startBridge, stopBridge, pass });
   async function assertClean(target) {
@@ -184,6 +214,8 @@ try {
   for (const target of [path.join(root, 'bridge.log'), env.WEWORKER_ADAPTER_DATA_DIR, env.WEWORKER_USER_ADAPTERS_DIR]) await assertClean(target);
   assert.ok((await call('profile.list')).data.profiles.every(profile => profile.contextId === 'legacy' && !profile.online));
   pass('no browser ever connected; credentials/request/response values absent from logs, tasks, knowledge and installed package');
+  }
+  }
   await fs.writeFile(path.join(root, 'report.json'), JSON.stringify({ passed: true, bundledCliAndBridge: process.argv.includes('--bundled'), checks, requests }, null, 2));
 } catch (error) {
   await fs.writeFile(path.join(root, 'report.json'), JSON.stringify({ passed: false, checks, error: error.message }, null, 2));

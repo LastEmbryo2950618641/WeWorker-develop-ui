@@ -1,5 +1,13 @@
 # API 自动探索 CLI 开发设计与首版实现
 
+## 2026-10-28 W01–W04 写工作流
+
+声明式 UI v2、精确导航与 frame 身份、CLI 任务写序列和实际结果回查的当前契约见 [W01–W04](opencli_write_workflows.md)。该文档优先于下文历史写能力限制；安装态单工具入口保持不变，任务序列账本不进入安装包。
+
+## 2026-10-28 frame 只读工作流
+
+workflow 逐步声明初始 `frames:[{selector,origin,pathname}]`，每个上下文固定 owner/祖先，独立衔接路线；显式导航只允许更新原叶文档。支持被动 read、既有原生搜索/筛选/翻页、跨源/hash、有界分支循环和结果收集。主 tab 路由与 frame 权限目标分离，完整契约进入生成/作者验证/审阅安装/普通调用/知识/提取修复；新 capability 在旧 profile 派发前拒绝。取消/断线/超时后不重放。详见 [声明和身份契约](opencli_frame_workflows.md) 与 [验收记录](opencli_workflow_context_audit.md)。
+
 ## 2026-10-26 可靠性增量
 
 - 显式包含 WebCLI / exploration.* / browser.open 的请求由聊天 Agent 处理，Tier4 不抢占；`WEWORKER_TIER4=0` 仍优先关闭分流，其他未知站点路由保持原规则。未知页面使用带 session 的 `browser.open`，已有 Adapter 的 `open_browser` 不承担任意 URL 入口。

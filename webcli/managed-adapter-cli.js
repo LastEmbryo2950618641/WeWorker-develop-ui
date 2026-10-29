@@ -4,10 +4,23 @@ import { readAdapterPackage } from './adapterhub-package-v2.js';
 import { managedAdapterViews } from './adapter-views.js';
 import { installAdapter, registerDevelopmentAdapter, removeInstalledAdapter, selectAdapter } from './adapter-install-store.js';
 import { ejectAdapter } from './adapter-export.js';
+import { installGitPackage } from './adapter-git-source.js';
 
 /** Shared local package operations. Legacy inputs remain explicit migration paths. */
 export function runManagedAdapterCommand(args, options = {}) {
   const [command, ...rest] = args;
+  if (command === 'install' && rest.includes('--git')) {
+    const values = {}, flags = new Set(['--allow-downgrade', '--allow-permission-change', '--change-source', '--inactive', '--json']);
+    const keys = { '--git': 'repository', '--ref': 'ref', '--package': 'subpath', '--digest': 'digest' };
+    for (let i = 0; i < rest.length; i++) {
+      const key = keys[rest[i]];
+      if (key && values[key] === undefined && rest[i + 1] && !rest[i + 1].startsWith('-')) values[key] = rest[++i];
+      else if (!flags.has(rest[i])) throw new Error('Invalid Git installation option.');
+    }
+    if (Object.keys(values).length !== 4) throw new Error('Git installation requires --git, --ref, --package and --digest.');
+    return installGitPackage({ ...values, allowDowngrade: rest.includes('--allow-downgrade'), allowPermissionChange: rest.includes('--allow-permission-change'),
+      allowSourceChange: rest.includes('--change-source'), activate: !rest.includes('--inactive') }, options);
+  }
   if (command === 'eject') {
     const values = rest.filter(value => value !== '--json');
     if (values.length !== 3 || values[1] !== '--directory' || values[0].startsWith('-') || values[2].startsWith('-')) {
