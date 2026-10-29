@@ -199,6 +199,12 @@ if (process.env.WEWORKER_PACKAGED && process.env.WEWORKER_RESOURCES_PATH) {
   ;(process as NodeJS.Process & { resourcesPath?: string }).resourcesPath = process.env.WEWORKER_RESOURCES_PATH
 }
 
+// 桌面端登录等待锚定 75 秒：独立 CLI 的默认值（脚本/AI 立即返回）不适用于桌面
+// agent 的工具调用。环境变量由本进程注入、agent 的 shell 子进程自动继承，
+// 使桌面行为与 Bridge 未传 loginWaitMs 时的默认（75 秒自动继续）逐毫秒等价，
+// 且不随独立 CLI 默认值变化。
+process.env.WEBCLI_LOGIN_WAIT_SECONDS = process.env.WEBCLI_LOGIN_WAIT_SECONDS || '75'
+
 const SKILLS_DIR = ensureRuntimeSkillsDir()
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))

@@ -106,7 +106,7 @@ Login（网站登录由 WeWorker 自动处理：命令遇到未登录时打开�
   auth save <网站>               保存账号密码并开启自动登录（需确认；Windows 系统密钥加密）
   auth autologin <网站> on|off   开启或暂停自动登录
   auth forget <网站>             删除保存的账号密码
-  call ... --login-wait=<秒>     本次调用最多等待登录的时间（终端默认 300 秒，脚本/AI 默认 75 秒）
+  call ... --login-wait=<秒>     本次调用最多等待登录的时间（终端默认 300 秒；脚本/AI 默认不等待，立即返回登录提示与截图，登录流程后台继续）
 
 API exploration (standalone, no desktop/model key required):
   call exploration.help                    探索、草稿编辑、验证与安装命令
@@ -616,10 +616,14 @@ async function stopOwnService() {
 
 // ─── Website login ───────────────────────────────────────────────────────────
 
-/** A person at a terminal gets 5 minutes to sign in; scripts and agents 75 seconds (under a 2-minute tool timeout). */
+/** A person at a terminal gets 5 minutes of auto-continue; scripts and agents return
+ *  immediately so the session can render the login prompt and QR screenshot right away.
+ *  The login flow keeps running in the background either way. */
 function resolveLoginWaitMs(seconds) {
   if (Number.isFinite(seconds)) return Math.max(0, Math.min(15 * 60, seconds)) * 1000;
-  return process.stdin.isTTY && process.stderr.isTTY ? 300_000 : 75_000;
+  const env = Number(process.env.WEBCLI_LOGIN_WAIT_SECONDS);
+  if (Number.isFinite(env)) return Math.max(0, Math.min(15 * 60, env)) * 1000;
+  return process.stdin.isTTY && process.stderr.isTTY ? 300_000 : 0;
 }
 
 const AUTH_EVENT_TEXT = {
