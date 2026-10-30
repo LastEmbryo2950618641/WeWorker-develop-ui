@@ -96,11 +96,14 @@ const EXTENSION_CAPABILITIES = [
   'browser_downloads_v1',
   'browser_frame_pointer_v1',
   'browser_events_v1',
+  'browser_diagnostics_v1',
   'browser_accessibility_v1',
   'browser_screenshot_v1',
   'browser_shadow_query_v1',
   'browser_compound_v1',
   'browser_upload_target_v1',
+  'browser_upload_extended_v1',
+  'ui_write_choices_v1',
   'strict_output_contract_v1',
   'page_sources_v1',
   'intercept_read_v1',
@@ -109,10 +112,13 @@ const EXTENSION_CAPABILITIES = [
   'page_navigation_query_v1',
   'page_navigation_hash_v1',
   'page_workflow_v1',
+  'page_workflow_frames_v1',
   'page_workflow_control_v1',
   'page_navigation_origin_v1',
   'page_write_v1',
   'ui_write_v1',
+  'ui_write_controls_v2',
+  'write_results_v2',
   'ui_write_result_v1',
 ];
 
@@ -3486,7 +3492,7 @@ async function handleNativeMessage(msg) {
       sendToNative({ type: "call_tool_error", id: msg.id, error: err.message });
     }
   } else if (msg.type === 'browser_execute') {
-    const operation = () => executeBrowserCommand(msg, { chrome, ensureCdpAttached, cdpEvaluate, getCdpNetworkSnapshot, onBrowserDetach: clearBrowserDebuggerState });
+    const operation = () => executeBrowserCommand(msg, { chrome, ensureCdpAttached, cdpEvaluate, getCdpNetworkSnapshot, getTraceLogs, onBrowserDetach: clearBrowserDebuggerState });
     // Read-only download observers must not block the click they are observing.
     const observer = ['dialog', 'downloads', 'events'].includes(msg.command) || (msg.command === 'wait' && msg.args?.kind === 'download');
     const result = Number.isInteger(msg.tabId) && !observer
@@ -3643,7 +3649,7 @@ async function prepareScreenshotTab(tabId, traceID) {
 function traceLog(traceID, message) {
   if (!traceID) return;
   if (!traceLogs.has(traceID)) traceLogs.set(traceID, []);
-  const ts = new Date().toISOString().slice(11, 23); // HH:mm:ss.SSS
+  const ts = new Date().toISOString(); // Retain the date for diagnostic windows across midnight.
   traceLogs.get(traceID).push(`[${ts}] [${traceID}] ${message}`);
   // 限制每个 traceID 最多 100 条，防止内存泄漏
   if (traceLogs.get(traceID).length > 100) {

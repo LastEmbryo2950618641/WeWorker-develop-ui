@@ -106,7 +106,7 @@ Login（网站登录由 WeWorker 自动处理：命令遇到未登录时打开�
   auth save <网站>               保存账号密码并开启自动登录（需确认；Windows 系统密钥加密）
   auth autologin <网站> on|off   开启或暂停自动登录
   auth forget <网站>             删除保存的账号密码
-  call ... --login-wait=<秒>     本次调用最多等待登录的时间（终端默认 300 秒，脚本/AI 默认 75 秒）
+  call ... --login-wait=<秒>     本次调用最多等待登录的时间（终端默认 300 秒；脚本/AI 默认不等待，立即返回登录提示与截图，登录流程后台继续）
 
 API exploration (standalone, no desktop/model key required):
   call exploration.help                    探索、草稿编辑、验证与安装命令
@@ -120,6 +120,8 @@ Adapters:
   <adapter> <command> help                 单个命令参数说明（第三级）
   adapter validate <dir>                   校验 v2 adapter 包（结构+禁入文件，规范 docs/adapter_package_spec.md）
   adapter convention-audit <dir>           静态规范审计（不执行命令；--installed [id] 检查已安装包）
+  adapter verify <dir>                     静态校验及历史证据（--installed [id]；--runtime managed|legacy|toolkit）
+  adapter source <repo> --ref <full-sha>     只读发现本地 Git 固定提交中的 v2 子包
   adapter list                             列出已安装的 adapter
   adapter list --json                      JSON 格式输出（含工具定义）
   adapter info <id>                        查看 adapter 的工具列表
@@ -614,10 +616,14 @@ async function stopOwnService() {
 
 // ─── Website login ───────────────────────────────────────────────────────────
 
-/** A person at a terminal gets 5 minutes to sign in; scripts and agents 75 seconds (under a 2-minute tool timeout). */
+/** A person at a terminal gets 5 minutes of auto-continue; scripts and agents return
+ *  immediately so the session can render the login prompt and QR screenshot right away.
+ *  The login flow keeps running in the background either way. */
 function resolveLoginWaitMs(seconds) {
   if (Number.isFinite(seconds)) return Math.max(0, Math.min(15 * 60, seconds)) * 1000;
-  return process.stdin.isTTY && process.stderr.isTTY ? 300_000 : 75_000;
+  const env = Number(process.env.WEBCLI_LOGIN_WAIT_SECONDS);
+  if (Number.isFinite(env)) return Math.max(0, Math.min(15 * 60, env)) * 1000;
+  return process.stdin.isTTY && process.stderr.isTTY ? 300_000 : 0;
 }
 
 const AUTH_EVENT_TEXT = {
@@ -934,11 +940,11 @@ async function cmdCall(toolName, argsStr, options = {}) {
       process.exitCode = 1;
       return;
     }
-    await ensureBridgeRunning();
+    if (command !== 'export') await ensureBridgeRunning();
     const { callExploration } = await import('./exploration-client.js');
-    const result = await callExploration(command, args, { profile: options.profile });
+    const result = await callExploration(command, args, { profile: options.profile, ...(command === 'export' ? { timeoutMs: 180000 } : {}) });
     printManagement(result);
-    if (!result.ok) process.exitCode = 1;
+    if (!result.ok || (command === 'export' && !result.data?.complete)) process.exitCode = 1;
     return;
   }
 

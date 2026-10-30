@@ -2,6 +2,12 @@
 
 连接 AI 工具与网站 Adapter 的统一命令行入口。
 
+静态验证与历史证据使用 `adapter verify`；legacy/Toolkit 用 `--runtime` 明确选择，固定 Git 子包用 `adapter source` 审阅后显式安装。普通验证不执行工具、不产生真实写，完整契约见 [U01 验证与诊断](../docs/opencli_u01_verification.md)。
+
+日期／选项与目录／chooser 上传见 [B02 契约与证据](../docs/opencli_b02_controls.md)。
+
+声明式写控件、frame 表单、有限写序列和实际结果回查见 [W01–W04 写工作流](../docs/opencli_write_workflows.md)。
+
 Extension Adapter 通过本地 WebSocket Bridge 连接 Chrome 扩展；Toolkit Adapter 通过 WeWorker 内嵌 Toolkit Runtime 执行。CLI 和桌面端统一使用 `webcli call` 调用网站工具。
 
 **两类入口使用独立的 Bridge**：WeWorker 桌面端内置的 CLI 与扩展固定使用 `ws://localhost:3711`；npm 安装的独立 `webcli` 固定使用 `ws://127.0.0.1:3712`，并拥有独立的 PID/日志、浏览器 Profile 和 Adapter 数据目录。两者可以同时运行，登录态和浏览器实例不共享；如果 3712 被其他进程占用，npm CLI 会明确失败，不会连接桌面端的 3711。
@@ -148,6 +154,8 @@ webcli extension-path                   输出扩展目录路径
 `adapter list --json`、`adapter info <id>` 和 `adapter skill <id> --regenerate` 会同时读取传统 `index.js` 工具，以及生成式 adapter 在 `manifest.json` 的 `support_files` 中声明的 `webcli-generated/tools/*.js` 工具。因此通过插件“探索 -> 录制操作 -> 生成工具”生成的 modular adapter 也能在 CLI 侧正确展示工具。
 
 ## Skill 系统
+
+已有任务可用 `webcli call exploration.export --profile <profile> --args-file export.json` 汇总诊断，参数必须含 `taskId` 和绝对新目录 `directory`。Bridge 须已运行；默认省略正文、账号、凭据、日志原文和截图，部分结果保留但退出码为 1。显式 `screenshot:true` 才包含任务当前 viewport 的未脱敏像素；HTTP 没有浏览器来源。时间窗、预算、来源、失败和历史证据边界见 [U06 诊断契约](../docs/opencli_u06_diagnostics.md)。
 
 复杂参数和多行代码建议写入 UTF-8 JSON 对象文件，通过 `webcli call exploration.draft-write --args-file "args.json"` 传入。支持带 BOM 的文件和含空格的路径，文件上限 2 MiB；`content` 字段必须是字符串。`--args-file` 与 `--args` 只能出现一个，结构化对象中的字段覆盖同名 `--key=value`。不要把多行源码拼进 shell 命令；工具名之后的多余位置参数会报错。
 

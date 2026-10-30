@@ -1,6 +1,6 @@
 ---
 name: webcli
-version: 1.0.4
+version: 1.1.6
 description: "通过 WebCLI 操作网站的浏览器自动化。当用户想操作网站时使用——打开某个网站、搜索、下单、查订单、填表、读取页面内容、截图，或让浏览器自动完成网页任务。涵盖：打开浏览器、调用网站工具、截图。支持京东、1688、闲鱼、B 站、知乎、微博、抖音、小红书、豆瓣、贴吧、12306、携程、51job、BOSS 直聘、GitHub、Gitee、V2EX、掘金、有道云笔记、大众点评、什么值得买、雪球、Wikipedia、arXiv、Hacker News 等站点。"
 allowed-tools: Bash(webcli *), Bash(npm install *), Bash(npm view *)
 ---
@@ -123,6 +123,16 @@ webcli call open_browser --url="<Homepage URL>" --adapter=<adapter-id>
 使用目标适配器 Skill 文档里的 **Homepage** URL——它带有正确的协议（http/https）和路径。不要猜测或默认用 https，部分站点只支持 http。
 
 仅页面型命令需要打开业务网页并等待注入完成。先用 `adapter info/skill` 查看具体命令：PUBLIC_API/AUTH_API 无浏览器依赖；COOKIE_API 和 Extension 后台 API 可以复用浏览器登录态而无需业务页。Extension 后台是否还使用页面 helper，以其代码和实际验收为准，不凭登录要求推断必须开页。
+
+### 遇到登录要求（AUTH_REQUIRED）
+
+脚本/AI 调用遇到未登录时**立即返回**，不会阻塞等待：命令返回 `AUTH_REQUIRED`，WeWorker 浏览器已自动打开登录页，登录流程在后台继续。此时：
+
+1. **立即告知用户**去登录：「WeWorker 浏览器已打开 <站点名> 登录页，请完成登录（支持扫码、短信验证码或账号密码）」。不要替用户等待或反复重试。
+2. **用户确认后重新执行原命令**——这是最通用的方式：原命令在未登录时会立即返回 `AUTH_REQUIRED`（不会阻塞），登录后则直接出结果；不需要也不依赖各 Adapter 是否实现 `check-login-status` 类工具（各站命名与实现不一，并非都有）。
+3. 主动探测（可选）：仅当站点可用 `webcli auth check <站点>`（基于 manifest `auth` 声明，非所有站点支持）或该 Adapter 确有登录检查类工具时才轮询，且有界（如每 15 秒一次、最多 5 次）；无探测手段就直接重跑原命令判断。
+4. 返回 `AUTH_RETRY_REQUIRED` 表示登录已完成但该命令是写操作，为防重复执行没有自动重试——向用户确认后重新执行。
+5. 需要 CLI 代为等待时显式传 `--login-wait=<秒>`（上限 900）；终端人工使用默认等待 300 秒并自动继续，脚本/AI 默认不等待。
 
 ### 截图
 
