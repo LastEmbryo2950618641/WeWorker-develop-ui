@@ -40,6 +40,8 @@ describe.each([
       exploration: { dispatch: true, startUrl: 'https://example.com', query: 'Public query', reason: 'explicit' },
       siteGate: { reason: 'covered' }, abortController: new AbortController(),
       checkWebwrightHealth: async () => ({ ok: true }), tier4Task: null, tier4Source: null,
+      recordWorkLogStream: async function* () { /* work log is not under test here */ },
+      modelMessages: [],
       openTier4Turn: async () => ({ ok: await dispatch(), taskId: 'fixture-task', run: null }),
     })
     await vm.runInContext(dispatchBranch(condition), context)
